@@ -1,0 +1,24 @@
+import { NextResponse } from "next/server";
+import { supabaseServer } from "@/lib/supabase/server";
+
+export async function POST(req: Request) {
+  const supabase = await supabaseServer();
+  const { data: u } = await supabase.auth.getUser();
+  if (!u.user) return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
+
+  const body = await req.json().catch(() => ({}));
+  const student_id = String(body?.student_id ?? "").trim();
+  const limit = Math.max(1, Math.min(50, Number(body?.limit ?? 20)));
+
+  if (!student_id) return NextResponse.json({ ok: false, error: "Missing student_id" }, { status: 400 });
+
+  const { data, error } = await supabase
+    .from("ledger")
+    .select("id,points,note,category,created_at")
+    .eq("student_id", student_id)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true, entries: data ?? [] });
+}

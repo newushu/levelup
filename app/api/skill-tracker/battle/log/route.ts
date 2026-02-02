@@ -1,0 +1,356 @@
+import { NextResponse } from "next/server";
+import { supabaseServer } from "../../../../../lib/supabase/server";
+
+export async function POST(req: Request) {
+  const supabase = await supabaseServer();
+  const { data: u } = await supabase.auth.getUser();
+  if (!u.user) return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
+
+  const { data: roles, error: roleErr } = await supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", u.user.id);
+  if (roleErr) return NextResponse.json({ ok: false, error: roleErr.message }, { status: 500 });
+  const roleList = (roles ?? []).map((r: any) => String(r.role ?? "").toLowerCase());
+  const isSkillUser = roleList.includes("skill_user") || roleList.includes("skill_pulse");
+
+  const body = await req.json().catch(() => ({}));
+  const battle_id = String(body?.battle_id ?? "").trim();
+  const student_id = String(body?.student_id ?? "").trim();
+  const success = Boolean(body?.success);
+
+  if (!battle_id || !student_id) return NextResponse.json({ ok: false, error: "Missing battle/student" }, { status: 400 });
+
+  const { data: battle, error: bErr } = await supabase
+    .from("battle_trackers")
+    .select("id,left_student_id,right_student_id,repetitions_target,wager_amount,wager_pct,battle_mode,participant_ids,team_a_ids,team_b_ids,settled_at")
+    .eq("id", battle_id)
+    .single();
+  if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
+  if (battle?.settled_at) return NextResponse.json({ ok: false, error: "Battle already settled" }, { status: 400 });
+
+  const participants = (() => {
+    const list = Array.isArray(battle?.participant_ids) ? battle.participant_ids : [];
+    const ids = list.map((id: any) => String(id ?? "").trim()).filter(Boolean);
+    if (ids.length) return Array.from(new Set(ids));
+    const fallback = [battle.left_student_id, battle.right_student_id].map((id: any) => String(id ?? "").trim()).filter(Boolean);
+    return Array.from(new Set(fallback));
+  })();
+  const teamA = (Array.isArray(battle?.team_a_ids) ? battle.team_a_ids : [])
+    .map((id: any) => String(id ?? "").trim())
+    .filter(Boolean);
+  const teamB = (Array.isArray(battle?.team_b_ids) ? battle.team_b_ids : [])
+    .map((id: any) => String(id ?? "").trim())
+    .filter(Boolean);
+
+  if (!participants.includes(student_id)) {
+    return NextResponse.json({ ok: false, error: "Student not in battle" }, { status: 400 });
+  }
+
+  const { data: logs, error: lErr } = await supabase
+    .from("battle_tracker_logs")
+    .select("student_id,success")
+    .eq("battle_id", battle_id);
+  if (lErr) return NextResponse.json({ ok: false, error: lErr.message }, { status: 500 });
+
+  const target = Number(battle.repetitions_target ?? 1);
+  const attempts = (logs ?? []).filter((l: any) => l.student_id === student_id).length;
+
+  if (attempts >= target) {
+    return NextResponse.json({ ok: true, ignored: true });
+  }
+
+  const ins = await supabase.from("battle_tracker_logs").insert({
+    battle_id,
+    student_id,
+    success,
+    created_by: u.user.id,
+  });
+  if (ins.error) return NextResponse.json({ ok: false, error: ins.error.message }, { status: 500 });
+
+  const { data: logs2, error: l2Err } = await supabase
+    .from("battle_tracker_logs")
+    .select("student_id,success")
+    .eq("battle_id", battle_id);
+  if (l2Err) return NextResponse.json({ ok: false, error: l2Err.message }, { status: 500 });
+
+  const attemptsByStudent = new Map<string, { attempts: number; successes: number }>();
+  for (const pid of participants) attemptsByStudent.set(pid, { attempts: 0, successes: 0 });
+  for (const row of logs2 ?? []) {
+    const sid = String((row as any)?.student_id ?? "");
+    if (!attemptsByStudent.has(sid)) continue;
+    const prev = attemptsByStudent.get(sid) ?? { attempts: 0, successes: 0 };
+    attemptsByStudent.set(sid, {
+      attempts: prev.attempts + 1,
+      successes: prev.successes + ((row as any)?.success ? 1 : 0),
+    });
+  }
+
+  const allDone = participants.every((pid) => (attemptsByStudent.get(pid)?.attempts ?? 0) >= target);
+
+  if (allDone) {
+    let winnerIds: string[] = [];
+    let payoutTotal = 0;
+    let mvpIds: string[] = [];
+    const wagerAmount = Number(battle.wager_amount ?? 0);
+    const pointsPerRep = Math.max(3, Number(battle.wager_pct ?? 5));
+
+    if (battle?.battle_mode === "teams") {
+      const teamAIds = teamA.length ? teamA : participants.slice(0, Math.max(1, Math.ceil(participants.length / 2)));
+      const teamBIds = teamB.length ? teamB : participants.filter((id) => !teamAIds.includes(id));
+      const teamASuccesses = teamAIds.reduce((sum, id) => sum + (attemptsByStudent.get(id)?.successes ?? 0), 0);
+      const teamBSuccesses = teamBIds.reduce((sum, id) => sum + (attemptsByStudent.get(id)?.successes ?? 0), 0);
+      if (teamASuccesses > teamBSuccesses) winnerIds = teamAIds;
+      if (teamBSuccesses > teamASuccesses) winnerIds = teamBIds;
+      const lead = Math.abs(teamASuccesses - teamBSuccesses);
+      payoutTotal = wagerAmount > 0 ? wagerAmount * participants.length : lead * pointsPerRep;
+      const pickTeamMvp = (ids: string[]) => {
+        const eligible = ids
+          .map((id) => {
+            const attempts = attemptsByStudent.get(id)?.attempts ?? 0;
+            const successes = attemptsByStudent.get(id)?.successes ?? 0;
+            const rate = attempts > 0 ? successes / attempts : 0;
+            return { id, successes, rate };
+          })
+          .filter((row) => row.rate >= 0.6 && row.successes > 0);
+        if (!eligible.length) return [];
+        const top = Math.max(...eligible.map((row) => row.successes));
+        return eligible.filter((row) => row.successes === top).map((row) => row.id);
+      };
+      mvpIds = [...pickTeamMvp(teamAIds), ...pickTeamMvp(teamBIds)];
+    } else {
+      const ranked = participants
+        .map((id) => ({ id, successes: attemptsByStudent.get(id)?.successes ?? 0 }))
+        .sort((a, b) => b.successes - a.successes);
+      const top = ranked[0]?.successes ?? 0;
+      const second = ranked[1]?.successes ?? 0;
+      const tiedTop = ranked.filter((r) => r.successes === top);
+      if (tiedTop.length === 1) winnerIds = [tiedTop[0].id];
+      const lead = Math.max(0, top - second);
+      payoutTotal = wagerAmount > 0 ? wagerAmount * participants.length : lead * pointsPerRep;
+    }
+
+    if (battle?.battle_mode !== "teams") {
+      mvpIds = [];
+    }
+
+    if (mvpIds.length) {
+      const insMvp = await supabase.from("battle_mvp_awards").upsert(
+        mvpIds.map((student_id) => ({
+          battle_id,
+          student_id,
+        })),
+        { onConflict: "battle_id,student_id" }
+      );
+      if (insMvp.error) return NextResponse.json({ ok: false, error: insMvp.error.message }, { status: 500 });
+    }
+
+    let limitReached = false;
+    if (isSkillUser) {
+      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: trackerRows, error: trErr } = await supabase
+        .from("skill_trackers")
+        .select("id,student_id")
+        .in("student_id", participants);
+      if (trErr) return NextResponse.json({ ok: false, error: trErr.message }, { status: 500 });
+      const trackerMeta = new Map<string, string>();
+      const trackerIds: string[] = [];
+      (trackerRows ?? []).forEach((row: any) => {
+        const tid = String(row.id ?? "");
+        const sid = String(row.student_id ?? "");
+        if (!tid || !sid) return;
+        trackerMeta.set(tid, sid);
+        trackerIds.push(tid);
+      });
+
+      const repsByStudent = new Map<string, number>();
+      participants.forEach((pid) => repsByStudent.set(pid, 0));
+
+      if (trackerIds.length) {
+        const { data: skillLogs, error: slErr } = await supabase
+          .from("skill_tracker_logs")
+          .select("tracker_id")
+          .in("tracker_id", trackerIds)
+          .eq("created_by", u.user.id)
+          .gte("created_at", cutoff);
+        if (slErr) return NextResponse.json({ ok: false, error: slErr.message }, { status: 500 });
+        (skillLogs ?? []).forEach((row: any) => {
+          const tid = String(row.tracker_id ?? "");
+          const sid = trackerMeta.get(tid);
+          if (!sid) return;
+          repsByStudent.set(sid, (repsByStudent.get(sid) ?? 0) + 1);
+        });
+      }
+
+      const { data: battleLogs, error: blErr } = await supabase
+        .from("battle_tracker_logs")
+        .select("student_id")
+        .in("student_id", participants)
+        .eq("created_by", u.user.id)
+        .gte("created_at", cutoff);
+      if (blErr) return NextResponse.json({ ok: false, error: blErr.message }, { status: 500 });
+      (battleLogs ?? []).forEach((row: any) => {
+        const sid = String(row.student_id ?? "");
+        if (!sid) return;
+        repsByStudent.set(sid, (repsByStudent.get(sid) ?? 0) + 1);
+      });
+
+      limitReached = participants.some((pid) => (repsByStudent.get(pid) ?? 0) > 20);
+    }
+
+    if (!limitReached && winnerIds.length && payoutTotal > 0) {
+      const { data: balances, error: balErr } = await supabase
+        .from("students")
+        .select("id,points_total")
+        .in("id", participants);
+      if (balErr) return NextResponse.json({ ok: false, error: balErr.message }, { status: 500 });
+      const balanceById = new Map<string, number>();
+      (balances ?? []).forEach((row: any) =>
+        balanceById.set(String(row.id ?? ""), Math.max(0, Number(row.points_total ?? 0)))
+      );
+
+      const ledgerRows: Array<{ student_id: string; points: number; note: string; category: string; created_by: string }> = [];
+      const baseWinById = new Map<string, number>();
+
+      if (wagerAmount > 0) {
+        const share = Math.floor(payoutTotal / Math.max(1, winnerIds.length));
+        if (share > 0) {
+          participants.forEach((pid) => {
+            ledgerRows.push({
+              student_id: pid,
+              points: -wagerAmount,
+              note: `Battle Pulse wager (-${wagerAmount})`,
+              category: "manual",
+              created_by: u.user.id,
+            });
+          });
+          winnerIds.forEach((pid) => {
+            ledgerRows.push({
+              student_id: pid,
+              points: share,
+              note: `Battle Pulse win (+${share})`,
+              category: "manual",
+              created_by: u.user.id,
+            });
+            baseWinById.set(pid, share);
+          });
+        }
+      } else {
+        const losers = participants.filter((pid) => !winnerIds.includes(pid));
+        if (losers.length) {
+          const loserDebits = new Map<string, number>();
+          if (battle?.battle_mode === "teams") {
+            const baseLoss = Math.floor(payoutTotal / Math.max(1, losers.length));
+            const remainder = payoutTotal - baseLoss * losers.length;
+            let maxLoser: { id: string; balance: number } | null = null;
+            losers.forEach((pid) => {
+              const balance = balanceById.get(pid) ?? 0;
+              if (!maxLoser || balance > maxLoser.balance) maxLoser = { id: pid, balance };
+            });
+            losers.forEach((pid) => {
+              const balance = balanceById.get(pid) ?? 0;
+              let debit = Math.min(balance, baseLoss);
+              if (remainder > 0 && maxLoser?.id === pid) {
+                debit = Math.min(balance, baseLoss + remainder);
+              }
+              if (debit > 0) loserDebits.set(pid, debit);
+            });
+          } else {
+            const maxAffordable = losers.reduce((sum, pid) => sum + (balanceById.get(pid) ?? 0), 0);
+            let remaining = Math.max(0, Math.min(payoutTotal, maxAffordable));
+            const loserQueue = losers.map((pid) => ({ id: pid, balance: balanceById.get(pid) ?? 0 }));
+            for (let i = 0; i < loserQueue.length; i += 1) {
+              const remainingCount = loserQueue.length - i;
+              const entry = loserQueue[i];
+              if (remaining <= 0) break;
+              const fairShare = Math.floor(remaining / remainingCount);
+              const debit = Math.min(entry.balance, Math.max(0, i === loserQueue.length - 1 ? remaining : fairShare));
+              if (debit > 0) {
+                loserDebits.set(entry.id, debit);
+                remaining -= debit;
+              }
+            }
+          }
+
+          const totalDebits = Array.from(loserDebits.values()).reduce((sum, v) => sum + v, 0);
+          if (totalDebits > 0 && winnerIds.length) {
+            const baseWin = Math.floor(totalDebits / Math.max(1, winnerIds.length));
+            const remainderWin = totalDebits - baseWin * winnerIds.length;
+            let maxWinner: { id: string; balance: number } | null = null;
+            winnerIds.forEach((pid) => {
+              const balance = balanceById.get(pid) ?? 0;
+              if (!maxWinner || balance > maxWinner.balance) maxWinner = { id: pid, balance };
+            });
+
+            loserDebits.forEach((debit, pid) => {
+              ledgerRows.push({
+                student_id: pid,
+                points: -debit,
+                note: `Battle Pulse loss (-${debit})`,
+                category: "manual",
+                created_by: u.user.id,
+              });
+            });
+            winnerIds.forEach((pid) => {
+              const extra = remainderWin > 0 && maxWinner?.id === pid ? remainderWin : 0;
+              const payout = Math.max(0, baseWin + extra);
+              if (payout <= 0) return;
+              ledgerRows.push({
+                student_id: pid,
+                points: payout,
+                note: `Battle Pulse win (+${payout})`,
+                category: "manual",
+                created_by: u.user.id,
+              });
+              baseWinById.set(pid, payout);
+            });
+          }
+        }
+      }
+
+      if (mvpIds.length) {
+        mvpIds.forEach((pid) => {
+          const baseWin = baseWinById.get(pid) ?? 0;
+          if (baseWin > 0) {
+            ledgerRows.push({
+              student_id: pid,
+              points: baseWin,
+              note: `Battle Pulse MVP bonus (+${baseWin})`,
+              category: "manual",
+              created_by: u.user.id,
+            });
+            return;
+          }
+          if (winnerIds.length && !winnerIds.includes(pid)) {
+            ledgerRows.push({
+              student_id: pid,
+              points: 10,
+              note: "Battle Pulse MVP consolation (+10)",
+              category: "manual",
+              created_by: u.user.id,
+            });
+          }
+        });
+      }
+
+      if (ledgerRows.length) {
+        const insLedger = await supabase.from("ledger").insert(ledgerRows);
+        if (insLedger.error) return NextResponse.json({ ok: false, error: insLedger.error.message }, { status: 500 });
+
+        for (const pid of participants) {
+          const rpc = await supabase.rpc("recompute_student_points", { p_student_id: pid });
+          if (rpc.error) return NextResponse.json({ ok: false, error: rpc.error.message }, { status: 500 });
+        }
+      }
+    }
+
+    const winner_id = winnerIds.length === 1 ? winnerIds[0] : null;
+    const upd = await supabase
+      .from("battle_trackers")
+      .update({ settled_at: new Date().toISOString(), winner_id })
+      .eq("id", battle_id);
+    if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
+}

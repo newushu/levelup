@@ -1,26 +1,133 @@
-@import "tailwindcss";
-
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+:root{
+  --bg:#050607;
+  --card: rgba(255,255,255,0.06);
+  --stroke: rgba(255,255,255,0.10);
+  --text: rgba(255,255,255,0.92);
+  --muted: rgba(255,255,255,0.72);
+  --shadowSoft: 0 10px 30px rgba(0,0,0,0.35);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+*{ box-sizing:border-box; }
+html,body{ padding:0; margin:0; }
+body{
+  background: radial-gradient(circle at 20% 0%, rgba(59,130,246,0.12), rgba(0,0,0,0) 40%), var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+.navSkew:hover{
+  background: linear-gradient(135deg, rgba(14,165,233,0.55), rgba(56,189,248,0.35)) !important;
+  box-shadow: 0 12px 28px rgba(14,165,233,0.25) !important;
+  border-color: rgba(14,165,233,0.6) !important;
+}
+
+.container{
+  width: min(1100px, 92vw);
+  margin: 0 auto;
+  padding: 18px 0;
+}
+
+.card{
+  background: var(--card);
+  border: 1px solid var(--stroke);
+  box-shadow: var(--shadowSoft);
+}
+
+.btn{
+  cursor:pointer;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  font-weight: 950;
+}
+
+.btnPrimary{
+  background: rgba(59,130,246,0.22);
+  border-color: rgba(59,130,246,0.35);
+}
+
+.pill{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding: 9px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+  text-decoration:none;
+  font-weight: 950;
+}
+
+.sub{ color: var(--muted); font-weight: 800; }
+
+.miniStat{
+  padding: 10px 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.04);
+  min-width: 92px;
+}
+.miniLabel{ font-size: 12px; font-weight: 950; opacity: 0.78; }
+.miniValue{ font-size: 18px; font-weight: 980; color: #fff; margin-top: 2px; }
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@keyframes completedPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(250,204,21,0.0);
+  }
+  50% {
+    box-shadow: 0 0 18px 2px rgba(250,204,21,0.35);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(250,204,21,0.0);
+  }
+}
+
+@keyframes badgeSparkle {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.9);
+    opacity: 0.35;
+  }
+}
+
+@keyframes badgeAura {
+  0% {
+    box-shadow: 0 0 0 1px rgba(250,204,21,0.25), 0 0 12px rgba(250,204,21,0.15);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(250,204,21,0.55), 0 0 24px rgba(250,204,21,0.5);
+  }
+  100% {
+    box-shadow: 0 0 0 1px rgba(250,204,21,0.25), 0 0 12px rgba(250,204,21,0.15);
+  }
+}
+
+@keyframes avatarEffectDrift {
+  0% {
+    background-position: 0 0, 0 0, 50% 50%;
+  }
+  50% {
+    background-position: 60px 80px, -40px 60px, 50% 50%;
+  }
+  100% {
+    background-position: 120px 140px, -80px 100px, 50% 50%;
+  }
 }
