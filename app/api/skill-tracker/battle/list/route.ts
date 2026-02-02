@@ -42,7 +42,7 @@ export async function GET(req: Request) {
   const { data, error } = await q;
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
-  const rows = (data ?? []) as BattleRow[];
+  const rows = (data ?? []) as unknown as BattleRow[];
   const ids = rows.map((r) => r.id);
   const logMap = new Map<string, Map<string, Array<{ success: boolean }>>>();
   const participantsByBattle = new Map<string, string[]>();

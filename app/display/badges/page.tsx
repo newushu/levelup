@@ -79,10 +79,10 @@ export default function BadgeDisplayPage() {
       setItems(filtered);
     };
     load();
-    timer = window.setInterval(load, 5000);
+    timer = setInterval(load, 5000);
     return () => {
       mounted = false;
-      if (timer) window.clearInterval(timer);
+      if (timer) clearInterval(timer);
     };
   }, [authOk, displayEnabled]);
 

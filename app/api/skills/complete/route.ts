@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   // Ensure you have UNIQUE(student_id, skill_id) on student_skills.
   const ins = await supabase
     .from("student_skills")
-    .insert(
+    .upsert(
       {
         student_id,
         skill_id,

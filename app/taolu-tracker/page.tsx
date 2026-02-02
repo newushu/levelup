@@ -339,10 +339,13 @@ function TaoluTrackerInner() {
     }, 700);
   }
 
-  async function loadDeductions(sessionId: string) {
+  async function loadDeductions(sessionId: string): Promise<DeductionRow[]> {
     const res = await fetch(`/api/taolu/deductions?session_id=${sessionId}`, { cache: "no-store" });
     const sj = await safeJson(res);
-    if (!sj.ok) return setMsg(sj.json?.error || "Failed to load deductions");
+    if (!sj.ok) {
+      setMsg(sj.json?.error || "Failed to load deductions");
+      return [];
+    }
     const list = (sj.json?.deductions ?? []) as DeductionRow[];
     setDeductionsBySession((prev) => ({ ...prev, [sessionId]: list }));
     return list;

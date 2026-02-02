@@ -61,17 +61,17 @@ function AdminAnnouncementsInner() {
     })();
   }, []);
 
-  useEffect(() => {
-    if (role !== "admin") return;
-    refresh();
-  }, [role]);
-
   async function refresh() {
     const res = await fetch("/api/admin/announcements", { cache: "no-store" });
     const sj = await safeJson(res);
     if (!sj.ok) return setMsg(sj.json?.error || "Failed to load announcements.");
     setRows((sj.json?.announcements ?? []) as Announcement[]);
   }
+
+  useEffect(() => {
+    if (role !== "admin") return;
+    refresh();
+  }, [role]);
 
   async function addAnnouncement() {
     setMsg("");

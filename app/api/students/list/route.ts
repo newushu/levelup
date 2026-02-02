@@ -83,7 +83,7 @@ export async function GET() {
   const { data, error } = await q;
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  const students = (data ?? []) as Array<{ id: string; level?: number | null; lifetime_points?: number | null }>;
+  const students = (data ?? []) as unknown as Array<{ id: string; level?: number | null; lifetime_points?: number | null }>;
   const ids = students.map((s) => s.id);
   if (!ids.length) return NextResponse.json({ ok: true, students: [] });
 

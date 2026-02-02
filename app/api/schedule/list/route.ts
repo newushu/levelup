@@ -39,7 +39,7 @@ export async function GET(req: Request) {
         .lte("session_date", rangeEnd)
         .order("session_date", { ascending: true })
         .order("start_time", { ascending: true });
-      data = retry.data;
+      data = (retry.data ?? []).map((row: any) => ({ ...row, room_name: null, entry_type: null }));
       error = retry.error;
     }
 
@@ -54,7 +54,7 @@ export async function GET(req: Request) {
         .lte("session_date", rangeEnd)
         .order("session_date", { ascending: true })
         .order("start_time", { ascending: true });
-      data = retry.data;
+      data = (retry.data ?? []).map((row: any) => ({ ...row, is_cancelled: false, entry_type: null }));
       error = retry.error;
     }
 
@@ -145,7 +145,13 @@ export async function GET(req: Request) {
       .eq("enabled", true)
       .order("day_of_week", { ascending: true })
       .order("start_time", { ascending: true });
-    data = retry.data;
+    data = (retry.data ?? []).map((row: any) => ({
+      ...row,
+      room_name: null,
+      start_date: null,
+      end_date: null,
+      entry_type: null,
+    }));
     error = retry.error;
   }
 

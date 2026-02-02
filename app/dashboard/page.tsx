@@ -48,7 +48,12 @@ type Challenge = {
 };
 
 type StudentChallenge = { challenge_id: string; tier: Tier };
-type EarnedBadge = { badge_id: string; earned_at: string; rescinded_at?: string | null; achievement_badges?: { name: string; description: string } };
+type EarnedBadge = {
+  badge_id: string;
+  earned_at: string;
+  rescinded_at?: string | null;
+  achievement_badges?: { name: string; description: string; icon_url?: string | null; icon_path?: string | null; category?: string | null };
+};
 type BadgeCatalog = {
   id: string;
   name: string;
@@ -1132,7 +1137,8 @@ export function DashboardInner() {
       });
     });
 
-    (attendanceSummary?.awards ?? []).forEach((a) => {
+    const awards = (attendanceSummary?.awards ?? []) as any[];
+    awards.forEach((a) => {
       const title = "Spotlight Star";
       const label = a.name ? String(a.name) : "Spotlight Award";
       const points = Number(a.points_awarded ?? 0);
@@ -1553,10 +1559,10 @@ export function DashboardInner() {
     }
 
     if (activeTab === "Taolu Tracker") {
-      const forms = taoluSummary?.forms ?? [];
-      const ageGroups = taoluSummary?.age_groups ?? [];
-      const codes = taoluSummary?.codes ?? [];
-      const windows = taoluSummary?.windows ?? [];
+      const forms = (taoluSummary?.forms ?? []) as any[];
+      const ageGroups = (taoluSummary?.age_groups ?? []) as any[];
+      const codes = (taoluSummary?.codes ?? []) as any[];
+      const windows = (taoluSummary?.windows ?? []) as any[];
       const formCodeTotals = taoluSummary?.form_code_totals ?? {};
       const formSectionCodeTotals = taoluSummary?.form_section_code_totals ?? {};
       const formSectionCodeNotes = taoluSummary?.form_section_code_notes ?? {};
@@ -1564,9 +1570,9 @@ export function DashboardInner() {
       const sessionHistory = taoluSummary?.session_history ?? [];
       const prepsHistory = taoluSummary?.preps_session_history ?? [];
 
-      const codeById = new Map(codes.map((c: any) => [String(c.id), c]));
-      const ageLabelById = new Map(ageGroups.map((g: any) => [String(g.id), g.name]));
-      const formById = new Map(forms.map((f: any) => [String(f.id), f]));
+      const codeById = new Map<string, any>(codes.map((c: any) => [String(c.id), c]));
+      const ageLabelById = new Map<string, any>(ageGroups.map((g: any) => [String(g.id), g.name]));
+      const formById = new Map<string, any>(forms.map((f: any) => [String(f.id), f]));
       const prepsLabels: Record<string, string> = {
         P: "Posture",
         R: "Rhythm",
@@ -1719,7 +1725,7 @@ export function DashboardInner() {
                   const codeNotes = sectionNotes[sectionKey] ?? {};
                   const entries = Object.entries(codeTotals)
                     .map(([codeId, count]) => ({ codeId, count: count as number }))
-                    .sort((a, b) => b.count - a.count);
+                    .sort((a, b) => Number(b.count) - Number(a.count));
                   const rows = entries
                     .map((entry) => {
                       const code = codeById.get(String(entry.codeId));
@@ -1817,7 +1823,7 @@ export function DashboardInner() {
                     const counts = windowsSummary[String(w.id)] ?? {};
                     const entries = Object.entries(counts)
                       .map(([codeId, count]) => ({ codeId, count }))
-                      .sort((a, b) => b.count - a.count);
+                      .sort((a, b) => Number(b.count) - Number(a.count));
                     const rows = entries
                       .map((e) => {
                         const code = codeById.get(String(e.codeId));
@@ -2170,7 +2176,7 @@ export function DashboardInner() {
                             const codeNotes = sectionNotes[sectionKey] ?? {};
                             const entries = Object.entries(codeTotals)
                               .map(([codeId, count]) => ({ codeId, count: count as number }))
-                              .sort((a, b) => b.count - a.count);
+                              .sort((a, b) => Number(b.count) - Number(a.count));
                             return (
                               <div key={sectionKey} style={taoluTotalsCard()}>
                                 <div style={{ fontWeight: 900, fontSize: 12 }}>Section {sectionKey}</div>
@@ -2267,7 +2273,7 @@ export function DashboardInner() {
                             const codeNotes = sectionNotes[sectionKey] ?? {};
                             const entries = Object.entries(codeTotals)
                               .map(([codeId, count]) => ({ codeId, count: count as number }))
-                              .sort((a, b) => b.count - a.count);
+                              .sort((a, b) => Number(b.count) - Number(a.count));
                             return (
                               <div key={`report-${sectionKey}`} style={{ fontSize: 12, opacity: 0.85 }}>
                                 <b>Section {sectionKey}</b>
@@ -2312,7 +2318,7 @@ export function DashboardInner() {
                   const counts = windowsSummary[String(w.id)] ?? {};
                   const entries = Object.entries(counts)
                     .map(([codeId, count]) => ({ codeId, count }))
-                    .sort((a, b) => b.count - a.count);
+                    .sort((a, b) => Number(b.count) - Number(a.count));
                   return (
                     <div key={w.id} style={card()}>
                       <div style={{ fontWeight: 900 }}>{w.label}</div>
@@ -3400,7 +3406,7 @@ function flashCardPlateUnlock(key: string, points: number) {
                 <Particles
                   id="recent-badges-sparkles"
                   init={particlesInit}
-                  options={recentBadgeSparkleOptions}
+                  options={recentBadgeSparkleOptions as any}
                   style={{ position: "absolute", inset: 0 }}
                 />
               </div>
@@ -3739,7 +3745,7 @@ function flashCardPlateUnlock(key: string, points: number) {
                                     <Particles
                                       id={`prestige-sparkles-${slot.id}`}
                                       init={particlesInit}
-                                      options={badgeSparkleOptions}
+                                      options={badgeSparkleOptions as any}
                                       style={{ position: "absolute", inset: 0 }}
                                     />
                                   </div>
@@ -4968,7 +4974,17 @@ function taoluDeductionRow(): React.CSSProperties {
   };
 }
 
-function Overlay({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+function Overlay({
+  title,
+  onClose,
+  children,
+  maxWidth,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  maxWidth?: number;
+}) {
   return (
     <div
       style={{
@@ -4985,7 +5001,7 @@ function Overlay({ title, onClose, children }: { title: string; onClose: () => v
     >
       <div
         style={{
-          width: "min(760px, 50vw)",
+          width: maxWidth ? `min(${maxWidth}px, 90vw)` : "min(760px, 50vw)",
           height: "calc(100% - 152px)",
           borderRadius: "18px 0 0 18px",
           border: "1px solid rgba(255,255,255,0.10)",
@@ -5319,7 +5335,7 @@ function noteChip(kind: "note" | "todo"): React.CSSProperties {
   };
 }
 
-function noteUrgency(level: "low" | "medium" | "high" | "critical"): React.CSSProperties {
+function noteUrgency(level: "low" | "medium" | "high" | "critical" | string): React.CSSProperties {
   const map: Record<string, string> = {
     low: "rgba(16,185,129,0.18)",
     medium: "rgba(250,204,21,0.18)",

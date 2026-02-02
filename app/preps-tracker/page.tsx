@@ -220,10 +220,13 @@ function PrepsTrackerInner() {
     setNotesBySession((prev) => ({ ...prev, [sessionId]: [...(prev[sessionId] ?? []), note] }));
   }
 
-  async function loadNotes(sessionId: string) {
+  async function loadNotes(sessionId: string): Promise<NoteRow[]> {
     const res = await fetch(`/api/preps/notes?session_id=${sessionId}`, { cache: "no-store" });
     const sj = await safeJson(res);
-    if (!sj.ok) return setMsg(sj.json?.error || "Failed to load notes");
+    if (!sj.ok) {
+      setMsg(sj.json?.error || "Failed to load notes");
+      return [];
+    }
     const list = (sj.json?.notes ?? []) as NoteRow[];
     setNotesBySession((prev) => ({ ...prev, [sessionId]: list }));
     return list;

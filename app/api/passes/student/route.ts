@@ -41,7 +41,7 @@ export async function POST(req: Request) {
       .select("id,pass_type_id,valid_from,valid_to,active,pass_types(name)")
       .eq("student_id", student_id)
       .order("valid_from", { ascending: false });
-    data = retry.data;
+    data = (retry.data ?? []).map((row: any) => ({ ...row, payment_confirmed: null, payment_id: null }));
     error = retry.error;
   }
 

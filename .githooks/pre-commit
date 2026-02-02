@@ -1,0 +1,17 @@
+#!/bin/sh
+
+printf "Running pre-commit checks...\n"
+
+npm run typecheck
+if [ $? -ne 0 ]; then
+  printf "Typecheck failed. Commit aborted.\n"
+  exit 1
+fi
+
+npm run lint
+if [ $? -ne 0 ]; then
+  printf "Lint failed. Commit aborted.\n"
+  exit 1
+fi
+
+printf "Pre-commit checks passed.\n"

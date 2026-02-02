@@ -89,10 +89,10 @@ export default function BadgeOverlayManager() {
       }
     };
     load();
-    timer = window.setInterval(load, 5000);
+    timer = setInterval(load, 5000);
     return () => {
       mounted = false;
-      if (timer) window.clearInterval(timer);
+      if (timer) clearInterval(timer);
     };
   }, [enabled]);
 
@@ -103,10 +103,10 @@ export default function BadgeOverlayManager() {
     setQueue((prev) => prev.slice(1));
     if (next.type === "prestige") {
       setActive(next);
-      window.setTimeout(() => setActive(null), 2600);
+      setTimeout(() => setActive(null), 2600);
     } else {
       setToast(next);
-      window.setTimeout(() => setToast(null), 2200);
+      setTimeout(() => setToast(null), 2200);
     }
   }, [queue, active, toast]);
 

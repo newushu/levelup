@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import AuthGate from "@/components/AuthGate";
+import { fadeOutGlobalMusic, playGlobalMusic, playGlobalSfx, setGlobalSounds } from "@/lib/globalAudio";
 
 type SiegeState = {
   running: boolean;
@@ -10,6 +11,14 @@ type SiegeState = {
   secondsLeft: number;
   durationSeconds: number;
   timerUpdatedAt: number;
+  intermissionActive: boolean;
+  intermissionEndsAt: number | null;
+  intermissionTotal: number;
+  roundEndActive: boolean;
+  roundEndEndsAt: number | null;
+  roundEndDuration: number;
+  endGameActive: boolean;
+  endGameEndsAt: number | null;
   round: number;
   roundsTotal: number;
   subround: 1 | 2;
@@ -41,6 +50,14 @@ const EMPTY_STATE: SiegeState = {
   secondsLeft: 0,
   durationSeconds: 0,
   timerUpdatedAt: Date.now(),
+  intermissionActive: false,
+  intermissionEndsAt: null,
+  intermissionTotal: 20,
+  roundEndActive: false,
+  roundEndEndsAt: null,
+  roundEndDuration: 3,
+  endGameActive: false,
+  endGameEndsAt: null,
   round: 1,
   roundsTotal: 1,
   subround: 1,
@@ -76,10 +93,47 @@ export default function SiegeSurviveDisplayPage() {
   const [now, setNow] = useState(() => Date.now());
   const channelRef = useRef<BroadcastChannel | null>(null);
   const navChannelRef = useRef<BroadcastChannel | null>(null);
+  const lastBeepRef = useRef<number | null>(null);
+  const wasIntermissionRef = useRef(false);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const confettiPieces = useMemo(
+    () =>
+      Array.from({ length: 36 }).map((_, idx) => ({
+        id: idx,
+        left: Math.random() * 100,
+        size: 8 + Math.random() * 12,
+        delay: Math.random() * 1.6,
+        duration: 2.6 + Math.random() * 2.2,
+        hue: Math.floor(Math.random() * 360),
+      })),
+    []
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/sound-effects/list", { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (!active || !json?.ok) return;
+        const map: Record<string, { url: string; volume?: number; loop?: boolean }> = {};
+        (json.effects ?? []).forEach((row: any) => {
+          const key = String(row?.key ?? "");
+          const url = String(row?.audio_url ?? "");
+          if (!key || !url) return;
+          map[key] = { url, volume: Number(row?.volume ?? 1), loop: row?.loop ?? false };
+        });
+        setGlobalSounds(map);
+      } catch {}
+    })();
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -156,9 +210,78 @@ export default function SiegeSurviveDisplayPage() {
     return Math.min(raw, prev);
   }, [state.secondsLeft, state.running, now]);
 
+  const intermissionRemaining = useMemo(() => {
+    if (!state.intermissionActive || !state.intermissionEndsAt) return 0;
+    return Math.max(0, Math.ceil((state.intermissionEndsAt - now) / 1000));
+  }, [state.intermissionActive, state.intermissionEndsAt, now]);
+
+  const roundEndRemaining = useMemo(() => {
+    if (!state.roundEndActive || !state.roundEndEndsAt) return 0;
+    return Math.max(0, Math.ceil((state.roundEndEndsAt - now) / 1000));
+  }, [state.roundEndActive, state.roundEndEndsAt, now]);
+
+  const endGameRemaining = useMemo(() => {
+    if (!state.endGameActive || !state.endGameEndsAt) return 0;
+    return Math.max(0, Math.ceil((state.endGameEndsAt - now) / 1000));
+  }, [state.endGameActive, state.endGameEndsAt, now]);
+
   useEffect(() => {
     lastDisplayRef.current = displaySeconds;
   }, [displaySeconds, state.running]);
+
+  useEffect(() => {
+    if (state.intermissionActive && !wasIntermissionRef.current) {
+      playGlobalSfx("siege_next_round");
+      lastBeepRef.current = null;
+    }
+    wasIntermissionRef.current = state.intermissionActive;
+  }, [state.intermissionActive]);
+
+  useEffect(() => {
+    if (!state.intermissionActive) return;
+    if (intermissionRemaining <= 0) return;
+    if (intermissionRemaining <= 10 && lastBeepRef.current !== intermissionRemaining) {
+      const played = playGlobalSfx("siege_countdown_beep");
+      if (!played) {
+        const ctx =
+          audioCtxRef.current ??
+          (() => {
+            const created = new AudioContext();
+            audioCtxRef.current = created;
+            return created;
+          })();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "square";
+        osc.frequency.value = 880;
+        gain.gain.value = 0.05;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        const nowTime = ctx.currentTime;
+        osc.start(nowTime);
+        osc.stop(nowTime + 0.12);
+      }
+      lastBeepRef.current = intermissionRemaining;
+    }
+  }, [state.intermissionActive, intermissionRemaining]);
+
+  useEffect(() => {
+    if (!state.endGameActive) return;
+    playGlobalSfx("siege_game_over");
+  }, [state.endGameActive]);
+
+  useEffect(() => {
+    if (!state.started) {
+      fadeOutGlobalMusic(600);
+      return;
+    }
+    const blocked = !state.running || state.intermissionActive || state.roundEndActive || state.endGameActive;
+    if (blocked) {
+      fadeOutGlobalMusic(800);
+      return;
+    }
+    playGlobalMusic("siege_survive_music");
+  }, [state.started, state.running, state.intermissionActive, state.roundEndActive, state.endGameActive]);
 
   const timeText = useMemo(() => {
     const minutes = Math.floor(displaySeconds / 60);
@@ -175,6 +298,16 @@ export default function SiegeSurviveDisplayPage() {
     <AuthGate>
       <main style={page()}>
         <style>{`
+          @keyframes siegeFlash {
+            0% { opacity: 0.15; transform: scale(0.98); }
+            50% { opacity: 1; transform: scale(1.02); }
+            100% { opacity: 0.15; transform: scale(0.98); }
+          }
+          @keyframes confettiFall {
+            0% { transform: translateY(-10vh) rotate(0deg); opacity: 0; }
+            10% { opacity: 1; }
+            100% { transform: translateY(110vh) rotate(540deg); opacity: 0; }
+          }
           .siege-bg {
             position: relative;
           }
@@ -189,14 +322,41 @@ export default function SiegeSurviveDisplayPage() {
             pointer-events: none;
           }
         `}</style>
+        {state.intermissionActive && intermissionRemaining > 0 ? (
+          <div style={intermissionOverlay()}>
+            <div style={intermissionNumber()}>{intermissionRemaining}</div>
+            <div style={intermissionLabel()}>Next round starting…</div>
+          </div>
+        ) : null}
+        {state.roundEndActive && roundEndRemaining > 0 ? (
+          <div style={roundEndOverlay()}>
+            <div style={roundEndTitle()}>Round Ended</div>
+            <div style={roundEndSub()}>Get ready…</div>
+          </div>
+        ) : null}
+        {state.endGameActive && endGameRemaining > 0 ? (
+          <div style={endGameOverlay()}>
+            <div style={confettiWrap()}>{renderConfetti(confettiPieces)}</div>
+            <div style={endGameTitle()}>{winnerLabel(state)}</div>
+            <div style={endGameSub()}>Game ends in {endGameRemaining}s</div>
+          </div>
+        ) : null}
         <div className="siege-bg" style={layout()}>
           <div style={header()}>
             <div>
               <div style={title()}>Siege &amp; Survive</div>
               <div style={subtitle()}>Inside vs Outside • Round {state.round}/{state.roundsTotal}</div>
             </div>
-            <div style={statusBadge(state.running, state.completed)}>
-              {state.completed ? "Game Ended" : state.running ? "LIVE" : "Paused"}
+            <div style={statusBadge(state.running, state.completed, state.intermissionActive, state.roundEndActive, state.endGameActive)}>
+              {state.completed
+                ? "Game Ended"
+                : state.roundEndActive
+                ? "Round Ended"
+                : state.intermissionActive
+                ? "Intermission"
+                : state.running
+                ? "LIVE"
+                : "Paused"}
             </div>
           </div>
           <div style={roundBanner()}>
@@ -309,6 +469,144 @@ function renderPlayers(total: number, eliminated: number) {
   });
 }
 
+function intermissionOverlay(): React.CSSProperties {
+  return {
+    position: "fixed",
+    inset: 0,
+    zIndex: 9999,
+    display: "grid",
+    placeItems: "center",
+    background: "rgba(3,7,18,0.72)",
+    backdropFilter: "blur(6px)",
+  };
+}
+
+function intermissionNumber(): React.CSSProperties {
+  return {
+    fontSize: 180,
+    fontWeight: 1000,
+    letterSpacing: 6,
+    color: "#fff",
+    textShadow: "0 0 30px rgba(34,197,94,0.35)",
+    animation: "siegeFlash 1s infinite",
+  };
+}
+
+function intermissionLabel(): React.CSSProperties {
+  return {
+    marginTop: -18,
+    fontSize: 22,
+    fontWeight: 700,
+    letterSpacing: 1.4,
+    textTransform: "uppercase",
+    opacity: 0.85,
+  };
+}
+
+function roundEndOverlay(): React.CSSProperties {
+  return {
+    position: "fixed",
+    inset: 0,
+    zIndex: 9998,
+    display: "grid",
+    placeItems: "center",
+    background: "rgba(2,6,23,0.78)",
+    backdropFilter: "blur(4px)",
+  };
+}
+
+function roundEndTitle(): React.CSSProperties {
+  return {
+    fontSize: 84,
+    fontWeight: 1000,
+    letterSpacing: 3,
+    textTransform: "uppercase",
+    color: "#fff",
+    textShadow: "0 0 22px rgba(59,130,246,0.4)",
+    animation: "siegeFlash 0.8s infinite",
+  };
+}
+
+function roundEndSub(): React.CSSProperties {
+  return {
+    marginTop: -6,
+    fontSize: 20,
+    fontWeight: 700,
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+    opacity: 0.75,
+  };
+}
+
+function endGameOverlay(): React.CSSProperties {
+  return {
+    position: "fixed",
+    inset: 0,
+    zIndex: 9997,
+    display: "grid",
+    placeItems: "center",
+    background: "rgba(2,6,23,0.82)",
+    backdropFilter: "blur(6px)",
+  };
+}
+
+function endGameTitle(): React.CSSProperties {
+  return {
+    fontSize: 96,
+    fontWeight: 1000,
+    letterSpacing: 2,
+    textTransform: "uppercase",
+    color: "#fff",
+    textShadow: "0 0 30px rgba(250,204,21,0.35)",
+    animation: "siegeFlash 1s infinite",
+  };
+}
+
+function endGameSub(): React.CSSProperties {
+  return {
+    marginTop: -4,
+    fontSize: 22,
+    fontWeight: 800,
+    letterSpacing: 1.4,
+    textTransform: "uppercase",
+    opacity: 0.8,
+  };
+}
+
+function confettiWrap(): React.CSSProperties {
+  return {
+    position: "absolute",
+    inset: 0,
+    overflow: "hidden",
+    pointerEvents: "none",
+  };
+}
+
+function renderConfetti(pieces: Array<{ id: number; left: number; size: number; delay: number; duration: number; hue: number }>) {
+  return pieces.map((piece) => (
+    <div
+      key={piece.id}
+      style={{
+        position: "absolute",
+        top: "-12%",
+        left: `${piece.left}%`,
+        width: piece.size,
+        height: piece.size * 1.4,
+        borderRadius: 3,
+        background: `hsl(${piece.hue} 90% 60%)`,
+        boxShadow: "0 0 12px rgba(255,255,255,0.3)",
+        animation: `confettiFall ${piece.duration}s linear ${piece.delay}s infinite`,
+      }}
+    />
+  ));
+}
+
+function winnerLabel(state: SiegeState): string {
+  if (state.teamAWins === state.teamBWins) return "Tie Game";
+  if (state.teamAWins > state.teamBWins) return `${state.teamAName || "Team A"} Wins`;
+  return `${state.teamBName || "Team B"} Wins`;
+}
+
 function page(): React.CSSProperties {
   return {
     minHeight: "100vh",
@@ -348,8 +646,24 @@ function roundBanner(): React.CSSProperties {
   };
 }
 
-function statusBadge(running: boolean, completed: boolean): React.CSSProperties {
-  const color = completed ? "rgba(251,191,36,0.4)" : running ? "rgba(34,197,94,0.5)" : "rgba(148,163,184,0.4)";
+function statusBadge(
+  running: boolean,
+  completed: boolean,
+  intermission: boolean,
+  roundEnd: boolean,
+  endGame: boolean
+): React.CSSProperties {
+  const color = completed
+    ? "rgba(251,191,36,0.4)"
+    : endGame
+    ? "rgba(250,204,21,0.5)"
+    : roundEnd
+    ? "rgba(248,113,113,0.5)"
+    : intermission
+    ? "rgba(59,130,246,0.5)"
+    : running
+    ? "rgba(34,197,94,0.5)"
+    : "rgba(148,163,184,0.4)";
   return {
     padding: "8px 14px",
     borderRadius: 999,

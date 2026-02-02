@@ -9,7 +9,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
 
-  const supabase = supabaseServer();
+  const supabase = await supabaseServer();
 
   const { error } = await supabase.from("ledger_entries").insert({
     student_id,

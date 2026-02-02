@@ -8,9 +8,14 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => ({}));
   const request_id = String(body?.request_id ?? "").trim();
-  const student_ids = Array.isArray(body?.student_ids) ? body.student_ids.map((id: any) => String(id)) : [];
-  const relationship_types = body?.relationship_types && typeof body.relationship_types === "object" ? body.relationship_types : {};
-  const uniqueStudentIds = Array.from(new Set(student_ids)).filter(Boolean);
+  const student_ids: string[] = Array.isArray(body?.student_ids)
+    ? body.student_ids.map((id: any) => String(id))
+    : [];
+  const relationship_types: Record<string, string> =
+    body?.relationship_types && typeof body.relationship_types === "object"
+      ? (body.relationship_types as Record<string, string>)
+      : {};
+  const uniqueStudentIds: string[] = Array.from(new Set(student_ids)).filter(Boolean);
 
   if (!request_id || !uniqueStudentIds.length) {
     return NextResponse.json({ ok: false, error: "request_id and student_ids required" }, { status: 400 });
@@ -36,7 +41,7 @@ export async function POST(req: Request) {
   const links = uniqueStudentIds.map((student_id) => ({
     parent_id: parent.id,
     student_id,
-    relationship_type: String(relationship_types?.[student_id] ?? "parent").toLowerCase() || "parent",
+    relationship_type: String(relationship_types[student_id] ?? "parent").toLowerCase() || "parent",
   }));
   const { error: lErr } = await admin.from("parent_students").upsert(links, { onConflict: "parent_id,student_id" });
   if (lErr) return NextResponse.json({ ok: false, error: lErr.message }, { status: 500 });

@@ -19,7 +19,7 @@ export async function GET() {
       .select("id,name,description,category")
       .order("category", { ascending: true })
       .order("name", { ascending: true });
-    data = retry.data;
+    data = (retry.data ?? []).map((row: any) => ({ ...row, comp_team_only: false }));
     error = retry.error;
   }
 

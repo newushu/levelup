@@ -175,8 +175,8 @@ export default function ClassroomPage() {
   const [groupBusy, setGroupBusy] = useState(false);
   const [groupMsg, setGroupMsg] = useState("");
   const scheduleOverrides: Record<string, Omit<ScheduleCard, "id" | "name">> = {
-    class_a: { time: "4:30 PM", instructors: ["Coach Mia"] },
-    class_b: { time: "6:00 PM", instructors: ["Coach Leo"] },
+    class_a: { session_id: "class_a", instance_id: "class_a", class_id: "class_a", time: "4:30 PM", instructors: ["Coach Mia"] },
+    class_b: { session_id: "class_b", instance_id: "class_b", class_id: "class_b", time: "6:00 PM", instructors: ["Coach Leo"] },
   };
   const todayKey = useMemo(() => toLocalDateKey(new Date()), []);
   const activeRosterCount = useMemo(() => {

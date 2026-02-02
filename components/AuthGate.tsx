@@ -21,7 +21,7 @@ export default function AuthGate({
         else {
           setOk(false);
           if (redirectDelayMs > 0) {
-            redirectTimer = window.setTimeout(() => {
+            redirectTimer = setTimeout(() => {
               window.location.href = "/login";
             }, redirectDelayMs);
           } else {
@@ -31,7 +31,7 @@ export default function AuthGate({
       } catch {
         setOk(false);
         if (redirectDelayMs > 0) {
-          redirectTimer = window.setTimeout(() => {
+          redirectTimer = setTimeout(() => {
             window.location.href = "/login";
           }, redirectDelayMs);
         } else {
@@ -40,7 +40,7 @@ export default function AuthGate({
       }
     })();
     return () => {
-      if (redirectTimer) window.clearTimeout(redirectTimer);
+      if (redirectTimer) clearTimeout(redirectTimer);
     };
   }, []);
 

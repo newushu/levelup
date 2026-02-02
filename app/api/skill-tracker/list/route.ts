@@ -57,7 +57,7 @@ export async function GET(req: Request) {
   const { data, error } = await q;
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
-  const rows = (data ?? []) as TrackerRow[];
+  const rows = (data ?? []) as unknown as TrackerRow[];
   const ids = rows.map((r) => r.id);
   const creatorIds = Array.from(new Set(rows.map((r) => String(r.created_by ?? "")).filter(Boolean)));
   const creatorRoleById = new Map<string, string>();

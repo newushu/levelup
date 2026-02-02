@@ -122,7 +122,7 @@ export default function ChatWidget() {
 
   useEffect(() => {
     if (!open || !activeThreadId) return;
-    let t: ReturnType<typeof setInterval> | null = null;
+    let t: ReturnType<typeof window.setInterval> | null = null;
     t = setInterval(() => {
       refreshMessages(activeThreadId);
     }, 2500);
@@ -133,7 +133,7 @@ export default function ChatWidget() {
 
   useEffect(() => {
     if (!open) return;
-    let t: ReturnType<typeof setInterval> | null = null;
+    let t: ReturnType<typeof window.setInterval> | null = null;
     (async () => {
       if (viewerRole === "student") {
         await fetch("/api/chat/presence", { method: "POST" });

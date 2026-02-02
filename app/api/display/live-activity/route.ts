@@ -134,7 +134,7 @@ export async function GET(req: Request) {
   const avatarIds = Array.from(
     new Set((settings ?? []).map((s: any) => String(s.avatar_id ?? "").trim()).filter(Boolean))
   );
-  let avatarMap = new Map<string, { storage_path: string | null }>();
+  let avatarMap = new Map<string, { storage_path: string | null; zoom_pct?: number | null }>();
   if (avatarIds.length) {
     const { data: avatars } = await supabase
       .from("avatars")
@@ -257,6 +257,7 @@ export async function GET(req: Request) {
     string,
     {
       storage_path: string | null;
+      zoom_pct?: number | null;
       bg_color: string | null;
       particle_style: string | null;
       corner_border_url: string | null;
@@ -270,6 +271,21 @@ export async function GET(req: Request) {
       card_plate_url: string | null;
     }
   >();
+  const emptyAvatar = {
+    storage_path: null,
+    zoom_pct: 100,
+    bg_color: null,
+    particle_style: null,
+    corner_border_url: null,
+    corner_border_render_mode: null,
+    corner_border_html: null,
+    corner_border_css: null,
+    corner_border_js: null,
+    corner_border_offset_x: 0,
+    corner_border_offset_y: 0,
+    corner_border_offsets_by_context: {},
+    card_plate_url: null,
+  };
   (settings ?? []).forEach((s: any) => {
     const id = String(s.student_id ?? "");
     if (!id) return;
@@ -373,13 +389,7 @@ export async function GET(req: Request) {
     const [studentId, setId] = key.split(":");
     const total = totalSkillsBySet.get(setId) ?? 0;
     if (total > 0 && set.size === total) {
-      const avatar = avatarByStudent.get(studentId) ?? {
-        storage_path: null,
-        bg_color: null,
-        particle_style: null,
-        corner_border_url: null,
-        card_plate_url: null,
-      };
+      const avatar = avatarByStudent.get(studentId) ?? emptyAvatar;
       skillTreeEvents.push({
         id: `skillset-${studentId}-${setId}`,
         student_id: studentId,
@@ -439,13 +449,7 @@ export async function GET(req: Request) {
     const rankAfter = afterRanks.get(studentId);
     const isTop3 = rankAfter !== undefined && rankAfter <= 3;
     if (points > 0 && isTop3 && !wasTop3) {
-      const avatar = avatarByStudent.get(studentId) ?? {
-        storage_path: null,
-        bg_color: null,
-        particle_style: null,
-        corner_border_url: null,
-        card_plate_url: null,
-      };
+      const avatar = avatarByStudent.get(studentId) ?? emptyAvatar;
       const fromLabel = rankBefore ? `#${rankBefore}` : "Unranked";
       top3Events.push({
         id: `top3-${studentId}-${row.created_at}`,
@@ -564,14 +568,7 @@ export async function GET(req: Request) {
     const note = String(row.note ?? "");
     const studentId = String(row.student_id ?? "");
     const studentName = nameById.get(studentId) ?? "Student";
-    const avatar = avatarByStudent.get(studentId) ?? {
-      storage_path: null,
-      zoom_pct: 100,
-      bg_color: null,
-      particle_style: null,
-      corner_border_url: null,
-      card_plate_url: null,
-    };
+    const avatar = avatarByStudent.get(studentId) ?? emptyAvatar;
     const category = String(row.category ?? "").toLowerCase();
     const isRedeem = category === "redeem" || note.toLowerCase().startsWith("redeemed:");
     const isBattle = note.toLowerCase().includes("battle pulse");
@@ -646,7 +643,8 @@ export async function GET(req: Request) {
             const teamB = (b.team_b_ids ?? []).map(String);
             return String(b.winner_id ?? "") === studentId || participants.includes(studentId) || teamA.includes(studentId) || teamB.includes(studentId);
           });
-        if (best?.tracker_skills?.name) skillName = String(best.tracker_skills.name);
+        const trackerSkill = Array.isArray(best?.tracker_skills) ? best.tracker_skills[0] : best?.tracker_skills;
+        if (trackerSkill?.name) skillName = String(trackerSkill.name);
         wagerAmount = Number(best?.wager_amount ?? 0);
       }
       if (createdMs) {
@@ -687,7 +685,6 @@ export async function GET(req: Request) {
       is_competition_team: compById.get(studentId) ?? false,
       avatar_storage_path: avatar.storage_path ?? null,
       avatar_zoom_pct: Number(avatar.zoom_pct ?? 100),
-      avatar_zoom_pct: Number(avatar.zoom_pct ?? 100),
       avatar_bg: avatar.bg_color ?? null,
       avatar_effect: avatar.particle_style ?? null,
       corner_border_url: avatar.corner_border_url ?? null,
@@ -716,13 +713,7 @@ export async function GET(req: Request) {
     const badgeName = String((row.achievement_badges as any)?.name ?? "Badge");
     const studentId = String(row.student_id ?? "");
     const studentName = nameById.get(studentId) ?? "Student";
-    const avatar = avatarByStudent.get(studentId) ?? {
-      storage_path: null,
-      bg_color: null,
-      particle_style: null,
-      corner_border_url: null,
-      card_plate_url: null,
-    };
+    const avatar = avatarByStudent.get(studentId) ?? emptyAvatar;
     return {
       id: String(row.id ?? `badge-${row.earned_at}`),
       student_id: studentId,
@@ -755,13 +746,7 @@ export async function GET(req: Request) {
     .map((row: any) => {
       const studentId = String(row.student_id ?? "");
       const studentName = nameById.get(studentId) ?? "Student";
-      const avatar = avatarByStudent.get(studentId) ?? {
-        storage_path: null,
-        bg_color: null,
-        particle_style: null,
-        corner_border_url: null,
-        card_plate_url: null,
-      };
+    const avatar = avatarByStudent.get(studentId) ?? emptyAvatar;
       const challenge = challengeById.get(String(row.challenge_id ?? ""));
       const tier = challenge?.tier ?? null;
       return {
@@ -799,24 +784,19 @@ export async function GET(req: Request) {
     .map((row: any) => {
     const studentId = String(row.student_id ?? "");
     const studentName = nameById.get(studentId) ?? "Student";
-    const avatar = avatarByStudent.get(studentId) ?? {
-      storage_path: null,
-      zoom_pct: 100,
-      bg_color: null,
-      particle_style: null,
-      corner_border_url: null,
-      card_plate_url: null,
-    };
-    const wheelName = String(row.roulette_wheels?.name ?? "Prize Wheel");
-    const segLabelRaw = String(row.roulette_segments?.label ?? row.prize_text ?? row.item_key ?? "Spin Result");
+    const avatar = avatarByStudent.get(studentId) ?? emptyAvatar;
+    const wheelRow = Array.isArray(row.roulette_wheels) ? row.roulette_wheels[0] : row.roulette_wheels;
+    const segmentRow = Array.isArray(row.roulette_segments) ? row.roulette_segments[0] : row.roulette_segments;
+    const wheelName = String(wheelRow?.name ?? "Prize Wheel");
+    const segLabelRaw = String(segmentRow?.label ?? row.prize_text ?? row.item_key ?? "Spin Result");
     const segLabelLower = segLabelRaw.trim().toLowerCase();
     const segLabel =
       !segLabelRaw.trim() || segLabelLower === "new segment" || segLabelLower === "segment"
         ? "Spin Result"
         : segLabelRaw;
-    const segType = String(row.roulette_segments?.segment_type ?? "");
-    const prizeText = row.prize_text ?? row.roulette_segments?.prize_text ?? null;
-    const itemKey = row.item_key ?? row.roulette_segments?.item_key ?? null;
+    const segType = String(segmentRow?.segment_type ?? "");
+    const prizeText = row.prize_text ?? segmentRow?.prize_text ?? null;
+    const itemKey = row.item_key ?? segmentRow?.item_key ?? null;
     let detail = `${wheelName} • ${segLabel}`;
     if (segType === "prize" && prizeText) detail = `Prize Wheel • ${prizeText}`;
     if (segType === "item" && itemKey) detail = `Prize Wheel • ${itemKey}`;

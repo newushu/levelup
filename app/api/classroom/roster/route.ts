@@ -435,6 +435,20 @@ export async function POST(req: Request) {
         card_plate_url: string | null;
       }
     >();
+    const emptyAvatar = {
+      storage_path: null,
+      bg_color: null,
+      particle_style: null,
+      corner_border_url: null,
+      corner_border_render_mode: null,
+      corner_border_html: null,
+      corner_border_css: null,
+      corner_border_js: null,
+      corner_border_offset_x: 0,
+      corner_border_offset_y: 0,
+      corner_border_offsets_by_context: {},
+      card_plate_url: null,
+    };
     (settings ?? []).forEach((s: any) => {
       const id = String(s.student_id ?? "");
       const avatarId = String(s.avatar_id ?? "");
@@ -477,13 +491,7 @@ export async function POST(req: Request) {
 
     out.forEach((row: any) => {
       const legacyPath = legacyAvatarByStudent.get(row.student.id) ?? null;
-      const avatar =
-        avatarByStudent.get(row.student.id) ?? {
-          storage_path: legacyPath ?? null,
-          bg_color: null,
-          corner_border_url: null,
-          card_plate_url: null,
-        };
+      const avatar = avatarByStudent.get(row.student.id) ?? { ...emptyAvatar, storage_path: legacyPath ?? null };
       row.student.avatar_storage_path = avatar.storage_path;
       row.student.avatar_bg = avatar.bg_color;
       row.student.avatar_effect = avatar.particle_style;
@@ -508,7 +516,10 @@ export async function POST(req: Request) {
         .from("student_achievement_badges")
         .select("student_id,achievement_badges:badge_id(id,category,icon_path)")
         .in("student_id", studentIds);
-      badgeRows = retry.data;
+      badgeRows = (retry.data ?? []).map((row: any) => ({
+        ...row,
+        achievement_badges: { ...row.achievement_badges, badge_library: [] },
+      }));
     }
 
     const prestigeMap = new Map<string, string[]>();

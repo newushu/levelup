@@ -79,8 +79,10 @@ export async function POST(req: Request) {
   if (!spin) return NextResponse.json({ ok: false, error: "Spin not found" }, { status: 404 });
   if (spin.confirmed_at) return NextResponse.json({ ok: false, error: "Spin already confirmed" }, { status: 400 });
 
-  const wheelName = String(spin.roulette_wheels?.name ?? "Prize Wheel");
-  const rawSegmentLabel = String(spin.roulette_segments?.label ?? spin.prize_text ?? "Wheel Prize");
+  const wheelRow = Array.isArray(spin.roulette_wheels) ? spin.roulette_wheels[0] : spin.roulette_wheels;
+  const segmentRow = Array.isArray(spin.roulette_segments) ? spin.roulette_segments[0] : spin.roulette_segments;
+  const wheelName = String(wheelRow?.name ?? "Prize Wheel");
+  const rawSegmentLabel = String(segmentRow?.label ?? spin.prize_text ?? "Wheel Prize");
   const segmentLabel =
     !rawSegmentLabel.trim() || rawSegmentLabel.trim().toLowerCase() === "new segment"
       ? "Spin Result"

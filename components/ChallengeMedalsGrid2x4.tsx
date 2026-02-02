@@ -96,7 +96,3 @@ function iconWrap(kind: Tier | "total" | "masterShown"): React.CSSProperties {
   // total
   return { ...base, background: "rgba(255,255,255,0.08)" };
 }
-Use it on dashboard right-side wherever you place the medals box:
-import ChallengeMedalsGrid2x4 from "../../components/ChallengeMedalsGrid2x4";
-and:
-<ChallengeMedalsGrid2x4 counts={medalCounts} />

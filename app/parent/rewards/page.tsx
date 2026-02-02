@@ -65,7 +65,7 @@ function ParentRewardsInner() {
       const pRes = await fetch("/api/parent/discounts/pending", { cache: "no-store" });
       const pJson = await safeJson(pRes);
       if (pJson.ok) {
-        const pending = new Set((pJson.json?.pending ?? []).map((row: any) => String(row.reward_id ?? "")));
+        const pending = new Set<string>((pJson.json?.pending ?? []).map((row: any) => String(row.reward_id ?? "")));
         setPendingIds(pending);
       }
 

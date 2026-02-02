@@ -171,7 +171,7 @@ export async function POST(req: NextRequest) {
             .from("class_schedule_instances")
             .select("id")
             .in("id", instanceIds);
-          instances = retry.data;
+          instances = (retry.data ?? []).map((row: any) => ({ ...row, entry_type: null }));
           instErr = retry.error;
         }
         if (instErr) return NextResponse.json({ ok: false, error: instErr.message }, { status: 500 });

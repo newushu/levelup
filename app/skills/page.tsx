@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import StudentTopBar, { StudentTopBarRow } from "@/components/StudentTopBar";
+import StudentTopBar from "@/components/StudentTopBar";
 import CriticalNoticeBar from "@/components/CriticalNoticeBar";
 import { fireFx } from "@/components/GlobalFx";
 import { playGlobalSfx, setGlobalSounds } from "@/lib/globalAudio";
@@ -18,6 +18,15 @@ type SkillRow = {
   set_id: string | null;
   set_name: string | null;
   sort_in_level: number | null; // from alias sort_order
+};
+
+type StudentTopBarRow = {
+  id: string;
+  name: string;
+  level: number;
+  points_total: number;
+  is_competition_team: boolean;
+  avatar_storage_path?: string | null;
 };
 
 type CompletedRow = { skill_id: string; completed_at: string | null };

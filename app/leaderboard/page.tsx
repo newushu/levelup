@@ -53,7 +53,7 @@ export default function LeaderboardPage() {
                 }}
               >
                 <div style={{ fontWeight: 950, fontSize: 18, opacity: 0.9 }}>#{idx + 1}</div>
-                <EvolvingAvatar level={s.level} size={56} />
+                <EvolvingAvatar level={s.level} size={56} variant="dragon" />
                 <div style={{ fontWeight: 950, fontSize: 18 }}>
                   {s.name} {s.isCompetitionTeam ? "★" : ""}
                   <div className="sub" style={{ marginTop: 4 }}>

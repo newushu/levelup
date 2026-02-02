@@ -97,8 +97,8 @@ export default function CheckinPage() {
   }, [roster]);
   const [passAccess, setPassAccess] = useState<Record<string, string[]>>({});
   const scheduleOverrides: Record<string, Omit<ScheduleCard, "id" | "name">> = {
-    class_a: { time: "4:30 PM", instructors: ["Coach Mia"] },
-    class_b: { time: "6:00 PM", instructors: ["Coach Leo"] },
+    class_a: { class_id: "class_a", time: "4:30 PM", instructors: ["Coach Mia"] },
+    class_b: { class_id: "class_b", time: "6:00 PM", instructors: ["Coach Leo"] },
   };
 
   useEffect(() => {
@@ -381,8 +381,8 @@ export default function CheckinPage() {
 
       setOkMsg(`✅ ${student.name} checked in to ${selectedClassName || "class"}.`);
       setLastCheckin({ name: student.name, className: selectedClassName || "class", instanceId });
-      if (flashTimer.current) window.clearTimeout(flashTimer.current);
-      flashTimer.current = window.setTimeout(() => setLastCheckin(null), 1800);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setLastCheckin(null), 1800);
       setQuery("");
       setResults([]);
       setLoading(false);
@@ -696,7 +696,7 @@ export default function CheckinPage() {
             {results.map((s) => {
               const isComp = !!s.is_competition_team;
               return (
-                <CompetitionPrestigeFrame key={s.id} show={isComp}>
+                <CompetitionPrestigeFrame key={s.id} show={isComp} masterStars={Number(s.level ?? 0)}>
                   <div
                     style={{
                       padding: "12px 12px",

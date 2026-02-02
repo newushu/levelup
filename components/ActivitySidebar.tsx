@@ -17,7 +17,9 @@ export default function ActivitySidebar() {
   useEffect(() => {
     setMounted(true);
     const unsub = subscribeToStateChanges(() => setTick((t) => t + 1));
-    return unsub;
+    return () => {
+      unsub();
+    };
   }, []);
 
   const app = useMemo(() => (mounted ? loadState() : defaultState), [mounted, tick]);

@@ -77,6 +77,8 @@ type BattleRow = {
   right_attempts: number;
   left_successes: number;
   right_successes: number;
+  left_attempts_list?: boolean[];
+  right_attempts_list?: boolean[];
   winner_id?: string | null;
   mvp_ids?: string[];
   points_delta_by_id?: Record<string, number>;
@@ -355,8 +357,8 @@ export default function SkillPulseDisplayPage() {
       }
     };
     const scheduleRefresh = () => {
-      if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
-      refreshTimer.current = window.setTimeout(load, 200);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = setTimeout(load, 200);
     };
     const supabase = supabaseClient();
     let channel: ReturnType<typeof supabase.channel> | null = null;
@@ -383,11 +385,11 @@ export default function SkillPulseDisplayPage() {
       scheduleRefresh();
     });
     load();
-    timer = window.setInterval(load, 15000);
+    timer = setInterval(load, 15000);
     return () => {
       mounted = false;
-      if (timer) window.clearInterval(timer);
-      if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
+      if (timer) clearInterval(timer);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
       if (authListener?.subscription) authListener.subscription.unsubscribe();
       if (channel) supabase.removeChannel(channel);
     };
@@ -415,7 +417,7 @@ export default function SkillPulseDisplayPage() {
         pending.map(async (t) => {
           const res = await fetch(`/api/skill-tracker/logs?tracker_id=${encodeURIComponent(t.id)}&limit=12`, { cache: "no-store" });
           const data = await safeJson(res);
-          if (!data.ok) return [t.id, []] as const;
+          if (!data.ok) return [t.id, [] as HistoryLog[]] as const;
           return [t.id, (data.json?.logs ?? []) as HistoryLog[]] as const;
         })
       );
@@ -484,7 +486,7 @@ export default function SkillPulseDisplayPage() {
       seenBattleIntro.current.add(item.id);
       setBattleIntro((prev) => ({ ...prev, [item.id]: true }));
       playGlobalSfx("battle_pulse_swords");
-      const timer = window.setTimeout(() => {
+      const timer = setTimeout(() => {
         setBattleIntro((prev) => ({ ...prev, [item.id]: false }));
         battleIntroTimers.current.delete(item.id);
       }, 1600);
@@ -494,7 +496,7 @@ export default function SkillPulseDisplayPage() {
 
   useEffect(() => {
     return () => {
-      battleIntroTimers.current.forEach((timer) => window.clearTimeout(timer));
+      battleIntroTimers.current.forEach((timer) => clearTimeout(timer));
       battleIntroTimers.current.clear();
     };
   }, []);
@@ -502,10 +504,10 @@ export default function SkillPulseDisplayPage() {
   useEffect(() => {
     if (!authOk || !displayEnabled) return;
     if (!shouldAnimate || pageCount <= 1) return;
-    const timer = window.setInterval(() => {
+    const timer = setInterval(() => {
       setPageIndex((prev) => (prev + 1) % pageCount);
     }, 11000);
-    return () => window.clearInterval(timer);
+    return () => clearInterval(timer);
   }, [authOk, displayEnabled, pageCount, shouldAnimate]);
 
   return (

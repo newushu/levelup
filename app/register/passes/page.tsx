@@ -11,6 +11,9 @@ type PassType = {
   discount_start?: string | null;
   discount_end?: string | null;
   access_scope?: string | null;
+  image_url?: string | null;
+  image_text?: string | null;
+  use_text?: string | null;
 };
 
 function isDiscountActive(pass: PassType, today: string) {

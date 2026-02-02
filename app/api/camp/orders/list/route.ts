@@ -9,7 +9,7 @@ export async function GET() {
 
   const { data: roles, error: rErr } = await supabase
     .from("user_roles")
-    .select("role")
+    .select("role,student_id")
     .eq("user_id", u.user.id);
   if (rErr) return NextResponse.json({ ok: false, error: rErr.message }, { status: 500 });
 

@@ -10,6 +10,7 @@ type TodoRow = {
   body: string;
   urgency: "low" | "medium" | "high" | "critical";
   created_at: string;
+  status?: "open" | "done";
 };
 
 async function safeJson(res: Response) {

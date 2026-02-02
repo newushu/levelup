@@ -19,7 +19,7 @@ export default function NavBar() {
   const [studentName, setStudentName] = useState<string>("");
   const [dateText, setDateText] = useState<string>(""); // client-only
   const [timeText, setTimeText] = useState<string>(""); // client-only
-  const [openMenu, setOpenMenu] = useState<null | "classes" | "performance" | "passes" | "camp" | "more">(null);
+  const [openMenu, setOpenMenu] = useState<null | "classes" | "performance" | "passes" | "camp" | "more" | "tools">(null);
   const [groupPointsOpen, setGroupPointsOpen] = useState(false);
   const [groupStudents, setGroupStudents] = useState<Array<{ id: string; name: string; level: number; points_total: number; is_competition_team: boolean }>>([]);
   const [groupLoading, setGroupLoading] = useState(false);
@@ -38,14 +38,14 @@ export default function NavBar() {
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const createRef = useRef<HTMLDivElement | null>(null);
 
-  const openMenuSafe = (menu: "classes" | "performance" | "passes" | "camp" | "more") => {
-    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+  const openMenuSafe = (menu: "classes" | "performance" | "passes" | "camp" | "more" | "tools") => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
     setOpenMenu(menu);
   };
 
   const scheduleClose = () => {
-    if (closeTimer.current) window.clearTimeout(closeTimer.current);
-    closeTimer.current = window.setTimeout(() => setOpenMenu(null), 240);
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => setOpenMenu(null), 240);
   };
 
   useEffect(() => {
@@ -55,7 +55,7 @@ export default function NavBar() {
       setTimeText(now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
     };
     updateClock();
-    const timer = window.setInterval(updateClock, 60_000);
+    const timer = setInterval(updateClock, 60_000);
     (async () => {
       try {
         const res = await fetch("/api/auth/me", { cache: "no-store" });
@@ -82,7 +82,7 @@ export default function NavBar() {
         setAccountName("");
       }
     })();
-    return () => window.clearInterval(timer);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {

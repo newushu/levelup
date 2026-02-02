@@ -35,7 +35,7 @@ export default function GlobalParticles() {
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none" }}>
-      <Particles id="global-particles" init={particlesInit} options={options} style={{ position: "absolute", inset: 0 }} />
+      <Particles id="global-particles" init={particlesInit} options={options as any} style={{ position: "absolute", inset: 0 }} />
     </div>
   );
 }

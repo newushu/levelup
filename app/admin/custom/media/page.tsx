@@ -344,6 +344,7 @@ const SOUND_EFFECT_PRESETS: Array<{ key: string; label: string; purpose: string 
   { key: "rule_keeper", label: "Rule Keeper", purpose: "Positive behavior bonus" },
   { key: "logo_intro", label: "Logo Intro", purpose: "Home logo intro animation" },
   { key: "battle_pulse_music", label: "Battle Pulse Music", purpose: "Battle Pulse display only" },
+  { key: "siege_survive_music", label: "Siege & Survive Music", purpose: "Siege & Survive display only" },
   { key: "battle_pulse_swords", label: "Battle Pulse Swords", purpose: "Battle Pulse intro swords clash" },
   { key: "battle_pulse_winner", label: "Battle Pulse Winner", purpose: "Battle Pulse winner announcement" },
   { key: "battle_pulse_win", label: "Battle Pulse Win", purpose: "Battle Pulse winner" },
@@ -352,6 +353,9 @@ const SOUND_EFFECT_PRESETS: Array<{ key: string; label: string; purpose: string 
   { key: "battle_pulse_counter", label: "Battle Pulse Counter", purpose: "Battle Pulse counter attack" },
   { key: "battle_pulse_check", label: "Battle Pulse Check", purpose: "Battle Pulse success" },
   { key: "battle_pulse_x", label: "Battle Pulse X", purpose: "Battle Pulse miss" },
+  { key: "siege_next_round", label: "Siege Next Round", purpose: "Siege & Survive next round announcement" },
+  { key: "siege_countdown_beep", label: "Siege Countdown Beep", purpose: "Siege & Survive countdown beeps" },
+  { key: "siege_game_over", label: "Siege Game Over", purpose: "Siege & Survive game over" },
   { key: "skill_pulse", label: "Skill Pulse", purpose: "Skill Pulse completion" },
   { key: "timer_end", label: "Timer End", purpose: "Timer finished" },
   { key: "badge_earn", label: "Badge Earned", purpose: "Achievement badge earned" },
@@ -620,7 +624,7 @@ export default function MediaVaultAdminPage() {
 
     const rawSoundEffects = (effectsJson.json?.effects ?? []) as SoundEffectRow[];
     const effectByKey = new Map(rawSoundEffects.map((row) => [row.key, row]));
-    const merged = SOUND_EFFECT_PRESETS.map((preset) => {
+    const merged: SoundEffectRow[] = SOUND_EFFECT_PRESETS.map((preset) => {
       const row = effectByKey.get(preset.key);
       return {
         id: row?.id,
@@ -642,7 +646,7 @@ export default function MediaVaultAdminPage() {
     setAvatars((avatarJson.json?.avatars ?? []) as AvatarRow[]);
     const rawEffects = (avatarEffectsJson.json?.effects ?? []) as AvatarEffectRow[];
     const effectMap = new Map(rawEffects.map((e) => [e.key, e]));
-    const mergedEffects = AVATAR_EFFECT_PRESETS.map((preset) => {
+    const mergedEffects: AvatarEffectRow[] = AVATAR_EFFECT_PRESETS.map((preset) => {
       const row = effectMap.get(preset.key);
       return {
         id: row?.id,
@@ -3481,12 +3485,12 @@ function button(active = false): React.CSSProperties {
   };
 }
 
-function ghostButton(): React.CSSProperties {
+function ghostButton(active = false): React.CSSProperties {
   return {
     borderRadius: 10,
     padding: "8px 12px",
     border: "1px solid rgba(255,255,255,0.16)",
-    background: "transparent",
+    background: active ? "rgba(59,130,246,0.18)" : "transparent",
     color: "white",
     fontWeight: 700,
     cursor: "pointer",

@@ -103,7 +103,7 @@ export default function CompetitionPrestigeFrame({
               {showSparkles ? (
                 <div style={badgeSparkleArea(badgePosition, badgeOffsetLeft, badgeSize)}>
                   <div style={badgeSparkleWrap()}>
-                    <Particles init={particlesInit} options={badgeSparkleOptions} style={{ position: "absolute", inset: 0 }} />
+                    <Particles init={particlesInit} options={badgeSparkleOptions as any} style={{ position: "absolute", inset: 0 }} />
                   </div>
                 </div>
               ) : null}

@@ -34,7 +34,7 @@ export async function GET(req: Request) {
       .gte("session_date", today)
       .lte("session_date", rangeEnd)
       .order("start_time", { ascending: true });
-    schedule = retry.data;
+    schedule = (retry.data ?? []).map((row: any) => ({ ...row, is_cancelled: false }));
     sErr = retry.error;
   }
 

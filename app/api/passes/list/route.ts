@@ -30,7 +30,18 @@ export async function GET() {
   const isMissingColumn = (err: any) => String(err?.message || "").toLowerCase().includes("column");
   if (error && isMissingColumn(error)) {
     const retry = await supabase.from("pass_types").select("id,name,description,enabled").order("name", { ascending: true });
-    data = retry.data;
+    data = (retry.data ?? []).map((row: any) => ({
+      ...row,
+      price_usd: null,
+      discount_price_usd: null,
+      discount_start: null,
+      discount_end: null,
+      access_scope: null,
+      default_valid_days: null,
+      image_url: null,
+      image_text: null,
+      use_text: null,
+    }));
     error = retry.error;
   }
 

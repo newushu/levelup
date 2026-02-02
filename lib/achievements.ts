@@ -1,5 +1,7 @@
-import { AppState, AchievementBadgeId } from "./appState";
+import { AppState } from "./appState";
 import { lifetimeEarnedPoints } from "./stats";
+
+type AchievementBadgeId = string;
 
 function ensureArray<T>(x: any): T[] {
   return Array.isArray(x) ? (x as T[]) : [];

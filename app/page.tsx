@@ -140,8 +140,8 @@ function HomeInner() {
     setPulseDetailRows([]);
     setPulseDetailOpen(true);
 
-    if (pulseTimer.current) window.clearTimeout(pulseTimer.current);
-    pulseTimer.current = window.setTimeout(() => setPulseDetailOpen(false), 5000);
+    if (pulseTimer.current) clearTimeout(pulseTimer.current);
+    pulseTimer.current = setTimeout(() => setPulseDetailOpen(false), 5000);
 
     const res = await fetch("/api/leaderboard/skill-pulse-detail", {
       method: "POST",
@@ -164,8 +164,8 @@ function HomeInner() {
     setWeeklyDetailRows([]);
     setWeeklyDetailOpen(true);
 
-    if (weeklyTimer.current) window.clearTimeout(weeklyTimer.current);
-    weeklyTimer.current = window.setTimeout(() => setWeeklyDetailOpen(false), 5000);
+    if (weeklyTimer.current) clearTimeout(weeklyTimer.current);
+    weeklyTimer.current = setTimeout(() => setWeeklyDetailOpen(false), 5000);
 
     const res = await fetch("/api/leaderboard/weekly-detail", {
       method: "POST",
@@ -188,8 +188,8 @@ function HomeInner() {
     setTotalDetailRows([]);
     setTotalDetailOpen(true);
 
-    if (totalTimer.current) window.clearTimeout(totalTimer.current);
-    totalTimer.current = window.setTimeout(() => setTotalDetailOpen(false), 5000);
+    if (totalTimer.current) clearTimeout(totalTimer.current);
+    totalTimer.current = setTimeout(() => setTotalDetailOpen(false), 5000);
 
     const res = await fetch("/api/leaderboard/total-detail", {
       method: "POST",
@@ -391,12 +391,12 @@ function LogoIntroOverlay({ onDone }: { onDone?: () => void }) {
 
   useEffect(() => {
     if (!active) return;
-    const timer = window.setTimeout(() => {
+    const timer = setTimeout(() => {
       setActive(false);
       onDone?.();
     }, 4050);
     return () => {
-      window.clearTimeout(timer);
+      clearTimeout(timer);
     };
   }, [active, onDone]);
 

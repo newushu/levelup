@@ -259,15 +259,15 @@ export default function StudentTopBar({
     setClientReady(true);
     const showAndScheduleHide = () => {
       setVisible(true);
-      if (hideTimer.current) window.clearTimeout(hideTimer.current);
-      hideTimer.current = window.setTimeout(() => setVisible(false), 3000);
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+      hideTimer.current = setTimeout(() => setVisible(false), 3000);
     };
     showAndScheduleHide();
     const onScroll = () => showAndScheduleHide();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       window.removeEventListener("scroll", onScroll);
-      if (hideTimer.current) window.clearTimeout(hideTimer.current);
+      if (hideTimer.current) clearTimeout(hideTimer.current);
     };
   }, [sticky, autoHide]);
 

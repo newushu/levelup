@@ -22,7 +22,10 @@ export async function POST(req: Request) {
       .select("badge_id, earned_at, rescinded_at, achievement_badges:badge_id (id,name,description,category,icon_path,points_award)")
       .eq("student_id", student_id)
       .order("earned_at", { ascending: false });
-    data = retry.data;
+    data = (retry.data ?? []).map((row: any) => ({
+      ...row,
+      achievement_badges: { ...row.achievement_badges, badge_library: [] },
+    }));
     error = retry.error;
   }
 
@@ -32,7 +35,10 @@ export async function POST(req: Request) {
       .select("badge_id, earned_at, rescinded_at, achievement_badges:badge_id (id,name,description,category,points_award)")
       .eq("student_id", student_id)
       .order("earned_at", { ascending: false });
-    data = retry.data;
+    data = (retry.data ?? []).map((row: any) => ({
+      ...row,
+      achievement_badges: { ...row.achievement_badges, icon_path: null, badge_library: [] },
+    }));
     error = retry.error;
   }
 
@@ -42,7 +48,7 @@ export async function POST(req: Request) {
       .select("badge_id, earned_at, achievement_badges:badge_id (id,name,description,category,icon_path,points_award,badge_library:badge_library_id(image_url))")
       .eq("student_id", student_id)
       .order("earned_at", { ascending: false });
-    data = retry.data;
+    data = (retry.data ?? []).map((row: any) => ({ ...row, rescinded_at: null }));
     error = retry.error;
   }
 

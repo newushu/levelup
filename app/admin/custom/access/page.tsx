@@ -78,10 +78,6 @@ export default function AccessAdminPage() {
   const [permDesc, setPermDesc] = useState("");
   const [permRoles, setPermRoles] = useState<string[]>(["admin"]);
 
-  useEffect(() => {
-    refreshAll();
-  }, []);
-
   async function refreshAll() {
     const [tagRes, permRes] = await Promise.all([
       fetch("/api/nfc/tags", { cache: "no-store" }),
@@ -94,6 +90,10 @@ export default function AccessAdminPage() {
     setTags((tagJson.json?.tags ?? []) as NfcTag[]);
     setPermissions((permJson.json?.permissions ?? []) as AccessPermission[]);
   }
+
+  useEffect(() => {
+    refreshAll();
+  }, []);
 
   async function refreshUsers() {
     const res = await fetch("/api/admin/users/list", { cache: "no-store" });

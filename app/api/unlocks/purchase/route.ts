@@ -37,12 +37,13 @@ export async function POST(req: Request) {
   if (sErr) return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
   if (!student) return NextResponse.json({ ok: false, error: "Student not found" }, { status: 404 });
 
-  const { data: item, error: iErr } = await admin
+  const { data: itemRaw, error: iErr } = await admin
     .from(itemDef.table)
     .select(itemDef.selectFields)
     .eq(itemDef.keyField, item_key)
     .maybeSingle();
   if (iErr) return NextResponse.json({ ok: false, error: iErr.message }, { status: 500 });
+  const item = itemRaw as any;
   if (!item) return NextResponse.json({ ok: false, error: "Item not found" }, { status: 404 });
 
   const unlockLevel = Number(item?.unlock_level ?? 1);

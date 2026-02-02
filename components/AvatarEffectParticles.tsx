@@ -233,10 +233,11 @@ export default function AvatarEffectParticles({
     };
 
     if (preset.orbit) {
+      const move = base.particles?.move as any;
       base.particles = {
         ...base.particles,
         move: {
-          ...base.particles.move,
+          ...move,
           orbit: { enable: true, rotate: { value: 35 } },
         },
       };

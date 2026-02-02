@@ -63,6 +63,7 @@ type TrackerRow = {
   skill_name: string;
   skill_category?: string | null;
   repetitions_target: number;
+  points_per_rep?: number;
   attempts: number;
   successes: number;
   rate: number;
@@ -489,8 +490,8 @@ export default function SkillTrackerPage() {
 
   useEffect(() => {
     const scheduleRefresh = () => {
-      if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
-      refreshTimer.current = window.setTimeout(() => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = setTimeout(() => {
         refreshTrackers();
         refreshBattles();
         refreshFeed();
@@ -506,15 +507,15 @@ export default function SkillTrackerPage() {
       .on("postgres_changes", { event: "*", schema: "public", table: "battle_tracker_logs" }, scheduleRefresh)
       .subscribe();
 
-    const fallback = window.setInterval(() => {
+    const fallback = setInterval(() => {
       refreshTrackers();
       refreshBattles();
       refreshFeed();
     }, 60000);
 
     return () => {
-      if (fallback) window.clearInterval(fallback);
-      if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
+      if (fallback) clearInterval(fallback);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
       supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -603,16 +604,16 @@ export default function SkillTrackerPage() {
     if (!battleOpen) return;
     setBattleIntroOpen(true);
     playGlobalSfx("battle_pulse_swords");
-    if (battleIntroTimer.current) window.clearTimeout(battleIntroTimer.current);
-    battleIntroTimer.current = window.setTimeout(() => setBattleIntroOpen(false), 1600);
+    if (battleIntroTimer.current) clearTimeout(battleIntroTimer.current);
+    battleIntroTimer.current = setTimeout(() => setBattleIntroOpen(false), 1600);
     return () => {
-      if (battleIntroTimer.current) window.clearTimeout(battleIntroTimer.current);
+      if (battleIntroTimer.current) clearTimeout(battleIntroTimer.current);
     };
   }, [battleOpen]);
 
   useEffect(() => {
     return () => {
-      if (battleCreateTimer.current) window.clearTimeout(battleCreateTimer.current);
+      if (battleCreateTimer.current) clearTimeout(battleCreateTimer.current);
     };
   }, []);
 
@@ -1029,7 +1030,7 @@ export default function SkillTrackerPage() {
     const inflightSuccess = pendingLogSuccessCounts.current.get(trackerId) ?? 0;
     pendingLogSuccessCounts.current.set(trackerId, Math.max(0, inflightSuccess - (success ? 1 : 0)));
     if (nextInflight === 0) {
-      window.setTimeout(() => {
+      setTimeout(() => {
         refreshTrackers();
         refreshFeed();
       }, 120);
@@ -1336,8 +1337,8 @@ export default function SkillTrackerPage() {
     if (createdId) setBattleCreateId(createdId);
     setBattleCreateIntro(true);
     playGlobalSfx("battle_pulse_swords");
-    if (battleCreateTimer.current) window.clearTimeout(battleCreateTimer.current);
-    battleCreateTimer.current = window.setTimeout(() => {
+    if (battleCreateTimer.current) clearTimeout(battleCreateTimer.current);
+    battleCreateTimer.current = setTimeout(() => {
       setBattleCreateIntro(false);
       setBattleCreateId(null);
     }, 1600);
@@ -1836,7 +1837,7 @@ export default function SkillTrackerPage() {
                   <Particles
                     id={`battle-particles-${b.id}`}
                     init={particlesInit}
-                    options={battleParticlesOptions}
+                    options={battleParticlesOptions as any}
                     style={{ position: "absolute", inset: 0 }}
                   />
                 </div>
@@ -2409,7 +2410,7 @@ export default function SkillTrackerPage() {
                 <Particles
                   id={`battle-particles-${b.id}`}
                   init={particlesInit}
-                  options={battleParticlesOptions}
+                  options={battleParticlesOptions as any}
                   style={{ position: "absolute", inset: 0 }}
                 />
               </div>
@@ -3812,7 +3813,7 @@ export default function SkillTrackerPage() {
               </div>
             </div>
 
-            <ComparePanel series={compareSeries} />
+            <ComparePanel series={compareSeries} effectConfigByKey={effectConfigByKey} />
           </div>
         </OverlayWide>
       )}
@@ -5671,7 +5672,13 @@ function TrendGraph({ logs, wide = false }: { logs: HistoryLog[]; wide?: boolean
   );
 }
 
-function ComparePanel({ series }: { series: CompareSeries[] }) {
+function ComparePanel({
+  series,
+  effectConfigByKey,
+}: {
+  series: CompareSeries[];
+  effectConfigByKey: Record<string, { config?: any }>;
+}) {
   const width = 760;
   const height = 320;
   const pad = 36;
@@ -6052,7 +6059,7 @@ function timeAxisTicks(minX: number, maxX: number, width: number, pad: number, m
   return marks.map((v) => {
     const t = minX + clamp(v) * rangeMs;
     const label = formatTimeLabel(new Date(t), rangeMs);
-    const anchor = v === 0 ? "start" : v === 1 ? "end" : "middle";
+    const anchor: "start" | "middle" | "end" = v === 0 ? "start" : v === 1 ? "end" : "middle";
     const x = pad + v * (width - pad * 2);
     return { x, label, anchor };
   });

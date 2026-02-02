@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactElement } from "react";
 import { useRouter } from "next/navigation";
 import { fadeOutGlobalMusic, playGlobalMusic, playGlobalSfx, setGlobalSounds } from "@/lib/globalAudio";
 import { supabaseClient } from "@/lib/supabase/client";
@@ -416,8 +417,8 @@ export default function BattlePulseDisplay() {
       }
     };
     const scheduleRefresh = () => {
-      if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
-      refreshTimer.current = window.setTimeout(load, 200);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = setTimeout(load, 200);
     };
     const supabase = supabaseClient();
     let channel: ReturnType<typeof supabase.channel> | null = null;
@@ -442,18 +443,18 @@ export default function BattlePulseDisplay() {
       scheduleRefresh();
     });
     load();
-    timer = window.setInterval(load, 12000);
+    timer = setInterval(load, 12000);
     return () => {
       mounted = false;
-      if (timer) window.clearInterval(timer);
-      if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
+      if (timer) clearInterval(timer);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
       if (authListener?.subscription) authListener.subscription.unsubscribe();
       if (channel) supabase.removeChannel(channel);
     };
   }, [authOk, displayEnabled]);
 
   const displayCards = useMemo(() => {
-    const list = battles.slice(0, 3).map((b) => ({ ...b, kind: "battle" as const }));
+    const list: DisplayCard[] = battles.slice(0, 3).map((b) => ({ ...b, kind: "battle" as const }));
     while (list.length < 3) {
       list.push({ kind: "placeholder", id: `placeholder-${list.length}` });
     }
@@ -469,13 +470,13 @@ export default function BattlePulseDisplay() {
     if (!authOk || !displayEnabled || !musicKey) return;
     if (hasActiveBattles) {
       if (musicEndTimerRef.current) {
-        window.clearTimeout(musicEndTimerRef.current);
+        clearTimeout(musicEndTimerRef.current);
         musicEndTimerRef.current = null;
       }
       if (!prevActiveRef.current) {
         playGlobalSfx("battle_pulse_start");
-        if (musicTimerRef.current) window.clearTimeout(musicTimerRef.current);
-        musicTimerRef.current = window.setTimeout(() => {
+        if (musicTimerRef.current) clearTimeout(musicTimerRef.current);
+        musicTimerRef.current = setTimeout(() => {
           playGlobalMusic(musicKey);
           playingRef.current = true;
         }, 420);
@@ -485,9 +486,9 @@ export default function BattlePulseDisplay() {
       }
     } else if (prevActiveRef.current) {
       playGlobalSfx("battle_pulse_end");
-      if (musicTimerRef.current) window.clearTimeout(musicTimerRef.current);
-      if (musicEndTimerRef.current) window.clearTimeout(musicEndTimerRef.current);
-      musicEndTimerRef.current = window.setTimeout(() => {
+      if (musicTimerRef.current) clearTimeout(musicTimerRef.current);
+      if (musicEndTimerRef.current) clearTimeout(musicEndTimerRef.current);
+      musicEndTimerRef.current = setTimeout(() => {
         fadeOutGlobalMusic(1200);
         playingRef.current = false;
       }, 1200);
@@ -497,8 +498,8 @@ export default function BattlePulseDisplay() {
 
   useEffect(() => {
     return () => {
-      if (musicTimerRef.current) window.clearTimeout(musicTimerRef.current);
-      if (musicEndTimerRef.current) window.clearTimeout(musicEndTimerRef.current);
+      if (musicTimerRef.current) clearTimeout(musicTimerRef.current);
+      if (musicEndTimerRef.current) clearTimeout(musicEndTimerRef.current);
       if (playingRef.current) {
         fadeOutGlobalMusic(1200);
       }
@@ -957,18 +958,18 @@ function BattleCard({
 
   useEffect(() => {
     if (winnerTimer.current) {
-      window.clearTimeout(winnerTimer.current);
+      clearTimeout(winnerTimer.current);
       winnerTimer.current = null;
     }
     setWinnerReveal(false);
     if (!winnerId) return;
-    winnerTimer.current = window.setTimeout(() => {
+    winnerTimer.current = setTimeout(() => {
       setWinnerReveal(true);
       if (!playGlobalSfx("battle_pulse_winner")) playGlobalSfx("battle_pulse_win");
     }, 1200);
     return () => {
       if (winnerTimer.current) {
-        window.clearTimeout(winnerTimer.current);
+        clearTimeout(winnerTimer.current);
         winnerTimer.current = null;
       }
     };
@@ -1027,10 +1028,10 @@ function BattleCard({
   const triggerHit = (id: string) => {
     setHitById((prev) => ({ ...prev, [id]: Date.now() }));
     const timer = hitTimers.current.get(id);
-    if (timer) window.clearTimeout(timer);
+    if (timer) clearTimeout(timer);
     hitTimers.current.set(
       id,
-      window.setTimeout(() => {
+      setTimeout(() => {
         setHitById((prev) => {
           const next = { ...prev };
           delete next[id];
@@ -1044,10 +1045,10 @@ function BattleCard({
   const triggerTeamHit = (side: "top" | "bottom") => {
     setTeamHit((prev) => ({ ...prev, [side]: Date.now() }));
     const timer = teamHitTimers.current.get(side);
-    if (timer) window.clearTimeout(timer);
+    if (timer) clearTimeout(timer);
     teamHitTimers.current.set(
       side,
-      window.setTimeout(() => {
+      setTimeout(() => {
         setTeamHit((prev) => {
           const next = { ...prev };
           delete next[side];
@@ -1061,18 +1062,18 @@ function BattleCard({
   const reschedulePendingDrainStarts = () => {
     const delay = Math.max(0, lastEffectAtGlobalRef.current + 3000 - Date.now());
     drainFxStartTimers.current.forEach((timer, id) => {
-      window.clearTimeout(timer);
+      clearTimeout(timer);
       drainFxStartTimers.current.set(
         id,
-        window.setTimeout(() => {
+        setTimeout(() => {
           const at = Date.now();
           setDrainFxById((prev) => ({ ...prev, [id]: at }));
           drainFxStartTimers.current.delete(id);
           const fxTimer = drainFxTimers.current.get(id);
-          if (fxTimer) window.clearTimeout(fxTimer);
+          if (fxTimer) clearTimeout(fxTimer);
           drainFxTimers.current.set(
             id,
-            window.setTimeout(() => {
+            setTimeout(() => {
               setDrainFxById((prev) => {
                 const next = { ...prev };
                 delete next[id];
@@ -1085,18 +1086,18 @@ function BattleCard({
       );
     });
     teamDrainFxStartTimers.current.forEach((timer, side) => {
-      window.clearTimeout(timer);
+      clearTimeout(timer);
       teamDrainFxStartTimers.current.set(
         side,
-        window.setTimeout(() => {
+        setTimeout(() => {
           const at = Date.now();
           setTeamDrainFx((prev) => ({ ...prev, [side]: at }));
           teamDrainFxStartTimers.current.delete(side);
           const fxTimer = teamDrainFxTimers.current.get(side);
-          if (fxTimer) window.clearTimeout(fxTimer);
+          if (fxTimer) clearTimeout(fxTimer);
           teamDrainFxTimers.current.set(
             side,
-            window.setTimeout(() => {
+            setTimeout(() => {
               setTeamDrainFx((prev) => {
                 const next = { ...prev };
                 delete next[side];
@@ -1116,11 +1117,11 @@ function BattleCard({
     lastEffectAtGlobalRef.current = Math.max(lastEffectAtGlobalRef.current, at);
     setAttackFxById((prev) => ({ ...prev, [id]: { type, at } }));
     const timer = attackFxTimers.current.get(id);
-    if (timer) window.clearTimeout(timer);
+    if (timer) clearTimeout(timer);
     const duration = 3000;
     attackFxTimers.current.set(
       id,
-      window.setTimeout(() => {
+      setTimeout(() => {
         setAttackFxById((prev) => {
           const next = { ...prev };
           delete next[id];
@@ -1138,11 +1139,11 @@ function BattleCard({
     lastEffectAtGlobalRef.current = Math.max(lastEffectAtGlobalRef.current, at);
     setTeamAttackFx((prev) => ({ ...prev, [side]: { type, at } }));
     const timer = teamAttackFxTimers.current.get(side);
-    if (timer) window.clearTimeout(timer);
+    if (timer) clearTimeout(timer);
     const duration = 3000;
     teamAttackFxTimers.current.set(
       side,
-      window.setTimeout(() => {
+      setTimeout(() => {
         setTeamAttackFx((prev) => {
           const next = { ...prev };
           delete next[side];
@@ -1156,18 +1157,18 @@ function BattleCard({
 
   const triggerDrainFx = (id: string) => {
     const startTimer = drainFxStartTimers.current.get(id);
-    if (startTimer) window.clearTimeout(startTimer);
+    if (startTimer) clearTimeout(startTimer);
     drainFxStartTimers.current.set(
       id,
-      window.setTimeout(() => {
+      setTimeout(() => {
         const at = Date.now();
         setDrainFxById((prev) => ({ ...prev, [id]: at }));
         drainFxStartTimers.current.delete(id);
         const timer = drainFxTimers.current.get(id);
-        if (timer) window.clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         drainFxTimers.current.set(
           id,
-          window.setTimeout(() => {
+          setTimeout(() => {
             setDrainFxById((prev) => {
               const next = { ...prev };
               delete next[id];
@@ -1182,18 +1183,18 @@ function BattleCard({
 
   const triggerTeamDrainFx = (side: "top" | "bottom") => {
     const startTimer = teamDrainFxStartTimers.current.get(side);
-    if (startTimer) window.clearTimeout(startTimer);
+    if (startTimer) clearTimeout(startTimer);
     teamDrainFxStartTimers.current.set(
       side,
-      window.setTimeout(() => {
+      setTimeout(() => {
         const at = Date.now();
         setTeamDrainFx((prev) => ({ ...prev, [side]: at }));
         teamDrainFxStartTimers.current.delete(side);
         const timer = teamDrainFxTimers.current.get(side);
-        if (timer) window.clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         teamDrainFxTimers.current.set(
           side,
-          window.setTimeout(() => {
+          setTimeout(() => {
             setTeamDrainFx((prev) => {
               const next = { ...prev };
               delete next[side];
@@ -1208,14 +1209,14 @@ function BattleCard({
 
   const triggerFlash = (id: string, type: string) => {
     setFlashById((prev) => ({ ...prev, [id]: { type, at: Date.now() } }));
-    window.setTimeout(() => {
+    setTimeout(() => {
       triggerAttackFx(id, type);
     }, 80);
     const timer = flashTimers.current.get(id);
-    if (timer) window.clearTimeout(timer);
+    if (timer) clearTimeout(timer);
     flashTimers.current.set(
       id,
-      window.setTimeout(() => {
+      setTimeout(() => {
         setFlashById((prev) => {
           const next = { ...prev };
           delete next[id];
@@ -1228,14 +1229,14 @@ function BattleCard({
 
   const triggerTeamFlash = (side: "top" | "bottom", type: string) => {
     setTeamFlash((prev) => ({ ...prev, [side]: { type, at: Date.now() } }));
-    window.setTimeout(() => {
+    setTimeout(() => {
       triggerTeamAttackFx(side, type);
     }, 80);
     const timer = teamFlashTimers.current.get(side);
-    if (timer) window.clearTimeout(timer);
+    if (timer) clearTimeout(timer);
     teamFlashTimers.current.set(
       side,
-      window.setTimeout(() => {
+      setTimeout(() => {
         setTeamFlash((prev) => {
           const next = { ...prev };
           delete next[side];
@@ -1285,7 +1286,7 @@ function BattleCard({
           const ownHpNow = nextTeamHp[ownSide];
           triggerTeamHit(opponentSide);
           if (wasSuccess) {
-            window.setTimeout(() => {
+            setTimeout(() => {
               if (oppHpNow != null && prevOppHp != null && oppHpNow < prevOppHp) {
                 triggerTeamFlash(opponentSide, "HIT");
                 playGlobalSfx("battle_pulse_hit");
@@ -1295,12 +1296,12 @@ function BattleCard({
               }
             }, 260);
           } else {
-            window.setTimeout(() => {
+            setTimeout(() => {
               triggerTeamFlash(opponentSide, "BLOCKED");
               playGlobalSfx("battle_pulse_block");
             }, 260);
             if (ownHpNow != null && prevOwnHp != null && ownHpNow < prevOwnHp) {
-              window.setTimeout(() => {
+              setTimeout(() => {
                 triggerTeamHit(ownSide);
                 triggerTeamFlash(ownSide, "COUNTER ATTACK");
                 playGlobalSfx("battle_pulse_counter");
@@ -1315,7 +1316,7 @@ function BattleCard({
           const ownHpNow = nextHpTargetById.get(p.id) ?? 0;
           triggerHit(opponentId);
           if (wasSuccess) {
-            window.setTimeout(() => {
+            setTimeout(() => {
               if (oppHpNow < prevOppHp) {
                 triggerFlash(opponentId, "HIT");
                 playGlobalSfx("battle_pulse_hit");
@@ -1325,12 +1326,12 @@ function BattleCard({
               }
             }, 260);
           } else {
-            window.setTimeout(() => {
+            setTimeout(() => {
               triggerFlash(opponentId, "BLOCKED");
               playGlobalSfx("battle_pulse_block");
             }, 260);
             if (ownHpNow < prevOwnHp) {
-              window.setTimeout(() => {
+              setTimeout(() => {
                 triggerHit(p.id);
                 triggerFlash(p.id, "COUNTER ATTACK");
                 playGlobalSfx("battle_pulse_counter");
@@ -1353,7 +1354,7 @@ function BattleCard({
               return nextHp < prevHp;
             });
             hitTargets.forEach((id) => triggerHit(id));
-            window.setTimeout(() => {
+            setTimeout(() => {
               if (hitTargets.length) {
                 hitTargets.forEach((id) => triggerFlash(id, "HIT"));
                 playGlobalSfx("battle_pulse_hit");
@@ -1364,12 +1365,12 @@ function BattleCard({
             }, 260);
           } else {
             opponentIds.forEach((id) => triggerHit(id));
-            window.setTimeout(() => {
+            setTimeout(() => {
               opponentIds.forEach((id) => triggerFlash(id, "BLOCKED"));
               playGlobalSfx("battle_pulse_block");
             }, 260);
             if (ownNow < ownPrev) {
-              window.setTimeout(() => {
+              setTimeout(() => {
                 triggerHit(p.id);
                 triggerFlash(p.id, "COUNTER ATTACK");
                 playGlobalSfx("battle_pulse_counter");
@@ -1398,10 +1399,10 @@ function BattleCard({
       if (typeof targetHp !== "number") return;
       if (prevHp === undefined || Math.abs(prevHp - targetHp) > 0.005) {
         const timer = hpTimers.current.get(p.id);
-        if (timer) window.clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         hpTimers.current.set(
           p.id,
-          window.setTimeout(() => {
+          setTimeout(() => {
             setDisplayHpById((current) => {
               const nextState = { ...current, [p.id]: targetHp };
               return nextState;
@@ -1422,10 +1423,10 @@ function BattleCard({
         if (typeof targetHp !== "number") return;
         if (prevHp === undefined || Math.abs(prevHp - targetHp) > 0.005) {
           const timer = teamHpTimers.current.get(side);
-          if (timer) window.clearTimeout(timer);
+          if (timer) clearTimeout(timer);
           teamHpTimers.current.set(
             side,
-            window.setTimeout(() => {
+            setTimeout(() => {
               setDisplayTeamHp((current) => ({ ...current, [side]: targetHp }));
               if (prevHp !== undefined && targetHp < prevHp) {
                 playGlobalSfx("battle_pulse_drain");
@@ -1438,28 +1439,28 @@ function BattleCard({
       });
     }
     return () => {
-      hitTimers.current.forEach((timer) => window.clearTimeout(timer));
-      teamHitTimers.current.forEach((timer) => window.clearTimeout(timer));
+      hitTimers.current.forEach((timer) => clearTimeout(timer));
+      teamHitTimers.current.forEach((timer) => clearTimeout(timer));
       hitTimers.current.clear();
       teamHitTimers.current.clear();
-      attackFxTimers.current.forEach((timer) => window.clearTimeout(timer));
-      teamAttackFxTimers.current.forEach((timer) => window.clearTimeout(timer));
+      attackFxTimers.current.forEach((timer) => clearTimeout(timer));
+      teamAttackFxTimers.current.forEach((timer) => clearTimeout(timer));
       attackFxTimers.current.clear();
       teamAttackFxTimers.current.clear();
-      flashTimers.current.forEach((timer) => window.clearTimeout(timer));
-      teamFlashTimers.current.forEach((timer) => window.clearTimeout(timer));
+      flashTimers.current.forEach((timer) => clearTimeout(timer));
+      teamFlashTimers.current.forEach((timer) => clearTimeout(timer));
       flashTimers.current.clear();
       teamFlashTimers.current.clear();
-      hpTimers.current.forEach((timer) => window.clearTimeout(timer));
-      teamHpTimers.current.forEach((timer) => window.clearTimeout(timer));
+      hpTimers.current.forEach((timer) => clearTimeout(timer));
+      teamHpTimers.current.forEach((timer) => clearTimeout(timer));
       hpTimers.current.clear();
       teamHpTimers.current.clear();
-      drainFxTimers.current.forEach((timer) => window.clearTimeout(timer));
-      teamDrainFxTimers.current.forEach((timer) => window.clearTimeout(timer));
+      drainFxTimers.current.forEach((timer) => clearTimeout(timer));
+      teamDrainFxTimers.current.forEach((timer) => clearTimeout(timer));
       drainFxTimers.current.clear();
       teamDrainFxTimers.current.clear();
-      drainFxStartTimers.current.forEach((timer) => window.clearTimeout(timer));
-      teamDrainFxStartTimers.current.forEach((timer) => window.clearTimeout(timer));
+      drainFxStartTimers.current.forEach((timer) => clearTimeout(timer));
+      teamDrainFxStartTimers.current.forEach((timer) => clearTimeout(timer));
       drainFxStartTimers.current.clear();
       teamDrainFxStartTimers.current.clear();
     };
@@ -2176,7 +2177,7 @@ function renderFfaSlots(
     ));
   }
   const rows = Math.ceil(count / 2);
-  const slots: Array<JSX.Element> = [];
+  const slots: Array<ReactElement> = [];
   participants.forEach((p) =>
     slots.push(
       <BattleSlot

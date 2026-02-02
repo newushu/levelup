@@ -22,6 +22,7 @@ type SavedProject = {
   theme_key?: string | null;
   archived?: boolean | null;
   archived_at?: string | null;
+  updated_at?: string | null;
 };
 
 type ProjectUsage = {
@@ -1817,7 +1818,7 @@ function EmailBuilderInner() {
     setActiveProjectId(String(sj.json?.project?.id ?? activeProjectId));
     refreshProjects(builderTab);
     if (builderTab === "code") {
-      await saveCodeTemplate(projectName || "Code Template", payload);
+      await saveCodeTemplate(projectName || "Code Template", codeState);
     }
   }
 
@@ -6736,9 +6737,17 @@ function tinyLabel(): React.CSSProperties {
   };
 }
 
-function isActivePanel(activeField: string, scope: "email" | "flyer", section: "brand" | "content" | "style") {
+function isActivePanel(
+  activeField: string,
+  scope: "email" | "flyer" | "code",
+  section: "brand" | "content" | "style" | "usage"
+) {
   if (!activeField) return false;
   const key = activeField.startsWith(`${scope}:`) ? activeField.slice(scope.length + 1) : "";
+  if (section === "usage") {
+    if (scope === "code") return activeField.startsWith("code:");
+    return key.startsWith("usage");
+  }
   const groups: Record<string, string[]> = {
     emailBrand: [
       "dojoName",

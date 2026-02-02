@@ -64,6 +64,14 @@ type SiegeState = {
   secondsLeft: number;
   durationSeconds: number;
   timerUpdatedAt: number;
+  intermissionActive: boolean;
+  intermissionEndsAt: number | null;
+  intermissionTotal: number;
+  roundEndActive: boolean;
+  roundEndEndsAt: number | null;
+  roundEndDuration: number;
+  endGameActive: boolean;
+  endGameEndsAt: number | null;
   round: number;
   roundsTotal: number;
   subround: 1 | 2;
@@ -107,6 +115,9 @@ const TIMER_CARDS: Array<{ key: TimerKey; label: string; desc: string; active?: 
 const DEFAULT_CTF_SECONDS = 10 * 60;
 const DEFAULT_SAFE_ZONE_SECONDS = 10;
 const DEFAULT_CRACK_SECONDS = 5 * 60;
+const SIEGE_INTERMISSION_SECONDS = 20;
+const SIEGE_ROUND_END_SECONDS = 3;
+const SIEGE_END_RESET_SECONDS = 10;
 
 function initialCtfState(): CtfState {
   return {
@@ -153,9 +164,17 @@ function initialSiegeState(): SiegeState {
     secondsLeft: 2 * 60,
     durationSeconds: 2 * 60,
     timerUpdatedAt: Date.now(),
+    intermissionActive: false,
+    intermissionEndsAt: null,
+    intermissionTotal: SIEGE_INTERMISSION_SECONDS,
+    roundEndActive: false,
+    roundEndEndsAt: null,
+    roundEndDuration: SIEGE_ROUND_END_SECONDS,
+    endGameActive: false,
+    endGameEndsAt: null,
     round: 1,
     roundsTotal: 3,
-    subround: 1,
+    subround: 1 as 1,
     insideTeam: "A",
     teamAName: "Team A",
     teamBName: "Team B",
@@ -403,9 +422,13 @@ export default function CoachTimersPage() {
     const timer = window.setInterval(() => {
       setSiegeState((prev) => {
         if (!prev.running) return prev;
-        const nextLeft = Math.max(0, prev.secondsLeft - 1);
+        if (prev.intermissionActive) return prev;
+        const now = Date.now();
+        const elapsed = Math.max(1, Math.floor((now - prev.timerUpdatedAt) / 1000));
+        if (!Number.isFinite(elapsed) || elapsed <= 0) return prev;
+        const nextLeft = Math.max(0, prev.secondsLeft - elapsed);
         if (nextLeft > 0) {
-          const next = { ...prev, secondsLeft: nextLeft, timerUpdatedAt: Date.now(), updatedAt: Date.now() };
+          const next = { ...prev, secondsLeft: nextLeft, timerUpdatedAt: now, updatedAt: now };
           broadcastSiege(next);
           persistSiege(next);
           return next;
@@ -418,6 +441,51 @@ export default function CoachTimersPage() {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [siegeState.running]);
+
+  useEffect(() => {
+    if (!siegeState.intermissionActive || !siegeState.intermissionEndsAt) return;
+    const ms = Math.max(0, siegeState.intermissionEndsAt - Date.now());
+    const timer = window.setTimeout(() => {
+      updateSiege((prev) => {
+        if (!prev.intermissionActive) return prev;
+        return {
+          ...prev,
+          intermissionActive: false,
+          intermissionEndsAt: null,
+          running: true,
+          timerUpdatedAt: Date.now(),
+        };
+      });
+    }, ms);
+    return () => window.clearTimeout(timer);
+  }, [siegeState.intermissionActive, siegeState.intermissionEndsAt]);
+
+  useEffect(() => {
+    if (!siegeState.roundEndActive || !siegeState.roundEndEndsAt) return;
+    const ms = Math.max(0, siegeState.roundEndEndsAt - Date.now());
+    const timer = window.setTimeout(() => {
+      updateSiege((prev) => {
+        if (!prev.roundEndActive) return prev;
+        return {
+          ...prev,
+          roundEndActive: false,
+          roundEndEndsAt: null,
+          intermissionActive: true,
+          intermissionEndsAt: Date.now() + prev.intermissionTotal * 1000,
+        };
+      });
+    }, ms);
+    return () => window.clearTimeout(timer);
+  }, [siegeState.roundEndActive, siegeState.roundEndEndsAt, siegeState.intermissionTotal]);
+
+  useEffect(() => {
+    if (!siegeState.endGameActive || !siegeState.endGameEndsAt) return;
+    const ms = Math.max(0, siegeState.endGameEndsAt - Date.now());
+    const timer = setTimeout(() => {
+      updateSiege(() => initialSiegeState());
+    }, ms);
+    return () => clearTimeout(timer);
+  }, [siegeState.endGameActive, siegeState.endGameEndsAt]);
 
   useEffect(() => {
     if (activeTimer !== "ctf" && activeTimer !== "crack_a_bat" && activeTimer !== "siege_survive") return;
@@ -517,7 +585,7 @@ export default function CoachTimersPage() {
     siegeChannelRef.current?.postMessage({ type: "siege_state", state: next });
   }
 
-  function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B") {
+function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
     const teamAPlayers = Math.max(0, Number(prev.teamAPlayers || 0));
     const teamBPlayers = Math.max(0, Number(prev.teamBPlayers || 0));
     const aLess = teamAPlayers < teamBPlayers;
@@ -535,7 +603,7 @@ export default function CoachTimersPage() {
     };
   }
 
-  function finalizeSiegeRound(prev: SiegeState, reason: "time" | "eliminated") {
+  function finalizeSiegeRound(prev: SiegeState, reason: "time" | "eliminated"): SiegeState {
     const inside = prev.insideTeam;
     const players = inside === "A" ? prev.teamAPlayers : prev.teamBPlayers;
     const eliminated = inside === "A" ? prev.teamAEliminated : prev.teamBEliminated;
@@ -556,6 +624,7 @@ export default function CoachTimersPage() {
 
     if (prev.subround === 1) {
       const nextInside = inside === "A" ? "B" : "A";
+      const useRoundEnd = reason === "time";
       const reset = setupSiegeRound(
         {
           ...prev,
@@ -564,13 +633,17 @@ export default function CoachTimersPage() {
           durationSeconds: duration,
           roundResults,
           timerUpdatedAt: Date.now(),
-          subround: 2,
+          subround: 2 as 2,
+          intermissionActive: !useRoundEnd,
+          intermissionEndsAt: useRoundEnd ? null : Date.now() + prev.intermissionTotal * 1000,
+          roundEndActive: useRoundEnd,
+          roundEndEndsAt: useRoundEnd ? Date.now() + prev.roundEndDuration * 1000 : null,
         },
         nextInside
       );
       return {
         ...reset,
-        running: true,
+        running: false,
         started: true,
         completed: false,
         updatedAt: Date.now(),
@@ -586,10 +659,14 @@ export default function CoachTimersPage() {
     let roundsTotal = prev.roundsTotal;
     let decidedAt: number | undefined = entry.decidedAt;
     if (a && b) {
-      if (a.timeSurvived !== b.timeSurvived) winner = a.timeSurvived > b.timeSurvived ? "A" : "B";
-      else if (a.survivors !== b.survivors) winner = a.survivors > b.survivors ? "A" : "B";
-      else if (a.lives !== b.lives) winner = a.lives > b.lives ? "A" : "B";
-      else winner = null;
+      if (a.timeSurvived !== b.timeSurvived) {
+        winner = a.timeSurvived > b.timeSurvived ? "A" : "B";
+      } else {
+        const aTotal = (a.survivors ?? 0) + (a.lives ?? 0);
+        const bTotal = (b.survivors ?? 0) + (b.lives ?? 0);
+        if (aTotal !== bTotal) winner = aTotal > bTotal ? "A" : "B";
+        else winner = null;
+      }
       decidedAt = Date.now();
       if (winner === "A") teamAWins += 1;
       if (winner === "B") teamBWins += 1;
@@ -613,11 +690,18 @@ export default function CoachTimersPage() {
         roundResults,
         timerUpdatedAt: Date.now(),
         updatedAt: Date.now(),
-        subround: 1,
+        intermissionActive: false,
+        intermissionEndsAt: null,
+        roundEndActive: false,
+        roundEndEndsAt: null,
+        endGameActive: true,
+        endGameEndsAt: Date.now() + SIEGE_END_RESET_SECONDS * 1000,
+        subround: 1 as 1,
       };
     }
 
     const nextInside = "A";
+    const useRoundEnd = reason === "time";
     const reset = setupSiegeRound(
       {
         ...prev,
@@ -630,13 +714,17 @@ export default function CoachTimersPage() {
         roundsTotal,
         roundResults,
         timerUpdatedAt: Date.now(),
-        subround: 1,
+        subround: 1 as 1,
+        intermissionActive: !useRoundEnd,
+        intermissionEndsAt: useRoundEnd ? null : Date.now() + prev.intermissionTotal * 1000,
+        roundEndActive: useRoundEnd,
+        roundEndEndsAt: useRoundEnd ? Date.now() + prev.roundEndDuration * 1000 : null,
       },
       nextInside
     );
     return {
       ...reset,
-      running: true,
+      running: false,
       started: true,
       completed: false,
       updatedAt: Date.now(),
@@ -798,7 +886,7 @@ export default function CoachTimersPage() {
   function siegeStartGame() {
     updateSiege((prev) => {
       const duration = prev.durationSeconds > 0 ? prev.durationSeconds : 120;
-      const base = {
+      const base: SiegeState = {
         ...prev,
         started: true,
         completed: false,
@@ -808,7 +896,13 @@ export default function CoachTimersPage() {
         secondsLeft: duration,
         durationSeconds: duration,
         timerUpdatedAt: Date.now(),
-        subround: 1,
+        subround: 1 as 1,
+        intermissionActive: false,
+        intermissionEndsAt: null,
+        roundEndActive: false,
+        roundEndEndsAt: null,
+        endGameActive: false,
+        endGameEndsAt: null,
         teamAWins: 0,
         teamBWins: 0,
         roundResults: [],
@@ -830,6 +924,12 @@ export default function CoachTimersPage() {
       round: 1,
       insideTeam: "A",
       secondsLeft: prev.durationSeconds > 0 ? prev.durationSeconds : 120,
+      intermissionActive: false,
+      intermissionEndsAt: null,
+      roundEndActive: false,
+      roundEndEndsAt: null,
+      endGameActive: false,
+      endGameEndsAt: null,
       teamAEliminated: 0,
       teamBEliminated: 0,
       teamALives: 0,
@@ -838,7 +938,7 @@ export default function CoachTimersPage() {
       teamBWins: 0,
       roundResults: [],
       timerUpdatedAt: Date.now(),
-      subround: 1,
+      subround: 1 as 1,
     }));
   }
 
@@ -854,7 +954,7 @@ export default function CoachTimersPage() {
 
   function siegeInsideDown() {
     updateSiege((prev) => {
-      if (!prev.started) return prev;
+      if (!prev.started || prev.intermissionActive || prev.roundEndActive) return prev;
       const inside = prev.insideTeam;
       if (inside === "A") {
         if (prev.teamALives > 0) return { ...prev, teamALives: prev.teamALives - 1 };
@@ -873,7 +973,7 @@ export default function CoachTimersPage() {
 
   function siegeInsideUp() {
     updateSiege((prev) => {
-      if (!prev.started) return prev;
+      if (!prev.started || prev.intermissionActive || prev.roundEndActive) return prev;
       const inside = prev.insideTeam;
       if (inside === "A") {
         if (prev.teamAEliminated > 0) return { ...prev, teamAEliminated: prev.teamAEliminated - 1 };

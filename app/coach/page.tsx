@@ -959,6 +959,18 @@ function noteInput(): React.CSSProperties {
   };
 }
 
+function chip(): React.CSSProperties {
+  return {
+    borderRadius: 999,
+    padding: "6px 10px",
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: "rgba(2,6,23,0.6)",
+    color: "white",
+    fontWeight: 800,
+    fontSize: 12,
+  };
+}
+
 function input(): React.CSSProperties {
   return {
     borderRadius: 10,

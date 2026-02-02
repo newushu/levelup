@@ -44,7 +44,7 @@ export default function RosterPage() {
               }}
             >
               <div style={{ padding: 8, borderRadius: 24, ...(s.isCompetitionTeam ? { boxShadow: "0 0 0 2px rgba(245,158,11,0.30)" } : {}) }}>
-                <EvolvingAvatar level={s.level} size={64} />
+                <EvolvingAvatar level={s.level} size={64} variant="dragon" />
               </div>
 
               <div>

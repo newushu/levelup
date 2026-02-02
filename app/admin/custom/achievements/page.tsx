@@ -67,6 +67,7 @@ export default function AchievementsAdminPage() {
     { id: "lifetime_points", label: "Lifetime points" },
     { id: "data_point", label: "Data point (catalog)" },
   ];
+  const compares = [">=", ">", "=", "<", "<="];
 
   const [newBadge, setNewBadge] = useState<BadgeLibraryRow>({
     name: "",

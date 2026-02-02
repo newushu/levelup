@@ -152,8 +152,8 @@ export default function CoachClassroomPage() {
   }, []);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 1000);
-    return () => window.clearInterval(timer);
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -283,10 +283,10 @@ export default function CoachClassroomPage() {
 
   useEffect(() => {
     if (spotlightLockAt == null) return;
-    const timer = window.setInterval(() => {
+    const timer = setInterval(() => {
       setSpotlightLocked(Date.now() >= spotlightLockAt);
     }, 5000);
-    return () => window.clearInterval(timer);
+    return () => clearInterval(timer);
   }, [spotlightLockAt]);
 
   useEffect(() => {
@@ -450,8 +450,8 @@ export default function CoachClassroomPage() {
   useEffect(() => {
     if (!activeInstanceId) return;
     loadRoster();
-    const timer = window.setInterval(loadRoster, 8000);
-    return () => window.clearInterval(timer);
+    const timer = setInterval(loadRoster, 8000);
+    return () => clearInterval(timer);
   }, [activeInstanceId]);
 
   useEffect(() => {
@@ -472,8 +472,8 @@ export default function CoachClassroomPage() {
     const supabase = supabaseClient();
     let channel: ReturnType<typeof supabase.channel> | null = null;
     const scheduleRefresh = () => {
-      if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
-      refreshTimer.current = window.setTimeout(() => loadRoster(), 150);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = setTimeout(() => loadRoster(), 150);
     };
     const setupChannel = async () => {
       const session = await supabase.auth.getSession();
@@ -497,7 +497,7 @@ export default function CoachClassroomPage() {
       scheduleRefresh();
     });
     return () => {
-      if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
       if (authListener?.subscription) authListener.subscription.unsubscribe();
       if (channel) supabase.removeChannel(channel);
     };

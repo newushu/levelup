@@ -11,7 +11,7 @@ async function requireCoachOrAdmin(supabase: any) {
     .select("role")
     .eq("user_id", user.id);
 
-  if (error) return { ok: false, error: error.message as const };
+  if (error) return { ok: false, error: error.message };
   const roleSet = new Set((roles ?? []).map((r: any) => String(r.role)));
   if (!roleSet.has("coach") && !roleSet.has("admin")) return { ok: false, error: "Forbidden" as const };
 

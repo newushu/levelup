@@ -23,7 +23,9 @@ export default function StudentLogBar() {
   useEffect(() => {
     setMounted(true);
     const unsub = subscribeToStateChanges(() => setTick((t) => t + 1));
-    return unsub;
+    return () => {
+      unsub();
+    };
   }, []);
 
   const app = useMemo(() => (mounted ? loadState() : defaultState), [mounted, tick]);
@@ -174,10 +176,9 @@ export default function StudentLogBar() {
             >
               <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 280 }}>
                 <EvolvingAvatar
-                  avatarLevel={avatarLvl}
+                  level={avatarLvl}
                   size={52}
-                  isCompetitionTeam={active.isCompetitionTeam}
-                  base={active.avatarBase}
+                  variant={active.avatarBase ?? "dragon"}
                 />
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 980, fontSize: 18, lineHeight: 1.1 }}>

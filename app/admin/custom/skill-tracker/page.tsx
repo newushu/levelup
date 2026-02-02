@@ -73,11 +73,14 @@ export default function SkillTrackerAdminPage() {
   const [pinMsg, setPinMsg] = useState("");
   const [pinSaving, setPinSaving] = useState(false);
 
-  async function loadSkills() {
+  async function loadSkills(): Promise<TrackerSkill[]> {
     setMsg("");
     const res = await fetch("/api/tracker-skills/list", { cache: "no-store" });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return setMsg(data?.error || "Failed to load tracker skills");
+    if (!res.ok) {
+      setMsg(data?.error || "Failed to load tracker skills");
+      return [];
+    }
     const list = (data.skills ?? []) as TrackerSkill[];
     setSkills(list);
     return list;
