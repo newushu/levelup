@@ -1,4 +1,5 @@
 import "./globals.css";
+import { Suspense } from "react";
 import ClientShell from "../components/ClientShell";
 import RouteNav from "../components/RouteNav";
 import { StudentProvider } from "../components/StudentContext";
@@ -13,7 +14,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <StudentProvider>
           <div style={{ position: "relative", zIndex: 1 }}>
             <AppShell>
-              <RouteNav />
+              <Suspense fallback={null}>
+                <RouteNav />
+              </Suspense>
               <ClientShell>{children}</ClientShell>
             </AppShell>
           </div>
