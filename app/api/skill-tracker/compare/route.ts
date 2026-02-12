@@ -35,7 +35,7 @@ export async function POST(req: Request) {
   if (aErr) return NextResponse.json({ ok: false, error: aErr.message }, { status: 500 });
 
   const avatarIds = Array.from(new Set((settings ?? []).map((s: any) => String(s.avatar_id ?? "").trim()).filter(Boolean)));
-  let avatarMap = new Map<string, { storage_path: string | null }>();
+  const avatarMap = new Map<string, { storage_path: string | null }>();
   if (avatarIds.length) {
     const { data: avatars, error: avErr } = await supabase
       .from("avatars")

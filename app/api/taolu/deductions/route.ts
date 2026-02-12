@@ -51,7 +51,10 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => ({}));
   const session_id = String(body?.session_id ?? "").trim();
-  const section_number = body?.section_number ? Number(body.section_number) : null;
+  const section_number =
+    body?.section_number !== undefined && body?.section_number !== null && body?.section_number !== ""
+      ? Number(body.section_number)
+      : null;
   const note = typeof body?.note === "string" ? body.note.trim() : null;
   if (!session_id) return NextResponse.json({ ok: false, error: "Missing session_id" }, { status: 400 });
 

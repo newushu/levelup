@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import AuthGate from "../../components/AuthGate";
+import AvatarRender from "@/components/AvatarRender";
+import StudentNavPanel, { studentNavStyles } from "@/components/StudentNavPanel";
 
 type HomeQuestSettings = {
   max_points: number;
@@ -26,11 +28,21 @@ type Tracker = {
   completed_at?: string | null;
 };
 
+type StudentRow = {
+  id: string;
+  name: string;
+  level?: number | null;
+  points_total?: number | null;
+  points_balance?: number | null;
+  avatar_storage_path?: string | null;
+  avatar_zoom_pct?: number | null;
+};
+
 export default function HomeQuestPage() {
   const [settings, setSettings] = useState<HomeQuestSettings | null>(null);
   const [progress, setProgress] = useState<Progress>({ total: 0, max: 0 });
   const [studentId, setStudentId] = useState("");
-  const [studentName, setStudentName] = useState("");
+  const [student, setStudent] = useState<StudentRow | null>(null);
   const [msg, setMsg] = useState("");
   const [tracker, setTracker] = useState<Tracker | null>(null);
   const [trackerName, setTrackerName] = useState("");
@@ -62,14 +74,14 @@ export default function HomeQuestPage() {
     if (!studentId) return;
     loadProgress(studentId);
     loadTracker(studentId);
-    loadStudentName(studentId);
+    loadStudent(studentId);
   }, [studentId]);
 
-  async function loadStudentName(sid: string) {
+  async function loadStudent(sid: string) {
     const res = await fetch("/api/students/list", { cache: "no-store" });
     const data = await res.json().catch(() => ({}));
     const match = (data?.students ?? []).find((s: any) => String(s.id) === String(sid));
-    if (match?.name) setStudentName(match.name);
+    if (match?.id) setStudent(match as StudentRow);
   }
 
   async function loadSettings() {
@@ -154,14 +166,44 @@ export default function HomeQuestPage() {
   const max = Number(progress.max ?? 0);
   const total = Number(progress.total ?? 0);
   const pct = max > 0 ? Math.min(100, Math.round((total / max) * 100)) : 0;
+  const avatarSrc = (() => {
+    const path = String(student?.avatar_storage_path ?? "").trim();
+    if (!path) return null;
+    const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    return base ? `${base}/storage/v1/object/public/avatars/${path}` : null;
+  })();
+  const avatarZoomPct = Math.max(50, Math.min(200, Number(student?.avatar_zoom_pct ?? 100)));
+  const pointsDisplay = Number(student?.points_balance ?? student?.points_total ?? 0);
+  const levelDisplay = Number(student?.level ?? 1);
+  const initials = (student?.name || "").trim().slice(0, 2).toUpperCase() || "LA";
 
   return (
     <AuthGate>
       <main style={{ display: "grid", gap: 16 }}>
+        <style>{studentNavStyles()}</style>
+        <StudentNavPanel />
+        <button style={backBtn()} onClick={() => window.history.back()}>Back</button>
+        <div style={topBar()}>
+          <div style={identity()}>
+            <div style={studentNameStyle()}>{student?.name ?? "Student"}</div>
+            <div style={studentMeta()}>Level {levelDisplay} • {pointsDisplay.toLocaleString()} pts</div>
+            <div style={avatarWrap()}>
+              <AvatarRender
+                size={160}
+                bg="rgba(15,23,42,0.6)"
+                avatarSrc={avatarSrc}
+                avatarZoomPct={avatarZoomPct}
+                showImageBorder={false}
+                style={{ borderRadius: 20 }}
+                fallback={<div style={avatarFallback()}>{initials}</div>}
+              />
+            </div>
+          </div>
+        </div>
         <div style={{ display: "grid", gap: 6 }}>
           <div style={{ fontSize: 28, fontWeight: 1000 }}>Home Quest</div>
           <div style={{ opacity: 0.7, fontSize: 13 }}>
-            {studentName ? `For ${studentName}. ` : ""}At-home games and challenges to earn points (with a capped limit).
+            {student?.name ? `For ${student.name}. ` : ""}At-home games and challenges to earn points (with a capped limit).
           </div>
         </div>
 
@@ -335,5 +377,73 @@ function notice(): React.CSSProperties {
     color: "white",
     fontWeight: 900,
     fontSize: 12,
+  };
+}
+
+function topBar(): React.CSSProperties {
+  return {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 20,
+    flexWrap: "wrap",
+    alignItems: "flex-start",
+  };
+}
+
+function identity(): React.CSSProperties {
+  return {
+    display: "grid",
+    gap: 8,
+  };
+}
+
+function studentNameStyle(): React.CSSProperties {
+  return {
+    fontSize: "clamp(24px, 4vw, 36px)",
+    fontWeight: 1000,
+  };
+}
+
+function studentMeta(): React.CSSProperties {
+  return {
+    fontSize: 14,
+    opacity: 0.75,
+    fontWeight: 800,
+  };
+}
+
+function avatarWrap(): React.CSSProperties {
+  return {
+    marginTop: 6,
+    display: "grid",
+    placeItems: "start",
+  };
+}
+
+function avatarFallback(): React.CSSProperties {
+  return {
+    width: 160,
+    height: 160,
+    borderRadius: 20,
+    display: "grid",
+    placeItems: "center",
+    fontWeight: 900,
+    fontSize: 30,
+    background: "rgba(30,41,59,0.8)",
+  };
+}
+
+function backBtn(): React.CSSProperties {
+  return {
+    justifySelf: "start",
+    padding: "8px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.2)",
+    background: "rgba(30,41,59,0.7)",
+    color: "inherit",
+    fontWeight: 900,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    fontSize: 11,
   };
 }

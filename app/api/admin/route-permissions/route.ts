@@ -29,11 +29,86 @@ function toRoutePath(segments: string[]) {
 
 function describeRoute(route: string) {
   if (route === "/") return "Home";
+
+  const exact: Record<string, string> = {
+    "/login": "Login",
+    "/reset-password": "Reset Password",
+    "/dashboard": "Main Dashboard (your daily hub)",
+    "/checkin": "Student Check-In",
+    "/skills": "Skills Overview",
+    "/preps-tracker": "P.R.E.P.S Tracker",
+    "/taolu-tracker": "Taolu Tracker",
+    "/performance-lab": "Performance Lab",
+    "/classroom": "Classroom HQ (daily tools)",
+    "/classroom/roster": "Classroom Roster (who's here)",
+    "/admin": "Admin Workspace",
+    "/admin/custom/access": "Access & Permissions",
+    "/admin/custom/camp": "Camp Access Settings",
+    "/camp": "Camp HQ (all camp tools)",
+    "/camp/menu": "Camp Menu (what's on)",
+    "/camp/register": "Camp Registration (sign-ups)",
+    "/coach": "Coach HQ (daily coaching)",
+    "/coach/classroom": "Coach Classroom (live class view)",
+    "/coach/display": "Coach Display Controls (big screen)",
+    "/display": "Display Launchpad (big screen start)",
+    "/display/skill-pulse": "Skill Pulse (live skills board)",
+    "/display/battle-pulse": "Battle Pulse (live battle board)",
+    "/display/siege-survive": "Siege Survive (game display)",
+    "/display/badges": "Badges Display (awards screen)",
+    "/parent": "Parent Portal (family view)",
+    "/parent/rewards": "Parent Rewards (redeem)",
+    "/parent/announcements": "Parent Announcements (updates)",
+  };
+  if (exact[route]) return exact[route];
+
+  const segmentLabels: Record<string, string> = {
+    admin: "Admin",
+    coach: "Coach",
+    classroom: "Classroom",
+    display: "Display",
+    parent: "Parent",
+    camp: "Camp",
+    tools: "Tools",
+    "lesson-forge": "Lesson Forge (plan builder)",
+    "scorekeeper": "Scorekeeper (quick points)",
+    "video-library": "Video Library (watch & teach)",
+    "skill-pulse": "Skill Pulse (live skills)",
+    "battle-pulse": "Battle Pulse (live battles)",
+    "siege-survive": "Siege Survive (game)",
+    "preps-tracker": "P.R.E.P.S Tracker",
+    "taolu-tracker": "Taolu Tracker",
+    "performance-lab": "Performance Lab",
+    "custom": "Custom Settings",
+    "access": "Access & Permissions",
+    "badge-library": "Badge Library (award bank)",
+    "parent-messages": "Parent Messages",
+    "parent-pairing": "Parent Pairing",
+    "parent-relationships": "Parent Relationships",
+    "announcements": "Announcements",
+    "schedule": "Schedule",
+    "passes": "Passes",
+    "passes-accounting": "Passes Accounting",
+    "passes-assign": "Passes Assign",
+    "display-settings": "Display Settings",
+    "battle-pulse": "Battle Pulse",
+    "skill-pulse": "Skill Pulse",
+    "badges": "Badges",
+    "rewards": "Rewards",
+    "profile": "Profile",
+    "settings": "Settings",
+  };
+
   const label = route
     .split("/")
     .filter(Boolean)
-    .map((part) => part.replace(/[-_]/g, " "))
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .map((part) => {
+      if (part.startsWith(":")) return "ID";
+      const key = part.toLowerCase();
+      if (segmentLabels[key]) return segmentLabels[key];
+      return part
+        .replace(/[-_]/g, " ")
+        .replace(/\b\w/g, (m) => m.toUpperCase());
+    })
     .join(" · ");
   return label || "Route";
 }

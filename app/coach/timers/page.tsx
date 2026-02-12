@@ -70,6 +70,8 @@ type SiegeState = {
   roundEndActive: boolean;
   roundEndEndsAt: number | null;
   roundEndDuration: number;
+  roundEndPending: boolean;
+  roundEndReason: "time" | null;
   endGameActive: boolean;
   endGameEndsAt: number | null;
   round: number;
@@ -116,7 +118,7 @@ const DEFAULT_CTF_SECONDS = 10 * 60;
 const DEFAULT_SAFE_ZONE_SECONDS = 10;
 const DEFAULT_CRACK_SECONDS = 5 * 60;
 const SIEGE_INTERMISSION_SECONDS = 20;
-const SIEGE_ROUND_END_SECONDS = 3;
+const SIEGE_ROUND_END_SECONDS = 10;
 const SIEGE_END_RESET_SECONDS = 10;
 
 function initialCtfState(): CtfState {
@@ -170,11 +172,13 @@ function initialSiegeState(): SiegeState {
     roundEndActive: false,
     roundEndEndsAt: null,
     roundEndDuration: SIEGE_ROUND_END_SECONDS,
+    roundEndPending: false,
+    roundEndReason: null,
     endGameActive: false,
     endGameEndsAt: null,
     round: 1,
     roundsTotal: 3,
-    subround: 1 as 1,
+    subround: 1,
     insideTeam: "A",
     teamAName: "Team A",
     teamBName: "Team B",
@@ -244,6 +248,9 @@ export default function CoachTimersPage() {
       return initialSiegeState();
     }
   });
+  const [now, setNow] = useState(() => Date.now());
+  const [siegeTimeUpUntil, setSiegeTimeUpUntil] = useState(0);
+  const prevRoundEndActiveRef = useRef(false);
   const channelRef = useRef<BroadcastChannel | null>(null);
   const crackChannelRef = useRef<BroadcastChannel | null>(null);
   const siegeChannelRef = useRef<BroadcastChannel | null>(null);
@@ -305,6 +312,19 @@ export default function CoachTimersPage() {
       navChannelRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const prev = prevRoundEndActiveRef.current;
+    if (!prev && siegeState.roundEndActive) {
+      setSiegeTimeUpUntil(Date.now() + 5000);
+    }
+    prevRoundEndActiveRef.current = siegeState.roundEndActive;
+  }, [siegeState.roundEndActive]);
 
   useEffect(() => {
     let active = true;
@@ -433,7 +453,18 @@ export default function CoachTimersPage() {
           persistSiege(next);
           return next;
         }
-        const next = finalizeSiegeRound(prev, "time");
+        if (prev.roundEndActive) return prev;
+        const next = {
+          ...prev,
+          running: false,
+          secondsLeft: 0,
+          timerUpdatedAt: now,
+          updatedAt: now,
+          roundEndActive: true,
+          roundEndEndsAt: now + prev.roundEndDuration * 1000,
+          roundEndPending: true,
+          roundEndReason: "time" as const,
+        };
         broadcastSiege(next);
         persistSiege(next);
         return next;
@@ -466,10 +497,22 @@ export default function CoachTimersPage() {
     const timer = window.setTimeout(() => {
       updateSiege((prev) => {
         if (!prev.roundEndActive) return prev;
+        if (prev.roundEndPending && prev.roundEndReason === "time") {
+          const next = finalizeSiegeRound(prev, "time", true);
+          return {
+            ...next,
+            roundEndActive: false,
+            roundEndEndsAt: null,
+            roundEndPending: false,
+            roundEndReason: null,
+          };
+        }
         return {
           ...prev,
           roundEndActive: false,
           roundEndEndsAt: null,
+          roundEndPending: false,
+          roundEndReason: null,
           intermissionActive: true,
           intermissionEndsAt: Date.now() + prev.intermissionTotal * 1000,
         };
@@ -550,6 +593,10 @@ export default function CoachTimersPage() {
         e.preventDefault();
         if (activeTimer === "ctf") triggerJailbreak();
       }
+      if (key === "p") {
+        e.preventDefault();
+        if (activeTimer === "siege_survive") siegePenaltyAdd();
+      }
     }
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
@@ -603,7 +650,7 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
     };
   }
 
-  function finalizeSiegeRound(prev: SiegeState, reason: "time" | "eliminated"): SiegeState {
+  function finalizeSiegeRound(prev: SiegeState, reason: "time" | "eliminated", skipRoundEnd = false): SiegeState {
     const inside = prev.insideTeam;
     const players = inside === "A" ? prev.teamAPlayers : prev.teamBPlayers;
     const eliminated = inside === "A" ? prev.teamAEliminated : prev.teamBEliminated;
@@ -624,7 +671,7 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
 
     if (prev.subround === 1) {
       const nextInside = inside === "A" ? "B" : "A";
-      const useRoundEnd = reason === "time";
+      const useRoundEnd = reason === "time" && !skipRoundEnd;
       const reset = setupSiegeRound(
         {
           ...prev,
@@ -633,11 +680,13 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
           durationSeconds: duration,
           roundResults,
           timerUpdatedAt: Date.now(),
-          subround: 2 as 2,
+          subround: 2,
           intermissionActive: !useRoundEnd,
           intermissionEndsAt: useRoundEnd ? null : Date.now() + prev.intermissionTotal * 1000,
           roundEndActive: useRoundEnd,
           roundEndEndsAt: useRoundEnd ? Date.now() + prev.roundEndDuration * 1000 : null,
+          roundEndPending: false,
+          roundEndReason: null,
         },
         nextInside
       );
@@ -694,14 +743,16 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
         intermissionEndsAt: null,
         roundEndActive: false,
         roundEndEndsAt: null,
+        roundEndPending: false,
+        roundEndReason: null,
         endGameActive: true,
         endGameEndsAt: Date.now() + SIEGE_END_RESET_SECONDS * 1000,
-        subround: 1 as 1,
+        subround: 1,
       };
     }
 
     const nextInside = "A";
-    const useRoundEnd = reason === "time";
+    const useRoundEnd = reason === "time" && !skipRoundEnd;
     const reset = setupSiegeRound(
       {
         ...prev,
@@ -714,11 +765,13 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
         roundsTotal,
         roundResults,
         timerUpdatedAt: Date.now(),
-        subround: 1 as 1,
+        subround: 1,
         intermissionActive: !useRoundEnd,
         intermissionEndsAt: useRoundEnd ? null : Date.now() + prev.intermissionTotal * 1000,
         roundEndActive: useRoundEnd,
         roundEndEndsAt: useRoundEnd ? Date.now() + prev.roundEndDuration * 1000 : null,
+        roundEndPending: false,
+        roundEndReason: null,
       },
       nextInside
     );
@@ -896,11 +949,13 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
         secondsLeft: duration,
         durationSeconds: duration,
         timerUpdatedAt: Date.now(),
-        subround: 1 as 1,
+        subround: 1,
         intermissionActive: false,
         intermissionEndsAt: null,
         roundEndActive: false,
         roundEndEndsAt: null,
+        roundEndPending: false,
+        roundEndReason: null,
         endGameActive: false,
         endGameEndsAt: null,
         teamAWins: 0,
@@ -928,6 +983,8 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
       intermissionEndsAt: null,
       roundEndActive: false,
       roundEndEndsAt: null,
+      roundEndPending: false,
+      roundEndReason: null,
       endGameActive: false,
       endGameEndsAt: null,
       teamAEliminated: 0,
@@ -938,7 +995,7 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
       teamBWins: 0,
       roundResults: [],
       timerUpdatedAt: Date.now(),
-      subround: 1 as 1,
+      subround: 1,
     }));
   }
 
@@ -952,9 +1009,23 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
     }));
   }
 
+  function siegePenaltyAdd() {
+    updateSiege((prev) => {
+      if (!prev.started || prev.completed || prev.intermissionActive || prev.roundEndActive || prev.endGameActive) return prev;
+      const now = Date.now();
+      return {
+        ...prev,
+        secondsLeft: prev.secondsLeft + 15,
+        durationSeconds: prev.durationSeconds + 15,
+        timerUpdatedAt: now,
+        updatedAt: now,
+      };
+    });
+  }
+
   function siegeInsideDown() {
     updateSiege((prev) => {
-      if (!prev.started || prev.intermissionActive || prev.roundEndActive) return prev;
+      if (!prev.started || prev.intermissionActive || prev.endGameActive || (prev.roundEndActive && !prev.roundEndPending)) return prev;
       const inside = prev.insideTeam;
       if (inside === "A") {
         if (prev.teamALives > 0) return { ...prev, teamALives: prev.teamALives - 1 };
@@ -973,7 +1044,7 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
 
   function siegeInsideUp() {
     updateSiege((prev) => {
-      if (!prev.started || prev.intermissionActive || prev.roundEndActive) return prev;
+      if (!prev.started || prev.intermissionActive || prev.endGameActive || (prev.roundEndActive && !prev.roundEndPending)) return prev;
       const inside = prev.insideTeam;
       if (inside === "A") {
         if (prev.teamAEliminated > 0) return { ...prev, teamAEliminated: prev.teamAEliminated - 1 };
@@ -1071,7 +1142,7 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
     } catch {}
   }
 
-  function useTimer(key: TimerKey) {
+  function selectTimer(key: TimerKey) {
     if (!window.confirm(`Use ${labelForTimer(key)}?`)) return;
     setActiveTimer(key);
     displayTimer(key);
@@ -1093,6 +1164,15 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
     const s = siegeState.secondsLeft % 60;
     return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }, [siegeState.secondsLeft]);
+  const siegeIntermissionRemaining = useMemo(() => {
+    if (!siegeState.intermissionActive || !siegeState.intermissionEndsAt) return 0;
+    return Math.max(0, Math.ceil((siegeState.intermissionEndsAt - now) / 1000));
+  }, [siegeState.intermissionActive, siegeState.intermissionEndsAt, now]);
+  const siegeRoundEndRemaining = useMemo(() => {
+    if (!siegeState.roundEndActive || !siegeState.roundEndEndsAt) return 0;
+    return Math.max(0, Math.ceil((siegeState.roundEndEndsAt - now) / 1000));
+  }, [siegeState.roundEndActive, siegeState.roundEndEndsAt, now]);
+  const siegeTimeUpActive = siegeTimeUpUntil > now;
   const crackSudden = crackState.secondsLeft > 0 && crackState.secondsLeft <= (crackState.suddenDeathAt || 60);
   const showCrackRoster = crackSudden || crackState.secondsLeft === 0 || crackState.winners.length > 0;
   const siegeInsideName = siegeState.insideTeam === "A" ? siegeState.teamAName : siegeState.teamBName;
@@ -1216,7 +1296,7 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
                 <button
                   type="button"
                   style={cardBtn(card.active)}
-                  onClick={() => useTimer(card.key)}
+                  onClick={() => selectTimer(card.key)}
                   disabled={!card.active}
                 >
                   Use this timer
@@ -1586,7 +1666,7 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
         ) : null}
 
         {activeTimer === "siege_survive" ? (
-          <section style={controlPanel("siege")}>
+          <section style={controlPanel("siege", siegeTimeUpActive)}>
             <div style={panelHeader()}>
               <button style={ghostBtn()} onClick={() => setActiveTimer(null)}>
                 ← Back to timers
@@ -1614,6 +1694,19 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
                     {siegeState.running ? "Pause" : "Resume"}
                   </button>
                 )}
+                <button
+                  style={ghostBtn()}
+                  onClick={siegePenaltyAdd}
+                  disabled={
+                    !siegeState.started ||
+                    siegeState.completed ||
+                    siegeState.intermissionActive ||
+                    siegeState.roundEndActive ||
+                    siegeState.endGameActive
+                  }
+                >
+                  Penalty +15s (P)
+                </button>
                 <button style={dangerBtn()} onClick={siegeEndGame} disabled={!siegeState.started && !siegeState.completed}>
                   End Game
                 </button>
@@ -1699,6 +1792,17 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
                 ? "Game live"
                 : "Game not started"}
             </div>
+            {(siegeState.intermissionActive || siegeState.roundEndActive || siegeTimeUpActive) ? (
+              <div style={siegeCountdownRow()}>
+                {siegeState.roundEndActive ? (
+                  <div style={siegeCountdownBadge("round")}>Round end: {siegeRoundEndRemaining}s</div>
+                ) : null}
+                {siegeState.intermissionActive ? (
+                  <div style={siegeCountdownBadge("intermission")}>Next round in: {siegeIntermissionRemaining}s</div>
+                ) : null}
+                {siegeTimeUpActive ? <div style={siegeTimeUpBadge()}>Time is up</div> : null}
+              </div>
+            ) : null}
 
             <div style={siegeSettingsGrid()}>
               <div style={siegePanel()}>
@@ -1958,13 +2062,14 @@ function resolveTimerArtUrl(value: string) {
   return `${baseUrl}/storage/v1/object/public/${normalized}`;
 }
 
-function controlPanel(kind: "ctf" | "crack" | "siege"): React.CSSProperties {
+function controlPanel(kind: "ctf" | "crack" | "siege", flash = false): React.CSSProperties {
   const isCrack = kind === "crack";
   return {
     borderRadius: 18,
     padding: isCrack ? 24 : 22,
-    border: "1px solid rgba(255,255,255,0.14)",
+    border: flash ? "2px solid rgba(248,113,113,0.9)" : "1px solid rgba(255,255,255,0.14)",
     background: "rgba(15,23,42,0.75)",
+    boxShadow: flash ? "0 0 18px rgba(248,113,113,0.45)" : "none",
     display: "grid",
     gap: 16,
     maxWidth: isCrack ? 980 : 1040,
@@ -2354,6 +2459,35 @@ function siegeStatusMsg(ended: boolean): React.CSSProperties {
     fontSize: 12,
     fontWeight: 900,
     width: "fit-content",
+  };
+}
+
+function siegeCountdownRow(): React.CSSProperties {
+  return { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" };
+}
+
+function siegeCountdownBadge(kind: "round" | "intermission"): React.CSSProperties {
+  return {
+    padding: "6px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: kind === "round" ? "rgba(248,113,113,0.16)" : "rgba(59,130,246,0.18)",
+    fontSize: 12,
+    fontWeight: 800,
+    letterSpacing: 0.6,
+  };
+}
+
+function siegeTimeUpBadge(): React.CSSProperties {
+  return {
+    padding: "6px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(248,113,113,0.9)",
+    background: "rgba(248,113,113,0.2)",
+    fontSize: 12,
+    fontWeight: 900,
+    letterSpacing: 1,
+    color: "rgba(254,226,226,1)",
   };
 }
 

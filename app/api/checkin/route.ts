@@ -96,7 +96,7 @@ export async function POST(req: Request) {
   let sessionId: string | null = null;
   let lastSessionInsertError: string | null = null;
   const findSession = async () => {
-    let { data: activeSession, error: sErr } = await admin
+    const { data: activeSession, error: sErr } = await admin
       .from("class_sessions")
       .select("id")
       .eq("instance_id", instanceId)
@@ -107,7 +107,7 @@ export async function POST(req: Request) {
     if (sErr && !isMissingColumn(sErr, "instance_id")) return { error: sErr };
     if (!sErr && activeSession?.id) return { id: activeSession.id };
 
-    let { data: bySchedule, error: seErr } = await admin
+    const { data: bySchedule, error: seErr } = await admin
       .from("class_sessions")
       .select("id")
       .eq("class_id", class_id)
@@ -125,7 +125,7 @@ export async function POST(req: Request) {
   };
 
   const findSessionAny = async () => {
-    let { data: byInstance, error: sErr } = await admin
+    const { data: byInstance, error: sErr } = await admin
       .from("class_sessions")
       .select("id")
       .eq("instance_id", instanceId)
@@ -135,7 +135,7 @@ export async function POST(req: Request) {
     if (sErr && !isMissingColumn(sErr, "instance_id")) return { error: sErr };
     if (!sErr && byInstance?.id) return { id: byInstance.id };
 
-    let { data: bySchedule, error: seErr } = await admin
+    const { data: bySchedule, error: seErr } = await admin
       .from("class_sessions")
       .select("id")
       .eq("class_id", class_id)

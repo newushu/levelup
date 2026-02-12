@@ -170,28 +170,19 @@ export default function CoachClassroomPage() {
 
   useEffect(() => {
     if (blocked) return;
-    if (!todaySessions.length) {
-      if (lockInstanceId) {
-        setActiveInstanceId(lockInstanceId);
-        setActiveClassId(lockClassId || "");
-      }
+    if (lockInstanceId) {
+      const lockSession = todaySessions.find((s) => String(s.instance_id) === lockInstanceId);
+      setActiveInstanceId(lockInstanceId);
+      setActiveClassId(lockClassId || lockSession?.class_id || "");
       return;
     }
-    const lockSession = todaySessions.find((s) => String(s.instance_id) === lockInstanceId);
-    if (lockInstanceId && lockSession && isInstanceActiveNow(lockSession, now)) {
-      setActiveInstanceId(lockInstanceId);
-      setActiveClassId(lockClassId || lockSession.class_id || "");
+    if (!todaySessions.length) {
       return;
     }
     const active = pickActiveSession(todaySessions, now);
     if (active?.instance_id) {
       setActiveInstanceId(String(active.instance_id));
       setActiveClassId(String(active.class_id ?? ""));
-      return;
-    }
-    if (lockInstanceId) {
-      setActiveInstanceId(lockInstanceId);
-      setActiveClassId(lockClassId || lockSession?.class_id || "");
       return;
     }
     const first = todaySessions[0];
@@ -837,6 +828,14 @@ export default function CoachClassroomPage() {
               Clear Selection
             </button>
           </div>
+          <div style={debugBar()}>
+            Debug: lock_instance_id={lockInstanceId || "—"} • lock_class_id={lockClassId || "—"} • active_instance_id=
+            {activeInstanceId || "—"} • active_class_id={activeClassId || "—"} • resolved_class_id={resolvedClassId || "—"}
+            {selectedSession?.class_name ? ` • session=${selectedSession.class_name}` : ""}
+          </div>
+          <div style={debugBar()}>
+            ID #{shortId(activeInstanceId)} {lockInstanceId && lockInstanceId !== activeInstanceId ? `• Lock ${shortId(lockInstanceId)}` : ""}
+          </div>
           <div style={header()}>
             <div style={{ display: "grid", gap: 6 }}>
               <div style={subtitle()}>
@@ -1083,6 +1082,20 @@ function selectedCountStyle(): React.CSSProperties {
 
 function debugStyle(): React.CSSProperties {
   return { fontSize: 11, opacity: 0.55, marginTop: 6 };
+}
+
+function debugBar(): React.CSSProperties {
+  return {
+    ...debugStyle(),
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+  };
+}
+
+function shortId(input?: string | null, size = 4) {
+  const value = String(input ?? "").trim();
+  if (!value) return "—";
+  if (value.length <= size * 2 + 3) return value;
+  return `${value.slice(0, size)}...${value.slice(-size)}`;
 }
 
 function headerButtons(): React.CSSProperties {

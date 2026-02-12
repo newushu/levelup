@@ -37,12 +37,14 @@ type FeedItem = {
 const LIVE_ACTIVITY_TYPES = [
   "points_gain",
   "points_loss",
+  "rule_keeper",
   "rule_breaker",
   "skill_pulse",
   "skill_complete",
   "battle_pulse_win",
   "battle_pulse_loss",
   "battle_pulse_mvp",
+  "level_up",
   "redeem",
   "avatar_unlock",
   "roulette",
@@ -98,6 +100,10 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const includeAll = url.searchParams.get("include_all") === "1";
+  const overrideTypes = String(url.searchParams.get("types") ?? "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
   const limit = Math.max(8, Math.min(60, Number(url.searchParams.get("limit") ?? 40)));
 
   const { data: displaySettings } = await supabase
@@ -106,7 +112,9 @@ export async function GET(req: Request) {
     .eq("id", 1)
     .maybeSingle();
   const liveActivityEnabled = displaySettings?.live_activity_enabled ?? true;
-  const liveActivityTypes = new Set(normalizeTypes(displaySettings?.live_activity_types));
+  const liveActivityTypes = new Set(
+    overrideTypes.length ? normalizeTypes(overrideTypes) : normalizeTypes(displaySettings?.live_activity_types)
+  );
 
   if (!liveActivityEnabled && !includeAll) {
     return NextResponse.json({ ok: true, items: [] });
@@ -134,7 +142,7 @@ export async function GET(req: Request) {
   const avatarIds = Array.from(
     new Set((settings ?? []).map((s: any) => String(s.avatar_id ?? "").trim()).filter(Boolean))
   );
-  let avatarMap = new Map<string, { storage_path: string | null; zoom_pct?: number | null }>();
+  const avatarMap = new Map<string, { storage_path: string | null; zoom_pct?: number | null }>();
   if (avatarIds.length) {
     const { data: avatars } = await supabase
       .from("avatars")
@@ -532,13 +540,13 @@ export async function GET(req: Request) {
     const createdAt = String(row.created_at ?? "");
     const createdMs = createdAt ? Date.parse(createdAt) : 0;
     if (!studentId || !createdMs) return;
-    if (note.includes("battle pulse mvp bonus")) {
+    if (note.includes("battle pulse mvp bonus") || note.includes("skill lanes mvp bonus")) {
       const list = battleMvpBonusByStudent.get(studentId) ?? [];
       list.push({ at: createdMs, bonus: Math.abs(Number(row.points ?? 0)) });
       battleMvpBonusByStudent.set(studentId, list);
       return;
     }
-    if (note.includes("battle pulse mvp consolation")) {
+    if (note.includes("battle pulse mvp consolation") || note.includes("skill lanes mvp refund")) {
       const list = battleMvpConsolationByStudent.get(studentId) ?? [];
       list.push({ at: createdMs, bonus: Math.abs(Number(row.points ?? 0)) });
       battleMvpConsolationByStudent.set(studentId, list);
@@ -554,7 +562,13 @@ export async function GET(req: Request) {
     .filter((row: any) => {
       if (String(row.category ?? "").toLowerCase() === "avatar_daily") return false;
       const note = String(row.note ?? "").toLowerCase();
-      if (note.includes("battle pulse mvp bonus") || note.includes("battle pulse mvp consolation")) return false;
+      if (
+        note.includes("battle pulse mvp bonus") ||
+        note.includes("battle pulse mvp consolation") ||
+        note.includes("skill lanes mvp bonus") ||
+        note.includes("skill lanes mvp refund")
+      )
+        return false;
       if (!note.includes("battle pulse wager")) return true;
       const studentId = String(row.student_id ?? "");
       const createdAt = String(row.created_at ?? "");
@@ -571,14 +585,18 @@ export async function GET(req: Request) {
     const avatar = avatarByStudent.get(studentId) ?? emptyAvatar;
     const category = String(row.category ?? "").toLowerCase();
     const isRedeem = category === "redeem" || note.toLowerCase().startsWith("redeemed:");
-    const isBattle = note.toLowerCase().includes("battle pulse");
+    const noteLower = note.toLowerCase();
+    const isBattle = noteLower.includes("battle pulse") || noteLower.includes("skill lanes");
     const isSkillComplete =
       category === "skill_complete" || note.toLowerCase().startsWith("skill:");
     const isBattleWin = isBattle && points > 0 && note.toLowerCase().includes("win");
-    const isBattleMvp = isBattle && note.toLowerCase().includes("mvp");
+    const isBattleMvp = isBattle && noteLower.includes("mvp");
     const isSkillPulse = category === "skill_pulse" || note.toLowerCase().includes("skill pulse");
+    const isRuleKeeper =
+      category === "rule_keeper" || noteLower.includes("rule keeper");
     const isRuleBreaker =
-      category === "rule_breaker" || note.toLowerCase().includes("rule breaker");
+      category === "rule_breaker" || noteLower.includes("rule breaker");
+    const isLevelUp = category === "level_up" || noteLower.includes("level up");
     const isAvatarUnlock = category === "unlock_avatar";
     const isRoulette = category === "roulette_spin" || note.toLowerCase().includes("prize wheel");
     let title = isSkillPulse
@@ -609,10 +627,19 @@ export async function GET(req: Request) {
       title = "Avatar Unlocked";
       detail = `Avatar • ${avatarLabel || "New Avatar"} • -${Math.abs(points)} pts`;
       eventType = "avatar_unlock";
+    } else if (isRuleKeeper) {
+      title = "Rule Keeper";
+      detail = `Rule Keeper • +${Math.abs(points)} pts`;
+      eventType = "rule_keeper";
     } else if (isRuleBreaker) {
       title = "Rule Breaker";
       detail = `Rule Breaker • -${Math.abs(points)} pts`;
       eventType = "rule_breaker";
+    } else if (isLevelUp) {
+      const level = levelById.get(studentId) ?? 1;
+      title = "Level Up";
+      detail = `${studentName} reached Lv ${level}.`;
+      eventType = "level_up";
     } else if (isBattleMvp) {
       title = "Battle Pulse MVP";
       detail = `MVP • ${points >= 0 ? "+" : "-"}${Math.abs(points)} pts`;

@@ -12,7 +12,7 @@ type TaoluForm = {
   age_group_id?: string | null;
   video_links?: string[];
 };
-type CodeRow = { id: string; code_number: string; name: string; deduction_amount?: number };
+type CodeRow = { id: string; code_number: string; name: string; description?: string | null; deduction_amount?: number };
 type AgeGroup = { id: string; name: string; min_age?: number | null; max_age?: number | null };
 type SessionRow = {
   id: string;
@@ -41,14 +41,65 @@ type FinishedLog = {
   deductions_count: number;
   points_lost: number;
   points_earned: number;
+  ended_at?: string | null;
   remediation_points?: number;
   remediation_completed?: boolean;
+};
+type FinishedHistoryRow = {
+  session_id: string;
+  student_id: string;
+  student_name: string;
+  taolu_form_id: string;
+  form_name: string;
+  sections: number[];
+  ended_at?: string | null;
+  deductions_count: number;
+  deduction_samples?: string[];
+  points_lost: number;
+  points_earned: number;
+  remediation_completed?: boolean;
+  remediation_points?: number;
 };
 type RemediationLog = {
   session_id: string;
   points_awarded: number;
   deduction_ids: string[];
   completed_at: string;
+};
+type RefinementChip = {
+  chip_id: string;
+  code_id: string;
+  code_number: string;
+  code_name: string;
+  count: number;
+  deduction_ids: string[];
+  notes: string[];
+};
+type RefinementSection = {
+  section_number: number;
+  chips: RefinementChip[];
+};
+type RefinementForm = {
+  taolu_form_id: string;
+  form_name: string;
+  sections_count: number;
+  deductions_count: number;
+  sections: RefinementSection[];
+};
+type RefinementStudent = {
+  student_id: string;
+  student_name: string;
+  student_level?: number | null;
+  student_points?: number | null;
+  last_taolu_at?: string | null;
+  last_refinement_at?: string | null;
+  forms: RefinementForm[];
+};
+type RefinementNewDeduction = {
+  taolu_form_id?: string;
+  section_number?: number | null;
+  code_id?: string;
+  note?: string;
 };
 
 const TAOLU_START_POINTS = 10;
@@ -64,6 +115,7 @@ async function safeJson(res: Response) {
 }
 
 export default function TaoluTrackerPage() {
+  if (blockedView) return blockedView;
   return (
     <AuthGate>
       <TaoluTrackerInner />
@@ -85,9 +137,15 @@ function TaoluTrackerInner() {
   const [selectedSections, setSelectedSections] = useState<number[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [finishedSessions, setFinishedSessions] = useState<FinishedLog[]>([]);
+  const [finishedHistory, setFinishedHistory] = useState<FinishedHistoryRow[]>([]);
+  const [finishedHistoryLoading, setFinishedHistoryLoading] = useState(false);
+  const [finishedHistorySearch, setFinishedHistorySearch] = useState("");
+  const [historyDetailId, setHistoryDetailId] = useState<string | null>(null);
+  const [refineActiveStudentId, setRefineActiveStudentId] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string>("");
   const [deductionsBySession, setDeductionsBySession] = useState<Record<string, DeductionRow[]>>({});
   const [activeSectionBySession, setActiveSectionBySession] = useState<Record<string, number>>({});
+  const activeSectionRef = useRef<Record<string, number>>({});
   const [openSessionId, setOpenSessionId] = useState<string | null>(null);
   const [deductionFlash, setDeductionFlash] = useState<{ sessionId: string; ts: number } | null>(null);
   const [codeCountsByStudent, setCodeCountsByStudent] = useState<Record<string, Record<string, number>>>({});
@@ -102,6 +160,26 @@ function TaoluTrackerInner() {
   const [nameInput, setNameInput] = useState("");
   const [groupNameInput, setGroupNameInput] = useState("");
   const [addMode, setAddMode] = useState<"individual" | "group">("individual");
+  const [activeTab, setActiveTab] = useState<"tracker" | "refinement">("tracker");
+  const [newFormName, setNewFormName] = useState("");
+  const [newFormAgeGroupId, setNewFormAgeGroupId] = useState("");
+  const [newFormSections, setNewFormSections] = useState("1");
+  const [newFormMsg, setNewFormMsg] = useState("");
+  const [newFormBusy, setNewFormBusy] = useState(false);
+  const [refinementWindow, setRefinementWindow] = useState<"7d" | "30d" | "90d">("7d");
+  const [finishedWindow, setFinishedWindow] = useState<"7d" | "30d" | "90d" | "all">("7d");
+  const [refineStudentIds, setRefineStudentIds] = useState<string[]>([]);
+  const [refineNameInput, setRefineNameInput] = useState("");
+  const [refineSummary, setRefineSummary] = useState<RefinementStudent[]>([]);
+  const [refineLoading, setRefineLoading] = useState(false);
+  const [refineMsg, setRefineMsg] = useState("");
+  const [refineSelections, setRefineSelections] = useState<Record<string, boolean>>({});
+  const [refineSectionInclude, setRefineSectionInclude] = useState<Record<string, boolean>>({});
+  const [refineNewDraftByStudent, setRefineNewDraftByStudent] = useState<Record<string, RefinementNewDeduction>>({});
+  const [refineNewByStudent, setRefineNewByStudent] = useState<Record<string, RefinementNewDeduction[]>>({});
+  const [refineSubmitBusy, setRefineSubmitBusy] = useState<Record<string, boolean>>({});
+  const [refineLogByStudent, setRefineLogByStudent] = useState<Record<string, { label: string; sections: number[]; net: number; fixed: number; missed: number; newCount: number }>>({});
+  const [refineListeningStudentId, setRefineListeningStudentId] = useState<string | null>(null);
 
   const nameRef = useRef<HTMLInputElement | null>(null);
   const groupNameRef = useRef<HTMLInputElement | null>(null);
@@ -147,16 +225,14 @@ function TaoluTrackerInner() {
     })();
   }, []);
 
-  if (blocked) {
-    return (
-      <main style={{ display: "grid", gap: 12 }}>
-        <div style={{ fontSize: 26, fontWeight: 1000 }}>Taolu Tracker</div>
-        <div style={{ opacity: 0.75 }}>
-          {viewerRole === "classroom" ? "Classroom mode cannot access Taolu Tracker." : "Student accounts cannot access Taolu Tracker."}
-        </div>
-      </main>
-    );
-  }
+  const blockedView = blocked ? (
+    <main style={{ display: "grid", gap: 12 }}>
+      <div style={{ fontSize: 26, fontWeight: 1000 }}>Taolu Tracker</div>
+      <div style={{ opacity: 0.75 }}>
+        {viewerRole === "classroom" ? "Classroom mode cannot access Taolu Tracker." : "Student accounts cannot access Taolu Tracker."}
+      </div>
+    </main>
+  ) : null;
 
   const filteredForms = useMemo(() => {
     if (!selectedAgeGroupId) return forms;
@@ -193,6 +269,7 @@ function TaoluTrackerInner() {
         list.forEach((s) => {
           if (!next[s.id] && s.sections?.length) next[s.id] = s.sections[0];
         });
+        activeSectionRef.current = { ...activeSectionRef.current, ...next };
         return next;
       });
       await Promise.all(list.map((s) => loadDeductions(s.id)));
@@ -201,17 +278,25 @@ function TaoluTrackerInner() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.code !== "Space" || e.repeat) return;
-      if (openSessionId) return;
+      const key = e.code === "Space" ? "space" : e.key.toLowerCase();
+      if (key !== "space" && key !== "n") return;
+      if (e.repeat) return;
       const activeEl = document.activeElement?.tagName?.toLowerCase();
       if (activeEl === "input" || activeEl === "textarea" || activeEl === "select") return;
+      if (activeTab === "refinement") {
+        if (!refineListeningStudentId) return;
+        e.preventDefault();
+        addRefineEmptyDeduction(refineListeningStudentId);
+        return;
+      }
+      if (openSessionId) return;
       if (!activeSessionId) return;
       e.preventDefault();
       logDeduction(activeSessionId);
     }
-    window.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, { passive: false });
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeSessionId, openSessionId]);
+  }, [activeSessionId, openSessionId, activeTab, refineListeningStudentId]);
 
   useEffect(() => {
     jumpIndexRef.current = -1;
@@ -320,7 +405,12 @@ function TaoluTrackerInner() {
   }
 
   async function logDeduction(sessionId: string) {
-    const section_number = activeSectionBySession[sessionId] ?? null;
+    const session = sessions.find((s) => s.id === sessionId);
+    const section_number =
+      activeSectionRef.current[sessionId] ??
+      activeSectionBySession[sessionId] ??
+      session?.sections?.[0] ??
+      null;
     const res = await fetch("/api/taolu/deductions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -375,6 +465,7 @@ function TaoluTrackerInner() {
     });
     const finishJson = await safeJson(finishRes);
     if (!finishJson.ok) return setMsg(finishJson.json?.error || "Failed to finish session");
+    const endedAt = String(finishJson.json?.session?.ended_at ?? "") || new Date().toISOString();
 
     const list = (await loadDeductions(sessionId)) ?? deductionsBySession[sessionId] ?? [];
     const liveCount = countLiveDeductions(list);
@@ -391,6 +482,7 @@ function TaoluTrackerInner() {
         deductions_count: liveCount,
         points_lost: pointsLost,
         points_earned: pointsEarned,
+        ended_at: endedAt,
       },
     ]);
     setSessions((prev) => {
@@ -504,7 +596,6 @@ function TaoluTrackerInner() {
 
   async function submitRemediation(sessionId: string) {
     const selection = remediationSelections[sessionId] ?? [];
-    if (!selection.length) return;
     setRemediationBusy(true);
     setMsg("");
     try {
@@ -559,11 +650,37 @@ function TaoluTrackerInner() {
     null;
   const openFinishedSession =
     openSessionId ? finishedSessions.find((s) => s.session_id === openSessionId) ?? null : null;
+  const filteredFinishedSessions = useMemo(() => {
+    if (finishedWindow === "all") return finishedSessions;
+    const days = finishedWindow === "7d" ? 7 : finishedWindow === "30d" ? 30 : 90;
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    return finishedSessions.filter((s) => {
+      const ts = s.ended_at ? new Date(s.ended_at).getTime() : 0;
+      return ts ? ts >= cutoff : true;
+    });
+  }, [finishedSessions, finishedWindow]);
 
   useEffect(() => {
     if (!openFinishedSession) return;
     loadRemediation(openFinishedSession.session_id);
   }, [openFinishedSession?.session_id]);
+
+  useEffect(() => {
+    if (!refineStudentIds.length || !refineSummary.length) return;
+    loadRefinementSummary();
+  }, [refinementWindow]);
+
+  useEffect(() => {
+    if (activeTab !== "refinement") return;
+    if (finishedHistory.length) return;
+    loadFinishedHistory();
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!historyDetailId) return;
+    loadDeductions(historyDetailId);
+    loadRemediation(historyDetailId);
+  }, [historyDetailId]);
 
   function moveSessionToFront(sessionId: string) {
     setSessions((prev) => {
@@ -594,15 +711,282 @@ function TaoluTrackerInner() {
     const updated = sj.json?.session as SessionRow;
     setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
     const active = updated.sections?.[0];
-    if (active) setActiveSectionBySession((prev) => ({ ...prev, [sessionId]: active }));
+    if (active) {
+      activeSectionRef.current = { ...activeSectionRef.current, [sessionId]: active };
+      setActiveSectionBySession((prev) => ({ ...prev, [sessionId]: active }));
+    }
+  }
+
+  function refinementWindowDays() {
+    if (refinementWindow === "30d") return 30;
+    if (refinementWindow === "90d") return 90;
+    return 7;
+  }
+
+  function formatShortDate(value?: string | null) {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "—";
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  }
+
+  function addRefineStudentByName(raw: string) {
+    const value = raw.trim().toLowerCase();
+    if (!value) return;
+    const match = students.find((s) => s.name.toLowerCase() === value) ??
+      students.find((s) => s.name.toLowerCase().includes(value));
+    if (!match) return setRefineMsg("Student not found.");
+    setRefineStudentIds((prev) => (prev.includes(match.id) ? prev : [...prev, match.id]));
+    setRefineNameInput("");
+    setRefineMsg("");
+  }
+
+  async function loadRefinementSummary() {
+    if (!refineStudentIds.length) return setRefineMsg("Select at least one student.");
+    setRefineLoading(true);
+    setRefineMsg("");
+    try {
+      const res = await fetch("/api/taolu/refinement/summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_ids: refineStudentIds, window_days: refinementWindowDays() }),
+      });
+      const sj = await safeJson(res);
+      if (!sj.ok) throw new Error(sj.json?.error || "Failed to load refinement summary");
+      const list = (sj.json?.students ?? []) as RefinementStudent[];
+      setRefineSummary(list);
+      if (list.length) {
+        setRefineActiveStudentId((prev) => (prev && list.some((s) => s.student_id === prev) ? prev : list[0].student_id));
+      }
+      const nextInclude: Record<string, boolean> = {};
+      list.forEach((student) => {
+        student.forms.forEach((form) => {
+          form.sections.forEach((section) => {
+            const key = `${student.student_id}:${form.taolu_form_id}:${section.section_number}`;
+            nextInclude[key] = false;
+          });
+        });
+      });
+      setRefineSectionInclude(nextInclude);
+      setRefineSelections({});
+    } catch (err: any) {
+      setRefineMsg(err?.message ?? "Failed to load refinement summary");
+    } finally {
+      setRefineLoading(false);
+    }
+  }
+
+  function addRefineNewFromDraft(studentId: string) {
+    const draft = refineNewDraftByStudent[studentId];
+    if (!draft?.taolu_form_id || !draft.code_id || !draft.section_number) {
+      setRefineMsg("Select form, section, and code before adding a new deduction.");
+      return;
+    }
+    setRefineNewByStudent((prev) => ({
+      ...prev,
+      [studentId]: [...(prev[studentId] ?? []), {
+        taolu_form_id: draft.taolu_form_id,
+        section_number: Number(draft.section_number),
+        code_id: draft.code_id,
+        note: draft.note ?? "",
+      }],
+    }));
+    setRefineNewDraftByStudent((prev) => ({
+      ...prev,
+      [studentId]: {
+        taolu_form_id: draft.taolu_form_id,
+        section_number: draft.section_number,
+        code_id: "",
+        note: "",
+      },
+    }));
+    setRefineMsg("");
+  }
+
+  function addRefineEmptyDeduction(studentId: string) {
+    const includedSections = Object.entries(refineSectionInclude)
+      .filter(([key, included]) => included && key.startsWith(`${studentId}:`))
+      .map(([key]) => key.split(":"))
+      .map((parts) => ({ formId: parts[1], section: Number(parts[2]) }))
+      .filter((row) => Number.isFinite(row.section));
+    const formCounts = new Map<string, number>();
+    includedSections.forEach((row) => {
+      formCounts.set(row.formId, (formCounts.get(row.formId) ?? 0) + 1);
+    });
+    const [defaultFormId] = Array.from(formCounts.entries()).sort((a, b) => b[1] - a[1])[0] ?? [];
+    const defaultSections = includedSections
+      .filter((row) => row.formId === defaultFormId)
+      .map((row) => row.section)
+      .sort((a, b) => a - b);
+    const defaultSection = defaultSections[0] ?? null;
+    setRefineNewByStudent((prev) => ({
+      ...prev,
+      [studentId]: [
+        {
+          taolu_form_id: defaultFormId ?? "",
+          section_number: defaultSection,
+          code_id: "",
+          note: "",
+        },
+        ...(prev[studentId] ?? []),
+      ],
+    }));
+  }
+
+  async function loadFinishedHistory() {
+    setFinishedHistoryLoading(true);
+    try {
+      const res = await fetch("/api/taolu/finished-sessions?limit=300", { cache: "no-store" });
+      const sj = await safeJson(res);
+      if (!sj.ok) throw new Error(sj.json?.error || "Failed to load finished sessions");
+      setFinishedHistory((sj.json?.sessions ?? []) as FinishedHistoryRow[]);
+    } catch (err: any) {
+      setRefineMsg(err?.message ?? "Failed to load finished sessions");
+    } finally {
+      setFinishedHistoryLoading(false);
+    }
+  }
+
+  async function openFinishedFromHistory(row: FinishedHistoryRow) {
+    setOpenSessionId(row.session_id);
+    if (!finishedSessions.find((s) => s.session_id === row.session_id)) {
+      setFinishedSessions((prev) => [
+        ...prev,
+        {
+          session_id: row.session_id,
+          student_id: row.student_id,
+          taolu_form_id: row.taolu_form_id,
+          sections: row.sections ?? [],
+          deductions: [],
+          deductions_count: row.deductions_count ?? 0,
+          points_lost: row.points_lost ?? 0,
+          points_earned: row.points_earned ?? 0,
+          ended_at: row.ended_at ?? null,
+          remediation_points: row.remediation_points ?? 0,
+          remediation_completed: row.remediation_completed ?? false,
+        },
+      ]);
+    }
+    const list = await loadDeductions(row.session_id);
+    if (list) {
+      const liveCount = countLiveDeductions(list);
+      const pointsLost = pointsLostFromDeductions(liveCount);
+      const pointsEarned = pointsEarnedFromDeductions(liveCount);
+      setFinishedSessions((prev) =>
+        prev.map((item) =>
+          item.session_id === row.session_id
+            ? {
+                ...item,
+                deductions: list,
+                deductions_count: liveCount,
+                points_lost: pointsLost,
+                points_earned: pointsEarned,
+              }
+            : item
+        )
+      );
+    }
+    loadRemediation(row.session_id);
+  }
+
+  function toggleRefineChip(chipId: string) {
+    setRefineSelections((prev) => ({ ...prev, [chipId]: !prev[chipId] }));
+  }
+
+  async function submitRefinement(student: RefinementStudent) {
+    const windowDays = refinementWindowDays();
+    const newPenalty = 3;
+    const newItems = refineNewByStudent[student.student_id] ?? [];
+    const hasUnfilled = newItems.some((row) => !row.taolu_form_id || !row.code_id || !row.section_number);
+    if (hasUnfilled) {
+      setRefineMsg("Fill out form, section, and code for all new deductions before submitting.");
+      return;
+    }
+    const selections: Array<{
+      taolu_form_id: string;
+      section_number: number;
+      code_id: string;
+      code_number: string;
+      code_name: string;
+      deduction_ids: string[];
+      notes: string[];
+      fixed: boolean;
+    }> = [];
+
+    student.forms.forEach((form) => {
+      form.sections.forEach((section) => {
+        const key = `${student.student_id}:${form.taolu_form_id}:${section.section_number}`;
+        if (!refineSectionInclude[key]) return;
+        section.chips.forEach((chip) => {
+          selections.push({
+            taolu_form_id: form.taolu_form_id,
+            section_number: section.section_number,
+            code_id: chip.code_id,
+            code_number: chip.code_number,
+            code_name: chip.code_name,
+            deduction_ids: chip.deduction_ids ?? [],
+            notes: chip.notes ?? [],
+            fixed: !!refineSelections[chip.chip_id],
+          });
+        });
+      });
+    });
+
+    setRefineSubmitBusy((prev) => ({ ...prev, [student.student_id]: true }));
+    setRefineMsg("");
+    try {
+      const res = await fetch("/api/taolu/refinement/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          student_id: student.student_id,
+          window_days: windowDays,
+          selections,
+          new_deductions: newItems,
+        }),
+      });
+      const sj = await safeJson(res);
+      if (!sj.ok) throw new Error(sj.json?.error || "Failed to submit refinement");
+      setRefineNewByStudent((prev) => ({ ...prev, [student.student_id]: [] }));
+      const fixedCount = selections.filter((s) => s.fixed).length;
+      const missedCount = selections.filter((s) => !s.fixed).length;
+      const net = fixedCount * 5 - missedCount * 5 - newItems.length * newPenalty;
+      const sections = Array.from(new Set(
+        selections
+          .filter((s) => refineSectionInclude[`${student.student_id}:${s.taolu_form_id}:${s.section_number}`])
+          .map((s) => s.section_number)
+      )).sort((a, b) => a - b);
+      const label = windowDays === 7 ? "7d" : windowDays === 30 ? "30d" : "3mo";
+      setRefineLogByStudent((prev) => ({
+        ...prev,
+        [student.student_id]: {
+          label,
+          sections,
+          net,
+          fixed: fixedCount,
+          missed: missedCount,
+          newCount: newItems.length,
+        },
+      }));
+      setRefineMsg(`Refinement saved for ${student.student_name}. Net ${net} pts.`);
+    } catch (err: any) {
+      setRefineMsg(err?.message ?? "Failed to submit refinement");
+    } finally {
+      setRefineSubmitBusy((prev) => ({ ...prev, [student.student_id]: false }));
+    }
   }
 
   return (
     <main style={{ display: "grid", gap: 16, padding: "0 50px" }}>
       <div style={{ fontSize: 26, fontWeight: 1000 }}>Taolu Tracker</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button style={pill(activeTab === "tracker")} onClick={() => setActiveTab("tracker")}>Tracker</button>
+        <button style={pill(activeTab === "refinement")} onClick={() => setActiveTab("refinement")}>Refinement</button>
+      </div>
       {msg ? <div style={notice()}>{msg}</div> : null}
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 0.8fr)", gap: 16 }}>
+      {activeTab === "tracker" ? (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 0.8fr)", gap: 16 }}>
         <div style={card()}>
           <div style={{ fontWeight: 1000 }}>Setup</div>
           <div style={{ display: "grid", gap: 10, marginTop: 8 }}>
@@ -774,6 +1158,76 @@ function TaoluTrackerInner() {
                   </div>
                 </div>
               ) : null}
+
+              {viewerRole === "admin" ? (
+                <div style={miniCard()}>
+                  <div style={{ fontWeight: 900, fontSize: 12, opacity: 0.85 }}>Add Taolu Form</div>
+                  <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                    <input
+                      value={newFormName}
+                      onChange={(e) => setNewFormName(e.target.value)}
+                      placeholder="Form name"
+                      style={input()}
+                    />
+                    <select
+                      value={newFormAgeGroupId}
+                      onChange={(e) => setNewFormAgeGroupId(e.target.value)}
+                      style={input()}
+                    >
+                      <option value="">Age group (optional)</option>
+                      {ageGroups.map((g) => (
+                        <option key={g.id} value={g.id}>{g.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      value={newFormSections}
+                      onChange={(e) => setNewFormSections(e.target.value)}
+                      placeholder="Sections count"
+                      style={input()}
+                    />
+                    <button
+                      style={btn()}
+                      disabled={newFormBusy}
+                      onClick={async () => {
+                        const name = newFormName.trim();
+                        const sectionsCount = Number(newFormSections);
+                        if (!name) return setNewFormMsg("Name required.");
+                        if (!sectionsCount || Number.isNaN(sectionsCount) || sectionsCount < 1) {
+                          return setNewFormMsg("Sections must be >= 1.");
+                        }
+                        setNewFormBusy(true);
+                        setNewFormMsg("");
+                        try {
+                          const res = await fetch("/api/admin/iwuf/forms", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              name,
+                              age_group_id: newFormAgeGroupId || null,
+                              sections_count: sectionsCount,
+                              event_type: "taolu",
+                            }),
+                          });
+                          const sj = await safeJson(res);
+                          if (!sj.ok) throw new Error(sj.json?.error || "Failed to add form");
+                          const form = sj.json?.form as TaoluForm;
+                          setForms((prev) => [...prev, form].sort((a, b) => a.name.localeCompare(b.name)));
+                          setNewFormName("");
+                          setNewFormAgeGroupId("");
+                          setNewFormSections("1");
+                        } catch (err: any) {
+                          setNewFormMsg(err?.message ?? "Failed to add form");
+                        } finally {
+                          setNewFormBusy(false);
+                        }
+                      }}
+                    >
+                      {newFormBusy ? "Saving..." : "Create form"}
+                    </button>
+                    {newFormMsg ? <div style={{ fontSize: 12, opacity: 0.7 }}>{newFormMsg}</div> : null}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.7 }}>
@@ -858,8 +1312,475 @@ function TaoluTrackerInner() {
             })}
           </div>
         </div>
-      </div>
+        </div>
+      ) : null}
 
+      {activeTab === "refinement" ? (
+        <div style={card()}>
+        <div style={{ fontWeight: 1000, fontSize: 16 }}>Refinement Hub</div>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>
+          Single-session refinement: +1 per fixed deduction, no points lost. Window refinements: +5 fixed, -5 missed, -3 new.
+        </div>
+        <div style={{ fontSize: 12, opacity: 0.6 }}>
+          Click “Start listening” on a student card to arm the space/N hotkey. Space/N adds a new deduction chip.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+          <button style={pill(refinementWindow === "7d")} onClick={() => setRefinementWindow("7d")}>7d</button>
+          <button style={pill(refinementWindow === "30d")} onClick={() => setRefinementWindow("30d")}>30d</button>
+          <button style={pill(refinementWindow === "90d")} onClick={() => setRefinementWindow("90d")}>3mo</button>
+        </div>
+        <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+          <input
+            value={refineNameInput}
+            onChange={(e) => setRefineNameInput(e.target.value)}
+            placeholder="Add student name + Enter"
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              addRefineStudentByName(refineNameInput);
+            }}
+            style={input()}
+          />
+          {refineNameInput.trim() ? (
+            <div style={suggestions()}>
+              {students
+                .filter((s) => s.name.toLowerCase().includes(refineNameInput.trim().toLowerCase()))
+                .slice(0, 6)
+                .map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => addRefineStudentByName(s.name)}
+                    style={suggestionItem()}
+                  >
+                    {s.name}
+                  </button>
+                ))}
+            </div>
+          ) : null}
+          {refineStudentIds.length ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {refineStudentIds.map((id) => (
+                <button
+                  key={id}
+                  style={chip()}
+                  onClick={() => setRefineStudentIds((prev) => prev.filter((sid) => sid !== id))}
+                >
+                  {studentById.get(id)?.name ?? "Student"} ✕
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <button style={btn()} onClick={loadRefinementSummary} disabled={refineLoading}>
+            {refineLoading ? "Loading..." : "Load refinement"}
+          </button>
+          {refineMsg ? <div style={{ fontSize: 12, opacity: 0.7 }}>{refineMsg}</div> : null}
+        </div>
+
+        {refineSummary.length ? (
+          <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {refineSummary.map((student) => {
+                const selectedCount = Object.entries(refineSectionInclude)
+                  .filter(([key, included]) => included && key.startsWith(`${student.student_id}:`)).length;
+                return (
+                  <button
+                    key={student.student_id}
+                    style={pill(refineActiveStudentId === student.student_id)}
+                    onClick={() => setRefineActiveStudentId(student.student_id)}
+                  >
+                    {student.student_name}
+                    {selectedCount ? ` • ${selectedCount}` : ""}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
+            {refineSummary
+              .filter((student) => !refineActiveStudentId || student.student_id === refineActiveStudentId)
+              .map((student) => {
+              const newPenalty = 3;
+              let totalChips = 0;
+              let fixedCount = 0;
+              student.forms.forEach((form) => {
+                form.sections.forEach((section) => {
+                  const includeKey = `${student.student_id}:${form.taolu_form_id}:${section.section_number}`;
+                  if (!refineSectionInclude[includeKey]) return;
+                  totalChips += section.chips.length;
+                  section.chips.forEach((chip) => {
+                    if (refineSelections[chip.chip_id]) fixedCount += 1;
+                  });
+                });
+              });
+              const missedCount = Math.max(0, totalChips - fixedCount);
+              const newCount = (refineNewByStudent[student.student_id] ?? []).length;
+              const net = fixedCount * 5 - missedCount * 5 - newCount * newPenalty;
+              const log = refineLogByStudent[student.student_id];
+              return (
+                <div
+                  key={student.student_id}
+                  style={refineCard(refineListeningStudentId === student.student_id)}
+                  onClick={() => {
+                    setRefineActiveStudentId(student.student_id);
+                    setRefineListeningStudentId(student.student_id);
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontWeight: 1000 }}>{student.student_name}</div>
+                      <div style={{ fontSize: 12, opacity: 0.7 }}>
+                        Lvl {student.student_level ?? "—"} • {student.student_points ?? 0} pts • Forms {student.forms.length}
+                      </div>
+                      <div style={{ fontSize: 11, opacity: 0.65 }}>
+                        Last taolu {formatShortDate(student.last_taolu_at)} • Last refinement {formatShortDate(student.last_refinement_at)}
+                      </div>
+                      <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+                        Fixed {fixedCount} • Missed {missedCount} • New {newCount} • Net {net} pts
+                      </div>
+                      {log ? (
+                        <div style={{ marginTop: 6 }}>
+                          <div style={{ fontWeight: 900 }}>{log.label} Refinement</div>
+                          <div style={{ fontSize: 11, opacity: 0.75 }}>
+                            Sections {log.sections.length ? log.sections.join(", ") : "—"}
+                          </div>
+                          <div style={{ fontSize: 11, opacity: 0.75 }}>
+                            +{log.fixed * 5} fixed • -{log.missed * 5} missed • -{log.newCount * 3} new
+                          </div>
+                          <div style={{ fontSize: 16, fontWeight: 1000, color: log.net >= 0 ? "rgba(34,197,94,0.95)" : "rgba(248,113,113,0.95)" }}>
+                            {log.net >= 0 ? `+${log.net}` : log.net} pts
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        style={pill(refineListeningStudentId === student.student_id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRefineListeningStudentId((prev) =>
+                            prev === student.student_id ? null : student.student_id
+                          );
+                        }}
+                      >
+                        {refineListeningStudentId === student.student_id ? "Tracking" : "Track new deductions"}
+                      </button>
+                      <button
+                        style={btnGhost()}
+                        onClick={() => {
+                          const next = { ...refineSectionInclude };
+                          student.forms.forEach((form) => {
+                            form.sections.forEach((section) => {
+                              const key = `${student.student_id}:${form.taolu_form_id}:${section.section_number}`;
+                              next[key] = false;
+                            });
+                          });
+                          setRefineSectionInclude(next);
+                        }}
+                      >
+                        Unselect all
+                      </button>
+                      <button
+                        style={btn()}
+                        onClick={() => submitRefinement(student)}
+                        disabled={!!refineSubmitBusy[student.student_id]}
+                      >
+                        {refineSubmitBusy[student.student_id] ? "Submitting..." : "Submit refinement"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {student.forms.map((form) => (
+                    <div key={form.taolu_form_id} style={{ display: "grid", gap: 8 }}>
+                      <div style={{ fontWeight: 900 }}>{form.form_name}</div>
+                      <div style={{ fontSize: 11, opacity: 0.7 }}>
+                        Sections {form.sections_count ?? 0} • Deductions {form.deductions_count ?? 0}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          style={pill(false)}
+                          onClick={() => {
+                            const next = { ...refineSectionInclude };
+                            form.sections.forEach((section) => {
+                              const key = `${student.student_id}:${form.taolu_form_id}:${section.section_number}`;
+                              next[key] = false;
+                            });
+                            setRefineSectionInclude(next);
+                          }}
+                        >
+                          Unselect all sections
+                        </button>
+                      </div>
+                      {form.sections.map((section) => {
+                        const includeKey = `${student.student_id}:${form.taolu_form_id}:${section.section_number}`;
+                        const included = !!refineSectionInclude[includeKey];
+                        return (
+                          <div key={`${form.taolu_form_id}-${section.section_number}`} style={refineSection()}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                              <div style={{ fontWeight: 900 }}>Section {section.section_number}</div>
+                              <button
+                                style={pill(included)}
+                                onClick={() =>
+                                  setRefineSectionInclude((prev) => ({ ...prev, [includeKey]: !included }))
+                                }
+                              >
+                                {included ? "Included" : "Include section"}
+                              </button>
+                            </div>
+                            <div style={refineChipRow()}>
+                              {section.chips.map((chip) => {
+                                const selected = !!refineSelections[chip.chip_id];
+                                return (
+                                  <button
+                                    key={chip.chip_id}
+                                    type="button"
+                                    onClick={() => {
+                                      if (!included) return;
+                                      toggleRefineChip(chip.chip_id);
+                                    }}
+                                    style={refineChip(selected, included)}
+                                  >
+                                    <div style={{ fontWeight: 900 }}>
+                                      {chip.code_number} • {chip.code_name}
+                                      {chip.count > 1 ? ` ×${chip.count}` : ""}
+                                    </div>
+                                    {selected ? (
+                                      <div style={{ fontSize: 10, fontWeight: 900, color: "rgba(96,165,250,0.95)", marginTop: 4 }}>
+                                        Refined
+                                      </div>
+                                    ) : null}
+                                    {chip.notes?.length ? (
+                                      <div style={{ fontSize: 10, opacity: 0.8, marginTop: 4 }}>
+                                        {chip.notes.slice(0, 3).map((note, idx) => (
+                                          <div key={`${chip.chip_id}-note-${idx}`}>• {note}</div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <div style={{ fontSize: 10, opacity: 0.6, marginTop: 4 }}>No notes</div>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+
+                  <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                    <div style={{ fontWeight: 900, fontSize: 12 }}>New deductions</div>
+                    <button
+                      style={btnGhost()}
+                      onClick={() => {
+                        setRefineActiveStudentId(student.student_id);
+                        addRefineEmptyDeduction(student.student_id);
+                      }}
+                    >
+                      Add new deduction (Space/N)
+                    </button>
+                    {(refineNewByStudent[student.student_id] ?? []).length ? (
+                      <div style={{ display: "grid", gap: 8 }}>
+                        {(refineNewByStudent[student.student_id] ?? []).map((row, idx) => {
+                          const includedSections = Object.entries(refineSectionInclude)
+                            .filter(([key, included]) => included && key.startsWith(`${student.student_id}:`))
+                            .map(([key]) => key.split(":"))
+                            .map((parts) => ({ formId: parts[1], section: Number(parts[2]) }))
+                            .filter((entry) => Number.isFinite(entry.section));
+                          const availableFormIds = Array.from(new Set(includedSections.map((entry) => entry.formId)));
+                          const allowedFormIds = availableFormIds.length ? availableFormIds : forms.map((f) => f.id);
+                          const selectedFormId = row.taolu_form_id && allowedFormIds.includes(row.taolu_form_id)
+                            ? row.taolu_form_id
+                            : allowedFormIds[0] ?? "";
+                          const sectionsForForm = includedSections
+                            .filter((entry) => entry.formId === selectedFormId)
+                            .map((entry) => entry.section)
+                            .sort((a, b) => a - b);
+                          const fallbackSections = selectedFormId
+                            ? Array.from(
+                                { length: forms.find((f) => f.id === selectedFormId)?.sections_count ?? 0 },
+                                (_, i) => i + 1
+                              )
+                            : [];
+                          const sectionOptions = sectionsForForm.length ? sectionsForForm : fallbackSections;
+                          const selectedSection = row.section_number && sectionOptions.includes(Number(row.section_number))
+                            ? Number(row.section_number)
+                            : sectionOptions[0] ?? null;
+                          const isInvalid = !row.taolu_form_id || !row.code_id || !row.section_number;
+                          return (
+                            <div key={`${student.student_id}-new-${idx}`} style={refineNewChip()}>
+                              <div style={{ fontWeight: 900, fontSize: 11 }}>
+                                Add deduction {isInvalid ? "• Unfilled" : ""}
+                              </div>
+                              <div style={{ display: "grid", gap: 6, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
+                                <select
+                                  value={selectedFormId}
+                                  onChange={(e) =>
+                                    setRefineNewByStudent((prev) => ({
+                                      ...prev,
+                                      [student.student_id]: (prev[student.student_id] ?? []).map((item, i) =>
+                                        i === idx ? { ...item, taolu_form_id: e.target.value, section_number: null } : item
+                                      ),
+                                    }))
+                                  }
+                                  style={input()}
+                                >
+                                  <option value="">Select form</option>
+                                  {forms.filter((f) => allowedFormIds.includes(f.id)).map((f) => (
+                                    <option key={f.id} value={f.id}>{f.name}</option>
+                                  ))}
+                                </select>
+                                <div style={{ display: "grid", gap: 4 }}>
+                                  <div style={{ fontSize: 10, opacity: 0.7, fontWeight: 900 }}>Section</div>
+                                  <div style={sectionChipRow()}>
+                                    {sectionOptions.map((sec) => (
+                                      <button
+                                        key={`${selectedFormId}-sec-${sec}`}
+                                        type="button"
+                                        onClick={() =>
+                                          setRefineNewByStudent((prev) => ({
+                                            ...prev,
+                                            [student.student_id]: (prev[student.student_id] ?? []).map((item, i) =>
+                                              i === idx ? { ...item, section_number: sec } : item
+                                            ),
+                                          }))
+                                        }
+                                        style={sectionChip(selectedSection === sec)}
+                                      >
+                                        {sec}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                                <select
+                                  value={row.code_id ?? ""}
+                                  onChange={(e) =>
+                                    setRefineNewByStudent((prev) => ({
+                                      ...prev,
+                                      [student.student_id]: (prev[student.student_id] ?? []).map((item, i) =>
+                                        i === idx ? { ...item, code_id: e.target.value } : item
+                                      ),
+                                    }))
+                                  }
+                                  style={input()}
+                                >
+                                  <option value="">Code</option>
+                                  {codes.map((c) => (
+                                    <option key={c.id} value={c.id}>{c.code_number} • {c.name}</option>
+                                  ))}
+                                </select>
+                                <input
+                                  value={row.note ?? ""}
+                                  onChange={(e) =>
+                                    setRefineNewByStudent((prev) => ({
+                                      ...prev,
+                                      [student.student_id]: (prev[student.student_id] ?? []).map((item, i) =>
+                                        i === idx ? { ...item, note: e.target.value } : item
+                                      ),
+                                    }))
+                                  }
+                                  placeholder="Note (optional)"
+                                  style={input()}
+                                />
+                              </div>
+                              <button
+                                style={removeMiniBtn()}
+                                onClick={() =>
+                                  setRefineNewByStudent((prev) => ({
+                                    ...prev,
+                                    [student.student_id]: (prev[student.student_id] ?? []).filter((_, i) => i !== idx),
+                                  }))
+                                }
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+            </div>
+          </div>
+        ) : null}
+        <div style={{ marginTop: 16, display: "grid", gap: 8 }}>
+          <div style={{ fontWeight: 900 }}>Refine Past Sessions</div>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>
+            Single-session refinement can be done once and awards +1 per fixed deduction.
+          </div>
+          <input
+            value={finishedHistorySearch}
+            onChange={(e) => setFinishedHistorySearch(e.target.value)}
+            placeholder="Search by student or form"
+            style={input()}
+          />
+          {finishedHistoryLoading ? (
+            <div style={{ fontSize: 12, opacity: 0.7 }}>Loading finished sessions...</div>
+          ) : null}
+          <div className="refine-history-grid" style={{ maxHeight: 320, overflowY: "auto", display: "grid", gap: 10 }}>
+            {finishedHistory
+              .filter((row) => {
+                const q = finishedHistorySearch.trim().toLowerCase();
+                if (!q) return true;
+                return (
+                  row.student_name.toLowerCase().includes(q) ||
+                  row.form_name.toLowerCase().includes(q)
+                );
+              })
+              .slice(0, 200)
+              .map((row) => {
+                const refined = !!row.remediation_completed;
+                return (
+                  <div key={row.session_id} style={refineLogCard(refined)}>
+                    <div>
+                      <div style={{ fontWeight: 900 }}>
+                        {row.student_name} • {row.form_name}
+                      </div>
+                      <div style={{ fontSize: 11, opacity: 0.7 }}>
+                        {row.ended_at ? new Date(row.ended_at).toLocaleDateString() : "No end date"} • Deductions {row.deductions_count}
+                      </div>
+                      <div style={{ fontSize: 11, opacity: 0.65 }}>
+                        Sections {row.sections?.length ? row.sections.join(", ") : "—"} • Score {row.points_earned}
+                      </div>
+                      <div style={{ fontSize: 11, opacity: 0.65 }}>
+                        Codes {row.deduction_samples?.length ? row.deduction_samples.join(", ") : "—"}
+                        {row.deductions_count > (row.deduction_samples?.length ?? 0) ? " • more" : ""}
+                      </div>
+                      {refined ? (
+                        <div style={{ fontSize: 11, fontWeight: 900, color: "rgba(96,165,250,0.95)" }}>
+                          Refined +{row.remediation_points ?? 0} pts
+                        </div>
+                      ) : null}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                      {refined ? (
+                        <div style={{ fontSize: 10, fontWeight: 900, color: "rgba(34,197,94,0.9)" }}>Refined</div>
+                      ) : null}
+                      <button
+                        style={btnGhost()}
+                        onClick={() => {
+                          if (refined) {
+                            setHistoryDetailId(row.session_id);
+                          } else {
+                            openFinishedFromHistory(row);
+                          }
+                        }}
+                      >
+                        {refined ? "See details" : "Refine this one"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            {!finishedHistory.length && !finishedHistoryLoading ? (
+              <div style={{ fontSize: 12, opacity: 0.7 }}>No finished sessions yet.</div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+      ) : null}
+      {activeTab === "tracker" ? (
       <div style={{ display: "grid", gap: 12 }}>
         <div className="taolu-cards-shell" style={{ display: "grid", gap: 12 }}>
           <div style={{ display: "grid", gap: 12 }}>
@@ -910,6 +1831,7 @@ function TaoluTrackerInner() {
                                       : [...s.sections, sec];
                                     const sorted = [...next].sort((a, b) => a - b);
                                     updateSessionSections(s.id, sorted);
+                                    activeSectionRef.current = { ...activeSectionRef.current, [s.id]: sec };
                                     setActiveSectionBySession((prev) => ({ ...prev, [s.id]: sec }));
                                   }}
                                   style={{
@@ -1024,9 +1946,17 @@ function TaoluTrackerInner() {
         </div>
 
         <div style={finishedBar()}>
-          <div style={{ fontWeight: 1000, fontSize: 12, opacity: 0.85 }}>Finished Log</div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ fontWeight: 1000, fontSize: 12, opacity: 0.85 }}>Finished Log</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button style={pill(finishedWindow === "7d")} onClick={() => setFinishedWindow("7d")}>7d</button>
+              <button style={pill(finishedWindow === "30d")} onClick={() => setFinishedWindow("30d")}>30d</button>
+              <button style={pill(finishedWindow === "90d")} onClick={() => setFinishedWindow("90d")}>3mo</button>
+              <button style={pill(finishedWindow === "all")} onClick={() => setFinishedWindow("all")}>All</button>
+            </div>
+          </div>
           <div style={finishedRow()}>
-            {finishedSessions.map((s) => {
+            {filteredFinishedSessions.map((s) => {
               const student = studentById.get(s.student_id);
               const form = formById.get(s.taolu_form_id);
               const liveCount = countLiveDeductions(s.deductions);
@@ -1061,14 +1991,267 @@ function TaoluTrackerInner() {
                 </button>
               );
             })}
-            {!finishedSessions.length && <div style={{ opacity: 0.6, fontSize: 12 }}>No finished sessions</div>}
+            {!filteredFinishedSessions.length && <div style={{ opacity: 0.6, fontSize: 12 }}>No finished sessions</div>}
           </div>
         </div>
       </div>
+      ) : null}
 
       {openSessionId ? (
         <Overlay title="Review Deductions" maxWidth={1280} onClose={() => setOpenSessionId(null)}>
-          <div style={{ display: "grid", gap: 10 }}>
+          {openFinishedSession && activeTab === "refinement" ? (
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ fontWeight: 1000 }}>Refinement Session</div>
+                <button
+                  style={pill(refineListeningStudentId === openFinishedSession.student_id)}
+                  onClick={() =>
+                    setRefineListeningStudentId((prev) =>
+                      prev === openFinishedSession.student_id ? null : openFinishedSession.student_id
+                    )
+                  }
+                >
+                  {refineListeningStudentId === openFinishedSession.student_id ? "Tracking" : "Track new deductions"}
+                </button>
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.75 }}>
+                Tap chips to mark refined deductions. Each refined deduction earns +1 point.
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {(deductionsBySession[openFinishedSession.session_id] ?? [])
+                  .filter((d) => !d.voided)
+                  .map((d, idx) => {
+                    const code = codeById.get(d.code_id ?? "");
+                    const label = code ? `${code.code_number} ${code.name}` : `Deduction ${idx + 1}`;
+                    const selected = (remediationSelections[openFinishedSession.session_id] ?? []).includes(d.id);
+                    const completed = !!remediationBySession[openFinishedSession.session_id];
+                    return (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => {
+                          if (completed) return;
+                          toggleRemediationSelection(openFinishedSession.session_id, d.id);
+                        }}
+                        style={{
+                          padding: "6px 10px",
+                          borderRadius: 999,
+                          border: selected
+                            ? "1px solid rgba(59,130,246,0.7)"
+                            : "1px solid rgba(255,255,255,0.18)",
+                          background: selected ? "rgba(59,130,246,0.2)" : "rgba(255,255,255,0.06)",
+                          color: "white",
+                          fontWeight: 900,
+                          fontSize: 11,
+                          cursor: completed ? "default" : "pointer",
+                          opacity: completed && !selected ? 0.6 : 1,
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+              </div>
+              <div style={{ display: "grid", gap: 8, maxHeight: 360, overflowY: "auto" }}>
+                {(deductionsBySession[openFinishedSession.session_id] ?? []).filter((d) => !d.voided).map((d, idx) => {
+                  const code = codeById.get(d.code_id ?? "");
+                  const selected = (remediationSelections[openFinishedSession.session_id] ?? []).includes(d.id);
+                  return (
+                    <div key={d.id} style={refineDetailRow()}>
+                      <div style={{ fontWeight: 900, fontSize: 12, color: selected ? "rgba(96,165,250,0.95)" : "white" }}>
+                        {code ? `${code.code_number} ${code.name}` : `Deduction ${idx + 1}`}
+                      </div>
+                      {code?.description ? (
+                        <div style={{ fontSize: 11, opacity: 0.7 }}>{code.description}</div>
+                      ) : null}
+                      <div style={{ fontSize: 11, opacity: 0.7 }}>Section {d.section_number ?? "—"}</div>
+                      {d.note ? <div style={{ fontSize: 11, opacity: 0.7 }}>{d.note}</div> : null}
+                      {selected ? (
+                        <div style={{ fontSize: 10, fontWeight: 900, color: "rgba(96,165,250,0.95)" }}>Refined</div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+              {!remediationBySession[openFinishedSession.session_id] ? (
+                <button
+                  style={btn()}
+                  disabled={remediationBusy}
+                  onClick={() => submitRemediation(openFinishedSession.session_id)}
+                >
+                  {remediationBusy
+                    ? "Submitting..."
+                    : `Submit Refinement (+${(remediationSelections[openFinishedSession.session_id] ?? []).length} pts)`}
+                </button>
+              ) : (
+                <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(96,165,250,0.95)" }}>
+                  Refined • +{remediationBySession[openFinishedSession.session_id]?.points_awarded ?? 0} pts
+                </div>
+              )}
+            </div>
+          ) : openFinishedSession ? (
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ fontWeight: 1000 }}>Refinement + Edit Deductions</div>
+                <button
+                  style={pill(refineListeningStudentId === openFinishedSession.student_id)}
+                  onClick={() =>
+                    setRefineListeningStudentId((prev) =>
+                      prev === openFinishedSession.student_id ? null : openFinishedSession.student_id
+                    )
+                  }
+                >
+                  {refineListeningStudentId === openFinishedSession.student_id ? "Tracking" : "Track new deductions"}
+                </button>
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.75 }}>
+                Tap chips to mark refined. You can still edit deductions in this session.
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {(deductionsBySession[openFinishedSession.session_id] ?? [])
+                  .filter((d) => !d.voided)
+                  .map((d, idx) => {
+                    const code = codeById.get(d.code_id ?? "");
+                    const label = code ? `${code.code_number} ${code.name}` : `Deduction ${idx + 1}`;
+                    const selected = (remediationSelections[openFinishedSession.session_id] ?? []).includes(d.id);
+                    const completed = !!remediationBySession[openFinishedSession.session_id];
+                    return (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => {
+                          if (completed) return;
+                          toggleRemediationSelection(openFinishedSession.session_id, d.id);
+                        }}
+                        style={{
+                          padding: "6px 10px",
+                          borderRadius: 999,
+                          border: selected
+                            ? "1px solid rgba(59,130,246,0.7)"
+                            : "1px solid rgba(255,255,255,0.18)",
+                          background: selected ? "rgba(59,130,246,0.2)" : "rgba(255,255,255,0.06)",
+                          color: "white",
+                          fontWeight: 900,
+                          fontSize: 11,
+                          cursor: completed ? "default" : "pointer",
+                          opacity: completed && !selected ? 0.6 : 1,
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+              </div>
+              <div style={{ display: "grid", gap: 10, maxHeight: 420, overflowY: "auto" }}>
+                {(deductionsBySession[openFinishedSession.session_id] ?? []).map((d, idx, list) => {
+                  const code = codeById.get(d.code_id ?? "");
+                  const searchValue = codeSearchByDeduction[d.id] ?? (code ? codeLabel(code) : "");
+                  const matches = filterCodes(searchValue);
+                  return (
+                    <div key={d.id} style={refineEditCard()}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                        <div style={{ fontWeight: 900, fontSize: 12 }}>
+                          {code ? `${code.code_number} ${code.name}` : `Deduction ${idx + 1}`}
+                        </div>
+                        <div style={{ fontSize: 10, opacity: 0.7 }}>
+                          {idx + 1}/{list.length}
+                        </div>
+                      </div>
+                      {code?.description ? (
+                        <div style={{ fontSize: 11, opacity: 0.7 }}>{code.description}</div>
+                      ) : null}
+                      <div style={{ display: "grid", gap: 6, gridTemplateColumns: "minmax(0, 1fr) minmax(0, 140px)" }}>
+                        <div style={field()}>
+                          <div style={fieldLabel()}>Deduction Code</div>
+                          <input
+                            value={searchValue}
+                            onChange={(e) =>
+                              setCodeSearchByDeduction((prev) => ({ ...prev, [d.id]: e.target.value }))
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key !== "Enter") return;
+                              const match = matches[0];
+                              if (!match) return;
+                              updateDeduction(d.id, { code_id: match.id });
+                              setCodeSearchByDeduction((prev) => ({ ...prev, [d.id]: codeLabel(match) }));
+                            }}
+                            placeholder="Search by code or name"
+                            style={fieldInput()}
+                          />
+                          {matches.length ? (
+                            <div style={codeSuggestionRow()}>
+                              {matches.map((match) => (
+                                <button
+                                  key={match.id}
+                                  type="button"
+                                  onClick={() => {
+                                    updateDeduction(d.id, { code_id: match.id });
+                                    setCodeSearchByDeduction((prev) => ({ ...prev, [d.id]: codeLabel(match) }));
+                                  }}
+                                  style={codeSuggestionChip(match.id === d.code_id)}
+                                >
+                                  {match.code_number} • {match.name}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div style={field()}>
+                          <div style={fieldLabel()}>Section</div>
+                          <div style={sectionChipRow()}>
+                            {(openFinishedSession.sections ?? []).map((sec) => (
+                              <button
+                                key={sec}
+                                type="button"
+                                onClick={() => updateDeduction(d.id, { section_number: sec })}
+                                style={sectionChip(d.section_number === sec)}
+                              >
+                                {sec}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={field()}>
+                        <div style={fieldLabel()}>Coach Note</div>
+                        <input
+                          value={d.note ?? ""}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setDeductionsBySession((prev) => {
+                              const list = (prev[openSessionId] ?? []).map((row) =>
+                                row.id === d.id ? { ...row, note: value } : row
+                              );
+                              return { ...prev, [openSessionId]: list };
+                            });
+                          }}
+                          onBlur={(e) => updateDeduction(d.id, { note: e.target.value || null })}
+                          placeholder="Add detail for review report"
+                          style={fieldInput()}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {!remediationBySession[openFinishedSession.session_id] ? (
+                <button
+                  style={btn()}
+                  disabled={remediationBusy}
+                  onClick={() => submitRemediation(openFinishedSession.session_id)}
+                >
+                  {remediationBusy
+                    ? "Submitting..."
+                    : `Submit Refinement (+${(remediationSelections[openFinishedSession.session_id] ?? []).length} pts)`}
+                </button>
+              ) : (
+                <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(96,165,250,0.95)" }}>
+                  Refined • +{remediationBySession[openFinishedSession.session_id]?.points_awarded ?? 0} pts
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
             <div style={overlayActionBar()}>
               <button
                 type="button"
@@ -1272,10 +2455,7 @@ function TaoluTrackerInner() {
                 {!remediationBySession[openFinishedSession.session_id] ? (
                   <button
                     style={btn()}
-                    disabled={
-                      remediationBusy ||
-                      !(remediationSelections[openFinishedSession.session_id] ?? []).length
-                    }
+                    disabled={remediationBusy}
                     onClick={() => submitRemediation(openFinishedSession.session_id)}
                   >
                     {remediationBusy
@@ -1286,6 +2466,54 @@ function TaoluTrackerInner() {
               </div>
             ) : null}
           </div>
+          )}
+        </Overlay>
+      ) : null}
+      {historyDetailId ? (
+        <Overlay title="Refined Session" maxWidth={720} onClose={() => setHistoryDetailId(null)}>
+          {(() => {
+            const row = finishedHistory.find((r) => r.session_id === historyDetailId);
+            const list = (deductionsBySession[historyDetailId] ?? []).filter((d) => !d.voided);
+            const remediation = remediationBySession[historyDetailId];
+            return (
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ fontWeight: 1000 }}>
+                  {row?.student_name ?? "Student"} • {row?.form_name ?? "Taolu"}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.7 }}>
+                  {row?.ended_at ? new Date(row.ended_at).toLocaleDateString() : "No end date"} • Sections{" "}
+                  {row?.sections?.length ? row.sections.join(", ") : "—"}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.8 }}>
+                  Deductions {row?.deductions_count ?? list.length} • Score {row?.points_earned ?? 0}
+                </div>
+                {remediation ? (
+                  <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(34,197,94,0.9)" }}>
+                    Refined • +{remediation.points_awarded} pts
+                  </div>
+                ) : null}
+                <div style={{ display: "grid", gap: 8, maxHeight: 320, overflowY: "auto" }}>
+                  {list.map((d, idx) => {
+                    const code = codeById.get(d.code_id ?? "");
+                    const refined = remediation?.deduction_ids?.includes?.(d.id);
+                    return (
+                      <div key={d.id} style={refineDetailRow()}>
+                        <div style={{ fontWeight: 900, fontSize: 12, color: refined ? "rgba(96,165,250,0.95)" : "white" }}>
+                          {code ? `${code.code_number} ${code.name}` : `Deduction ${idx + 1}`}
+                        </div>
+                        <div style={{ fontSize: 11, opacity: 0.75 }}>Section {d.section_number ?? "—"}</div>
+                        {refined ? (
+                          <div style={{ fontSize: 10, fontWeight: 900, color: "rgba(96,165,250,0.95)" }}>Refined</div>
+                        ) : null}
+                        {d.note ? <div style={{ fontSize: 11, opacity: 0.7 }}>{d.note}</div> : null}
+                      </div>
+                    );
+                  })}
+                  {!list.length ? <div style={{ fontSize: 12, opacity: 0.7 }}>No deductions found.</div> : null}
+                </div>
+              </div>
+            );
+          })()}
         </Overlay>
       ) : null}
       <style>{`
@@ -1303,8 +2531,19 @@ function TaoluTrackerInner() {
           grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
           align-items: start;
         }
+        .refine-history-grid {
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+        }
         @media (max-width: 960px) {
           .taolu-cards-shell {
+            grid-template-columns: minmax(0, 1fr);
+          }
+          .refine-history-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+        @media (max-width: 640px) {
+          .refine-history-grid {
             grid-template-columns: minmax(0, 1fr);
           }
         }
@@ -1400,6 +2639,108 @@ function chip(): React.CSSProperties {
     background: "rgba(255,255,255,0.08)",
     fontSize: 11,
     fontWeight: 900,
+  };
+}
+
+function refineCard(active = false): React.CSSProperties {
+  return {
+    borderRadius: 16,
+    padding: 14,
+    border: active ? "2px solid rgba(59,130,246,0.7)" : "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(0,0,0,0.2)",
+    display: "grid",
+    gap: 10,
+  };
+}
+
+function refineSection(): React.CSSProperties {
+  return {
+    borderRadius: 12,
+    padding: 10,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.04)",
+    display: "grid",
+    gap: 8,
+  };
+}
+
+function refineChipRow(): React.CSSProperties {
+  return {
+    display: "grid",
+    gap: 8,
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+  };
+}
+
+function refineChip(selected: boolean, enabled: boolean): React.CSSProperties {
+  return {
+    padding: "10px 12px",
+    borderRadius: 14,
+    border: selected ? "1px solid rgba(59,130,246,0.7)" : "1px solid rgba(255,255,255,0.2)",
+    background: selected ? "rgba(59,130,246,0.18)" : "rgba(255,255,255,0.06)",
+    color: "white",
+    textAlign: "left",
+    opacity: enabled ? 1 : 0.5,
+    cursor: enabled ? "pointer" : "not-allowed",
+  };
+}
+
+function refineNewChip(): React.CSSProperties {
+  return {
+    borderRadius: 12,
+    padding: "8px 10px",
+    border: "1px solid rgba(248,113,113,0.6)",
+    background: "rgba(248,113,113,0.12)",
+    boxShadow: "0 0 12px rgba(248,113,113,0.25)",
+    display: "grid",
+    gap: 4,
+  };
+}
+
+function refineLogCard(refined: boolean): React.CSSProperties {
+  return {
+    borderRadius: 14,
+    padding: 12,
+    border: refined ? "1px solid rgba(34,197,94,0.45)" : "1px solid rgba(255,255,255,0.12)",
+    background: refined ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.04)",
+    display: "grid",
+    gap: 8,
+  };
+}
+
+function refineDetailRow(): React.CSSProperties {
+  return {
+    borderRadius: 10,
+    padding: "8px 10px",
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.05)",
+    display: "grid",
+    gap: 4,
+  };
+}
+
+function refineEditCard(): React.CSSProperties {
+  return {
+    borderRadius: 12,
+    padding: 10,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(15,23,42,0.45)",
+    display: "grid",
+    gap: 8,
+  };
+}
+
+function removeMiniBtn(): React.CSSProperties {
+  return {
+    justifySelf: "start",
+    padding: "4px 8px",
+    borderRadius: 999,
+    border: "1px solid rgba(248,113,113,0.5)",
+    background: "rgba(248,113,113,0.18)",
+    color: "white",
+    fontWeight: 900,
+    fontSize: 10,
+    cursor: "pointer",
   };
 }
 

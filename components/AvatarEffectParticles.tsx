@@ -191,9 +191,9 @@ export default function AvatarEffectParticles({
   config?: EffectConfig | null;
   compact?: boolean;
 }) {
-  if (!effectKey || effectKey === "none") return null;
+  const enabled = !!effectKey && effectKey !== "none";
   const instanceId = useId();
-  const preset = EFFECT_PRESETS[effectKey] ?? EFFECT_PRESETS.orbit;
+  const preset = EFFECT_PRESETS[effectKey ?? ""] ?? EFFECT_PRESETS.orbit;
   const cfg = { ...DEFAULT_CONFIG, ...(config ?? {}) };
 
   const options = useMemo<ISourceOptions>(() => {
@@ -269,6 +269,7 @@ export default function AvatarEffectParticles({
     await loadSlim(engine);
   }, []);
 
+  if (!enabled) return null;
   return (
     <Particles
       id={`avatar-effect-${effectKey}-${compact ? "compact" : "full"}-${instanceId}`}

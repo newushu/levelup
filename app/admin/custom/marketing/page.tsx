@@ -339,7 +339,7 @@ export function MarketingAdminPanel({ embedded = false }: { embedded?: boolean }
                 onChange={(e) => setDraft((prev) => updateTemplatePayload(prev, { offer_title: e.target.value }))}
                 style={input()}
               />
-              <label style={controlLabel()}>What it's for</label>
+              <label style={controlLabel()}>What it&apos;s for</label>
               <input
                 value={draftPayload.offer_for}
                 onChange={(e) => setDraft((prev) => updateTemplatePayload(prev, { offer_for: e.target.value }))}
@@ -675,7 +675,7 @@ export function MarketingAdminPanel({ embedded = false }: { embedded?: boolean }
                     }
                     style={input()}
                   />
-                  <label style={controlLabel()}>What it's for</label>
+                  <label style={controlLabel()}>What it&apos;s for</label>
                   <input
                     value={payload.offer_for}
                     onChange={(e) =>

@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { resolveParentContext } from "../../_parentContext";
 
-export async function GET() {
-  const supabase = await supabaseServer();
-  const { data: u } = await supabase.auth.getUser();
-  if (!u.user) return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
+export async function GET(req: Request) {
+  const ctx = await resolveParentContext(req);
+  if (!ctx.ok) return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
+  const parent = ctx.parent;
 
-  const { data, error } = await supabase
+  const admin = supabaseAdmin();
+  const { data, error } = await admin
     .from("parent_requests")
     .select("id,status,student_names,created_at")
-    .eq("auth_user_id", u.user.id)
+    .eq("auth_user_id", parent.auth_user_id)
     .eq("status", "pending")
     .order("created_at", { ascending: false })
     .limit(1)

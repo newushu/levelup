@@ -47,6 +47,19 @@ const ROUTE_ROLE_OPTIONS = [
   { value: "student", label: "Student" },
 ] as const;
 
+const USER_ROLE_OPTIONS = [
+  { value: "admin", label: "Admin" },
+  { value: "coach", label: "Coach" },
+  { value: "student", label: "Student" },
+  { value: "parent", label: "Parent" },
+  { value: "classroom", label: "Classroom" },
+  { value: "display", label: "Display" },
+  { value: "skill_pulse", label: "Skill Pulse" },
+  { value: "camp", label: "Camp" },
+  { value: "coach-dashboard", label: "Coach Dashboard" },
+  { value: "skill-tablet", label: "Skill Tablet" },
+] as const;
+
 async function safeJson(res: Response) {
   const text = await res.text();
   try {
@@ -64,7 +77,27 @@ export default function AccessAdminPage() {
   const [routes, setRoutes] = useState<Array<{ route_path: string; description: string; allowed_roles: string[]; has_rules: boolean }>>([]);
   const [routeQuery, setRouteQuery] = useState("");
   const [routeSaving, setRouteSaving] = useState<Record<string, boolean>>({});
+  const [routeSavingAll, setRouteSavingAll] = useState(false);
+  const [routeRoleFilter, setRouteRoleFilter] = useState<"all" | (typeof ROUTE_ROLE_OPTIONS)[number]["value"]>("all");
+  const [routeBaseline, setRouteBaseline] = useState<Record<string, string>>({});
+  const [routeDirty, setRouteDirty] = useState<Record<string, boolean>>({});
   const [userQuery, setUserQuery] = useState("");
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditResults, setAuditResults] = useState<null | {
+    totals?: {
+      auth_users?: number;
+      missing_profiles?: number;
+      missing_roles?: number;
+      orphan_profiles?: number;
+      orphan_roles?: number;
+    };
+    missing_profiles?: Array<{ user_id: string; email: string | null }>;
+    missing_roles?: Array<{ user_id: string; email: string | null }>;
+    orphan_profiles?: Array<{ user_id: string; email: string | null }>;
+    orphan_roles?: Array<{ user_id: string; role: string | null }>;
+  }>(null);
+  const [auditModalOpen, setAuditModalOpen] = useState(false);
+  const [auditRoleSelections, setAuditRoleSelections] = useState<Record<string, string>>({});
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserName, setNewUserName] = useState("");
   const [newUserRole, setNewUserRole] = useState("coach");
@@ -106,7 +139,14 @@ export default function AccessAdminPage() {
     const res = await fetch("/api/admin/route-permissions", { cache: "no-store" });
     const sj = await safeJson(res);
     if (!sj.ok) return setMsg(sj.json?.error || "Failed to load routes");
-    setRoutes((sj.json?.routes ?? []) as any[]);
+    const nextRoutes = (sj.json?.routes ?? []) as any[];
+    setRoutes(nextRoutes);
+    const baseline: Record<string, string> = {};
+    nextRoutes.forEach((route: any) => {
+      baseline[String(route.route_path)] = normalizeRoles(route.allowed_roles);
+    });
+    setRouteBaseline(baseline);
+    setRouteDirty({});
   }
 
   async function createTag() {
@@ -217,6 +257,8 @@ export default function AccessAdminPage() {
     if (!sj.ok) return setMsg(sj.json?.error || "Failed to create user");
     if (sj.json?.temp_password) {
       setMsg(`User created. Temp password: ${sj.json.temp_password}`);
+    } else if (sj.json?.existed) {
+      setMsg("User already existed. Profile and roles were synced.");
     } else {
       setMsg("User created.");
     }
@@ -225,6 +267,87 @@ export default function AccessAdminPage() {
     setNewUserPassword("");
     await refreshUsers();
   }
+
+  async function deleteUser(user: UserRow) {
+    const label = user.email || user.username || user.user_id;
+    if (!window.confirm(`Delete user "${label}"? This removes access completely.`)) return;
+    setMsg("");
+    const res = await fetch("/api/admin/users/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: user.user_id }),
+    });
+    const sj = await safeJson(res);
+    if (!sj.ok) return setMsg(sj.json?.error || "Failed to delete user");
+    setMsg("User deleted.");
+    await refreshUsers();
+    await runUserAudit();
+  }
+
+  async function runUserAudit() {
+    setMsg("");
+    setAuditLoading(true);
+    const res = await fetch("/api/admin/users/audit", { cache: "no-store" });
+    const sj = await safeJson(res);
+    setAuditLoading(false);
+    if (!sj.ok) return setMsg(sj.json?.error || "Failed to run audit");
+    setAuditResults(sj.json || null);
+  }
+
+  async function fixUserAudit() {
+    setMsg("");
+    setAuditLoading(true);
+    const users = Object.entries(auditRoleSelections).map(([user_id, role]) => ({ user_id, role }));
+    const res = await fetch("/api/admin/users/audit/fix", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ users }),
+    });
+    const sj = await safeJson(res);
+    setAuditLoading(false);
+    if (!sj.ok) return setMsg(sj.json?.error || "Failed to fix audit");
+    setMsg(`Fixed profiles: ${sj.json?.fixed_profiles ?? 0}. Fixed roles: ${sj.json?.fixed_roles ?? 0}.`);
+    await refreshUsers();
+    await runUserAudit();
+    setAuditModalOpen(false);
+  }
+
+  const auditFixRows = useMemo(() => {
+    const rows = new Map<string, { user_id: string; email: string | null; missing_profile: boolean; missing_role: boolean }>();
+    (auditResults?.missing_profiles ?? []).forEach((row) => {
+      rows.set(row.user_id, {
+        user_id: row.user_id,
+        email: row.email ?? null,
+        missing_profile: true,
+        missing_role: false,
+      });
+    });
+    (auditResults?.missing_roles ?? []).forEach((row) => {
+      const existing = rows.get(row.user_id);
+      if (existing) {
+        existing.missing_role = true;
+      } else {
+        rows.set(row.user_id, {
+          user_id: row.user_id,
+          email: row.email ?? null,
+          missing_profile: false,
+          missing_role: true,
+        });
+      }
+    });
+    return Array.from(rows.values());
+  }, [auditResults]);
+
+  useEffect(() => {
+    if (!auditModalOpen) return;
+    setAuditRoleSelections((prev) => {
+      const next = { ...prev };
+      auditFixRows.forEach((row) => {
+        if (!next[row.user_id]) next[row.user_id] = "coach";
+      });
+      return next;
+    });
+  }, [auditModalOpen, auditFixRows]);
 
   async function saveRoute(route: { route_path: string; description: string; allowed_roles: string[] }) {
     setRouteSaving((prev) => ({ ...prev, [route.route_path]: true }));
@@ -243,6 +366,26 @@ export default function AccessAdminPage() {
     setRoutes((prev) =>
       prev.map((r) => (r.route_path === route.route_path ? { ...r, has_rules: true } : r))
     );
+    setRouteBaseline((prev) => ({ ...prev, [route.route_path]: normalizeRoles(route.allowed_roles) }));
+    setRouteDirty((prev) => ({ ...prev, [route.route_path]: false }));
+  }
+
+  async function saveAllRoutes() {
+    const dirtyRoutes = routes.filter((r) => routeDirty[r.route_path]);
+    if (!dirtyRoutes.length) return;
+    setRouteSavingAll(true);
+    for (const route of dirtyRoutes) {
+      await saveRoute({
+        route_path: route.route_path,
+        description: route.description,
+        allowed_roles: route.allowed_roles?.length ? route.allowed_roles : ["admin"],
+      });
+    }
+    setRouteSavingAll(false);
+  }
+
+  function normalizeRoles(roles: string[] | null | undefined) {
+    return [...(roles ?? [])].sort().join(",");
   }
 
   const sortedPermissions = useMemo(
@@ -259,12 +402,14 @@ export default function AccessAdminPage() {
   }, [users, userQuery]);
   const filteredRoutes = useMemo(() => {
     const q = routeQuery.trim().toLowerCase();
-    if (!q) return routes;
     return routes.filter((r) => {
+      const selected = r.allowed_roles?.length ? r.allowed_roles : ["admin"];
+      if (routeRoleFilter !== "all" && !selected.includes(routeRoleFilter)) return false;
+      if (!q) return true;
       const hay = `${r.route_path} ${r.description}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [routes, routeQuery]);
+  }, [routes, routeQuery, routeRoleFilter]);
 
   return (
     <main style={{ display: "grid", gap: 16 }}>
@@ -499,6 +644,52 @@ export default function AccessAdminPage() {
             Create User
           </button>
 
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+            <button style={btnGhost()} onClick={runUserAudit} disabled={auditLoading}>
+              {auditLoading ? "Auditing..." : "Run Account Audit"}
+            </button>
+            <button
+              style={btn()}
+              onClick={() => setAuditModalOpen(true)}
+              disabled={auditLoading || !auditFixRows.length}
+            >
+              Fix Missing Profiles/Roles
+            </button>
+            {auditResults?.totals ? (
+              <div style={{ fontSize: 12, opacity: 0.8 }}>
+                Auth: {auditResults.totals.auth_users ?? 0} • Missing profiles:{" "}
+                {auditResults.totals.missing_profiles ?? 0} • Missing roles:{" "}
+                {auditResults.totals.missing_roles ?? 0} • Orphan profiles:{" "}
+                {auditResults.totals.orphan_profiles ?? 0} • Orphan roles:{" "}
+                {auditResults.totals.orphan_roles ?? 0}
+              </div>
+            ) : null}
+          </div>
+          {auditResults?.missing_profiles?.length ? (
+            <div style={{ fontSize: 12, opacity: 0.8 }}>
+              Missing profiles:{" "}
+              {auditResults.missing_profiles.map((row) => row.email || row.user_id).join(", ")}
+            </div>
+          ) : null}
+          {auditResults?.missing_roles?.length ? (
+            <div style={{ fontSize: 12, opacity: 0.8 }}>
+              Missing roles:{" "}
+              {auditResults.missing_roles.map((row) => row.email || row.user_id).join(", ")}
+            </div>
+          ) : null}
+          {auditResults?.orphan_profiles?.length ? (
+            <div style={{ fontSize: 12, opacity: 0.8 }}>
+              Orphan profiles:{" "}
+              {auditResults.orphan_profiles.map((row) => row.email || row.user_id).join(", ")}
+            </div>
+          ) : null}
+          {auditResults?.orphan_roles?.length ? (
+            <div style={{ fontSize: 12, opacity: 0.8 }}>
+              Orphan roles:{" "}
+              {auditResults.orphan_roles.map((row) => row.user_id).join(", ")}
+            </div>
+          ) : null}
+
           <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
               <div style={{ fontWeight: 900 }}>All Users</div>
@@ -517,7 +708,12 @@ export default function AccessAdminPage() {
                       <div style={{ fontWeight: 900 }}>{u.username || "User"}</div>
                       <div style={{ fontSize: 11, opacity: 0.7 }}>{u.email || "No email"}</div>
                     </div>
-                    <div style={roleChip()}>{u.role || "—"}</div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <div style={roleChip()}>{u.role || "—"}</div>
+                      <button style={dangerBtn()} onClick={() => deleteUser(u)}>
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -528,16 +724,36 @@ export default function AccessAdminPage() {
         ) : (
           <section style={card()}>
             <div style={{ fontWeight: 900 }}>Route Permissions</div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <input
-                value={routeQuery}
-                onChange={(e) => setRouteQuery(e.target.value)}
-                placeholder="Search routes..."
-                style={input()}
-              />
-              <button style={btnGhost()} onClick={refreshRoutes}>
-                Refresh
-              </button>
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <input
+                  value={routeQuery}
+                  onChange={(e) => setRouteQuery(e.target.value)}
+                  placeholder="Search routes..."
+                  style={input()}
+                />
+                <button style={btnGhost()} onClick={refreshRoutes}>
+                  Refresh
+                </button>
+                <button style={btn()} onClick={saveAllRoutes} disabled={routeSavingAll || !Object.values(routeDirty).some(Boolean)}>
+                  {routeSavingAll ? "Saving..." : "Save All"}
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {[{ value: "all", label: "All" }, ...ROUTE_ROLE_OPTIONS].map((opt) => {
+                  const active = routeRoleFilter === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setRouteRoleFilter(opt.value as any)}
+                      style={chip(active)}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <div style={{ display: "grid", gap: 12, marginTop: 10 }}>
               {filteredRoutes.map((route) => {
@@ -567,6 +783,10 @@ export default function AccessAdminPage() {
                                   r.route_path === route.route_path ? { ...r, allowed_roles: next } : r
                                 )
                               );
+                              setRouteDirty((prev) => ({
+                                ...prev,
+                                [route.route_path]: normalizeRoles(next) !== routeBaseline[route.route_path],
+                              }));
                             }}
                             style={chip(active)}
                           >
@@ -596,6 +816,68 @@ export default function AccessAdminPage() {
           </section>
         )
       )}
+
+      {auditModalOpen ? (
+        <div style={modalBackdrop()}>
+          <div style={modalCard()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <div style={{ fontWeight: 900, fontSize: 16 }}>Fix Missing Profiles/Roles</div>
+              <button type="button" style={btnGhost()} onClick={() => setAuditModalOpen(false)}>
+                Close
+              </button>
+            </div>
+            {!auditFixRows.length ? (
+              <div style={{ fontSize: 12, opacity: 0.7 }}>No missing profiles or roles.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {auditFixRows.map((row) => {
+                  const selectedRole = auditRoleSelections[row.user_id] || "coach";
+                  return (
+                    <div key={row.user_id} style={rowCard()}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                        <div>
+                          <div style={{ fontWeight: 900 }}>{row.email || row.user_id}</div>
+                          <div style={{ fontSize: 11, opacity: 0.7 }}>
+                            {row.missing_profile ? "Missing profile" : null}
+                            {row.missing_profile && row.missing_role ? " • " : null}
+                            {row.missing_role ? "Missing role" : null}
+                          </div>
+                        </div>
+                        <div style={roleChip()}>{selectedRole}</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {USER_ROLE_OPTIONS.map((opt) => {
+                          const active = selectedRole === opt.value;
+                          return (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() =>
+                                setAuditRoleSelections((prev) => ({ ...prev, [row.user_id]: opt.value }))
+                              }
+                              style={chip(active)}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+              <button style={btnGhost()} onClick={() => setAuditModalOpen(false)}>
+                Cancel
+              </button>
+              <button style={btn()} onClick={fixUserAudit} disabled={auditLoading || !auditFixRows.length}>
+                {auditLoading ? "Working..." : "Apply Fixes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -754,5 +1036,32 @@ function linkCard(): React.CSSProperties {
     textDecoration: "none",
     display: "grid",
     gap: 6,
+  };
+}
+
+function modalBackdrop(): React.CSSProperties {
+  return {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.7)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    zIndex: 1000,
+  };
+}
+
+function modalCard(): React.CSSProperties {
+  return {
+    width: "min(900px, 100%)",
+    maxHeight: "80vh",
+    overflowY: "auto",
+    borderRadius: 16,
+    padding: 16,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(10,10,10,0.98)",
+    display: "grid",
+    gap: 12,
   };
 }

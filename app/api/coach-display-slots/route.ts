@@ -24,7 +24,7 @@ export async function GET() {
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
   const coachIds = Array.from(new Set((slots ?? []).map((s: any) => String(s.coach_user_id ?? "")).filter(Boolean)));
-  let profileMap = new Map<string, { name: string; email: string | null }>();
+  const profileMap = new Map<string, { name: string; email: string | null }>();
   if (coachIds.length) {
     const { data: profiles } = await admin
       .from("profiles")

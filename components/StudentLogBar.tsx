@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import { defaultState } from "../lib/appState";
@@ -98,13 +99,13 @@ export default function StudentLogBar() {
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <a className="pill" href="/">Home</a>
-            <a className="pill" href="/dashboard">Dashboard</a>
-            <a className="pill" href="/classroom">Classroom</a>
-            <a className="pill" href="/skills">Skill Tree</a>
-            <a className="pill" href="/rewards">Rewards</a>
-            <a className="pill" href="/schedule">Schedule</a>
-            <a className="pill" href="/curriculum">Curriculum</a>
+            <Link className="pill" href="/">Home</Link>
+            <Link className="pill" href="/dashboard">Dashboard</Link>
+            <Link className="pill" href="/classroom">Classroom</Link>
+            <Link className="pill" href="/skills">Skill Tree</Link>
+            <Link className="pill" href="/rewards">Rewards</Link>
+            <Link className="pill" href="/schedule">Schedule</Link>
+            <Link className="pill" href="/curriculum">Curriculum</Link>
           </div>
 
           <div style={{ flex: 1 }} />

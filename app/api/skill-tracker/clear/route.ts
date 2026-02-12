@@ -21,10 +21,11 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => ({}));
   const clearCompleted = !!body?.clear_completed;
+  const clearCompletedBattles = !!body?.clear_completed_battles;
   const clearOld = !!body?.clear_old;
   const clearAll = !!body?.clear_all;
 
-  if (!clearCompleted && !clearOld && !clearAll) {
+  if (!clearCompleted && !clearCompletedBattles && !clearOld && !clearAll) {
     return NextResponse.json({ ok: false, error: "No clear option selected." }, { status: 400 });
   }
 
@@ -87,7 +88,9 @@ export async function POST(req: Request) {
         if (cErr) return NextResponse.json({ ok: false, error: cErr.message }, { status: 500 });
       }
     }
+  }
 
+  if (clearCompleted || clearCompletedBattles) {
     const { data: battles, error: bErr } = await supabase
       .from("battle_trackers")
       .select("id,left_student_id,right_student_id,repetitions_target,created_at")

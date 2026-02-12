@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AuthGate from "@/components/AuthGate";
+import ParentImpersonationBar, { useAdminParentImpersonation } from "@/components/ParentImpersonationBar";
 
 type Reward = {
   id: string;
@@ -37,6 +38,10 @@ function ParentRewardsInner() {
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const isParent = role === "parent";
+  const isAdmin = role === "admin";
+  const canView = isParent || isAdmin;
+  const impersonateId = useAdminParentImpersonation(isAdmin);
 
   useEffect(() => {
     (async () => {
@@ -47,30 +52,34 @@ function ParentRewardsInner() {
   }, []);
 
   useEffect(() => {
-    if (role !== "parent") return;
+    if (!canView) return;
+    if (isAdmin && !impersonateId) return;
     (async () => {
       const res = await fetch("/api/rewards/list", { cache: "no-store" });
       const sj = await safeJson(res);
       if (!sj.ok) return setMsg(sj.json?.error || "Failed to load rewards.");
       setRewards((sj.json?.rewards ?? []) as Reward[]);
 
-      const sRes = await fetch("/api/parent/students", { cache: "no-store" });
-      const sJson = await safeJson(sRes);
-      if (sJson.ok) {
-        const list = (sJson.json?.students ?? []) as Array<{ id: string; name: string }>;
-        setStudents(list);
-        if (list.length && !studentId) setStudentId(list[0].id);
-      }
+      const parentParam = isAdmin && impersonateId ? `?parent_id=${encodeURIComponent(impersonateId)}` : "";
+      if (isParent || isAdmin) {
+        const sRes = await fetch(`/api/parent/students${parentParam}`, { cache: "no-store" });
+        const sJson = await safeJson(sRes);
+        if (sJson.ok) {
+          const list = (sJson.json?.students ?? []) as Array<{ id: string; name: string }>;
+          setStudents(list);
+          if (list.length && !studentId) setStudentId(list[0].id);
+        }
 
-      const pRes = await fetch("/api/parent/discounts/pending", { cache: "no-store" });
-      const pJson = await safeJson(pRes);
-      if (pJson.ok) {
-        const pending = new Set<string>((pJson.json?.pending ?? []).map((row: any) => String(row.reward_id ?? "")));
-        setPendingIds(pending);
+        const pRes = await fetch(`/api/parent/discounts/pending${parentParam}`, { cache: "no-store" });
+        const pJson = await safeJson(pRes);
+        if (pJson.ok) {
+          const pending = new Set<string>((pJson.json?.pending ?? []).map((row: any) => String(row.reward_id ?? "")));
+          setPendingIds(pending);
+        }
       }
 
     })();
-  }, [role, studentId]);
+  }, [canView, isParent, isAdmin, impersonateId, studentId]);
 
   async function requestDiscount(rewardId: string) {
     if (!studentId) return setMsg("Select a student first.");
@@ -88,7 +97,7 @@ function ParentRewardsInner() {
     setMsg("Discount request submitted for approval.");
   }
 
-  if (role !== "parent") {
+  if (!canView) {
     return (
       <main style={{ padding: 18 }}>
         <div style={{ fontSize: 22, fontWeight: 900 }}>Parent access only.</div>
@@ -97,7 +106,13 @@ function ParentRewardsInner() {
   }
 
   return (
-    <main style={{ padding: 18, maxWidth: 1100, margin: "0 auto" }}>
+    <main style={{ padding: 18, maxWidth: "none", margin: 0, width: "100%" }}>
+      <ParentImpersonationBar enabled={isAdmin} />
+      {isAdmin ? (
+        <div style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 10, background: "rgba(251,191,36,0.16)", border: "1px solid rgba(251,191,36,0.45)" }}>
+          Admin preview: showing data for selected parent.
+        </div>
+      ) : null}
       <div style={{ fontSize: 26, fontWeight: 1000 }}>Rewards & Discounts</div>
       <div style={{ opacity: 0.7, marginTop: 6 }}>
         Request discounts that must be approved by a coach.
@@ -107,7 +122,12 @@ function ParentRewardsInner() {
       <div style={section()}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
           <div style={{ fontWeight: 900 }}>Discounts</div>
-          <select value={studentId} onChange={(e) => setStudentId(e.target.value)} style={select()}>
+          <select
+            value={studentId}
+            onChange={(e) => setStudentId(e.target.value)}
+            style={select()}
+            disabled={isAdmin}
+          >
             {students.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -127,9 +147,9 @@ function ParentRewardsInner() {
                 <button
                   onClick={() => requestDiscount(reward.id)}
                   style={btn()}
-                  disabled={busy || pendingIds.has(reward.id)}
+                  disabled={busy || pendingIds.has(reward.id) || isAdmin}
                 >
-                  {pendingIds.has(reward.id) ? "Pending Approval" : "Request Approval"}
+                  {isAdmin ? "Admin Preview" : pendingIds.has(reward.id) ? "Pending Approval" : "Request Approval"}
                 </button>
               </div>
             ))}

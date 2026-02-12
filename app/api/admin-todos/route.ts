@@ -35,7 +35,7 @@ export async function GET(req: Request) {
   const admin = supabaseAdmin();
   let query = admin
     .from("admin_todos")
-    .select("id,kind,title,body,urgency,student_id,created_by,created_at,resolved_by,resolved_at,students(name)")
+    .select("id,kind,title,body,urgency,student_id,created_by,created_at,resolved_by,resolved_at,due_at,students(name)")
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -65,6 +65,7 @@ export async function POST(req: Request) {
   const text = String(body?.body ?? "").trim();
   const urgency = String(body?.urgency ?? "normal").toLowerCase();
   const student_id = String(body?.student_id ?? "").trim();
+  const due_at = String(body?.due_at ?? "").trim();
 
   if (!title) return NextResponse.json({ ok: false, error: "Title is required" }, { status: 400 });
   if (!text) return NextResponse.json({ ok: false, error: "Body is required" }, { status: 400 });
@@ -75,10 +76,24 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Invalid urgency" }, { status: 400 });
   }
 
+  const insertPayload: Record<string, any> = {
+    kind,
+    title,
+    body: text,
+    urgency,
+    student_id: student_id || null,
+    status: "open",
+    created_by: user.id,
+  };
+  if (due_at) {
+    const due = new Date(due_at);
+    if (!Number.isNaN(due.getTime())) insertPayload.due_at = due.toISOString();
+  }
+
   const { data, error } = await admin
     .from("admin_todos")
-    .insert({ kind, title, body: text, urgency, student_id: student_id || null, status: "open", created_by: user.id })
-    .select("id,kind,title,body,urgency,student_id,status,created_at")
+    .insert(insertPayload)
+    .select("id,kind,title,body,urgency,student_id,status,created_at,due_at")
     .maybeSingle();
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

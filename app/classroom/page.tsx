@@ -85,6 +85,7 @@ function toLocalDateKey(value: Date) {
 }
 
 function Card({ title, actions, children }: { title: string; actions?: React.ReactNode; children: React.ReactNode }) {
+  if (blockedView) return blockedView;
   return (
     <div style={{ borderRadius: 18, padding: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
@@ -238,22 +239,17 @@ export default function ClassroomPage() {
     })();
   }, []);
 
-  if (studentBlocked) {
-    return (
-      <main style={{ padding: 18 }}>
-        <div style={{ fontSize: 22, fontWeight: 900 }}>Classroom is coach-only.</div>
-        <div style={{ opacity: 0.7, marginTop: 6 }}>Student accounts cannot access this page.</div>
-      </main>
-    );
-  }
-  if (adminBlocked) {
-    return (
-      <main style={{ padding: 18 }}>
-        <div style={{ fontSize: 22, fontWeight: 900 }}>Classroom is admin-only.</div>
-        <div style={{ opacity: 0.7, marginTop: 6 }}>Admin or classroom accounts can access classroom tools.</div>
-      </main>
-    );
-  }
+  const blockedView = studentBlocked ? (
+    <main style={{ padding: 18 }}>
+      <div style={{ fontSize: 22, fontWeight: 900 }}>Classroom is coach-only.</div>
+      <div style={{ opacity: 0.7, marginTop: 6 }}>Student accounts cannot access this page.</div>
+    </main>
+  ) : adminBlocked ? (
+    <main style={{ padding: 18 }}>
+      <div style={{ fontSize: 22, fontWeight: 900 }}>Classroom is admin-only.</div>
+      <div style={{ opacity: 0.7, marginTop: 6 }}>Admin or classroom accounts can access classroom tools.</div>
+    </main>
+  ) : null;
 
   useEffect(() => {
     (async () => {
@@ -1306,13 +1302,26 @@ export default function ClassroomPage() {
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+      <div style={{ display: "grid", gap: 6 }}>
+        <div
+          style={{
+            fontSize: 11,
+            opacity: 0.75,
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
+            userSelect: "text",
+            WebkitUserSelect: "text",
+          }}
+        >
+          ID #{classId || "—"}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
         <div style={{ fontWeight: 1000, fontSize: 16 }}>
           Roster ({roster.length}) {classEnded ? "• Ended" : ""}
         </div>
         <button onClick={endClassSession} disabled={classEnded} style={btnSmallGhost()}>
           {classEnded ? "Class Ended" : "End Class"}
         </button>
+      </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(240px, 320px)", gap: 12, alignItems: "start" }}>

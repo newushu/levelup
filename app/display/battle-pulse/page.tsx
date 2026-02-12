@@ -215,8 +215,8 @@ function BattleAttackFx({
   effect?: BattlePulseEffect | null;
   hitAt?: number;
 }) {
+  const srcDoc = useMemo(() => (effect ? buildBattleFxDoc(effect) : ""), [effect]);
   if (!effect || !hitAt) return null;
-  const srcDoc = useMemo(() => buildBattleFxDoc(effect), [effect?.key, effect?.html, effect?.css, effect?.js, hitAt]);
   return (
     <iframe
       title={`battle-effect-${effect.key}-${hitAt}`}
@@ -830,19 +830,41 @@ function BattleCard({
   plateOffsets: { x: number; y: number; size: number };
 }) {
   const participants = getParticipants(battle);
-  const isTeams = String(battle.battle_mode ?? "duel") === "teams";
+  const isLanes = String(battle.battle_mode ?? "duel") === "lanes";
+  const isTeams = String(battle.battle_mode ?? "duel") === "teams" || isLanes;
   const isFfa = String(battle.battle_mode ?? "duel") === "ffa";
   const seedTeamA = (battle.team_a_ids ?? []).map(String);
   const seedTeamB = (battle.team_b_ids ?? []).map(String);
-  const teamAIds = seedTeamA.length ? seedTeamA : participants.slice(0, Math.max(1, Math.ceil(participants.length / 2))).map((p) => p.id);
-  const teamBIds = seedTeamB.length ? seedTeamB : participants.filter((p) => !teamAIds.includes(p.id)).map((p) => p.id);
+  let teamAIds = seedTeamA.length ? seedTeamA : participants.slice(0, Math.max(1, Math.ceil(participants.length / 2))).map((p) => p.id);
+  let teamBIds = seedTeamB.length ? seedTeamB : participants.filter((p) => !teamAIds.includes(p.id)).map((p) => p.id);
+  const metaTeamsRaw = Array.isArray((battle as any)?.battle_meta?.team_ids) ? ((battle as any).battle_meta.team_ids as any[]) : [];
+  const metaTeams = metaTeamsRaw
+    .map((team) => (Array.isArray(team) ? team.map((id) => String(id ?? "").trim()).filter(Boolean) : []))
+    .filter((team) => team.length);
+  const teamGroups = isTeams && !isLanes && metaTeams.length ? metaTeams : [teamAIds, teamBIds].filter((t) => t.length);
+  if (isTeams && !isLanes && teamGroups.length) {
+    teamAIds = teamGroups[0] ?? [];
+    teamBIds = teamGroups[1] ?? [];
+  }
   const teamA = participants.filter((p) => teamAIds.includes(p.id));
   const teamB = participants.filter((p) => teamBIds.includes(p.id));
+  const target = Math.max(1, Number(battle.repetitions_target ?? 1));
+  const teamKeys = ["a", "b", "c", "d"] as const;
+  const teamStats = teamGroups.map((ids, idx) => {
+    const key = teamKeys[idx] ?? "a";
+    const members = participants.filter((p) => ids.includes(p.id));
+    const attempts = members.reduce((sum, p) => sum + Math.max(0, Number(p.attempts ?? p.successes ?? 0)), 0);
+    const successes = members.reduce((sum, p) => sum + Math.max(0, Number(p.successes ?? 0)), 0);
+    const remaining = Math.max(0, target * members.length - attempts);
+    const potential = successes + remaining;
+    const compact = members.length > 6;
+    const columns = compact ? 3 : Math.max(1, members.length);
+    return { key, label: `Team ${key.toUpperCase()}`, ids, members, attempts, successes, remaining, potential, compact, columns };
+  });
   const teamACompact = teamA.length > 6;
   const teamBCompact = teamB.length > 6;
   const teamAColumns = teamACompact ? 3 : Math.max(1, teamA.length);
   const teamBColumns = teamBCompact ? 3 : Math.max(1, teamB.length);
-  const target = Math.max(1, Number(battle.repetitions_target ?? 1));
   const teamAAttempts = teamA.reduce((sum, p) => sum + Math.max(0, Number(p.attempts ?? p.successes ?? 0)), 0);
   const teamBAttempts = teamB.reduce((sum, p) => sum + Math.max(0, Number(p.attempts ?? p.successes ?? 0)), 0);
   const teamASuccesses = teamA.reduce((sum, p) => sum + Math.max(0, Number(p.successes ?? 0)), 0);
@@ -858,6 +880,11 @@ function BattleCard({
     if (battle.winner_id) return String(battle.winner_id);
     if (!participants.length) return null;
     if (isTeams) {
+      if (!isLanes && teamGroups.length > 2) {
+        const sorted = [...teamStats].sort((a, b) => b.successes - a.successes);
+        if (sorted.length < 2 || sorted[0].successes === sorted[1].successes) return null;
+        return sorted[0].ids[0] ?? null;
+      }
       const hpTop = calcTeamHp(target, teamA, teamB);
       const hpBottom = calcTeamHp(target, teamB, teamA);
       if (hpTop <= 0 && hpBottom > 0) return teamB[0]?.id ?? null;
@@ -882,33 +909,27 @@ function BattleCard({
     return null;
   })();
   const winnerId = derivedWinnerId;
-  const winnerIsTopTeam = winnerId ? teamAIds.includes(winnerId) : false;
-  const winnerIsBottomTeam = winnerId ? teamBIds.includes(winnerId) : false;
+  const winnerTeamIndex = winnerId ? teamGroups.findIndex((ids) => ids.includes(winnerId)) : -1;
+  const winnerIsTopTeam = winnerTeamIndex === 0;
+  const winnerIsBottomTeam = winnerTeamIndex === 1;
   const derivedMvpIds = (() => {
     if (!isTeams) return [];
     if (Array.isArray(battle.mvp_ids) && battle.mvp_ids.length) return battle.mvp_ids.map(String);
     if (!participants.length) return [];
     const minRate = 0.6;
-    const pickMvps = (team: BattleParticipant[]) => {
+    const pickMvps = (ids: string[]) => {
+      const team = participants.filter((p) => ids.includes(p.id));
       const qualified = team.filter((p) => {
         const attempts = Math.max(0, Number(p.attempts ?? 0));
         const successes = Math.max(0, Number(p.successes ?? 0));
         if (attempts <= 0) return false;
-        return successes / attempts >= minRate;
+        return successes / attempts > minRate;
       });
       if (!qualified.length) return [];
-      const top = qualified.reduce((best, p) => {
-        const successes = Number(p.successes ?? 0);
-        const attempts = Math.max(0, Number(p.attempts ?? 0));
-        const rate = attempts > 0 ? successes / attempts : 0;
-        if (!best) return { id: p.id, successes, rate };
-        if (successes > best.successes) return { id: p.id, successes, rate };
-        if (successes === best.successes && rate > best.rate) return { id: p.id, successes, rate };
-        return best;
-      }, null as null | { id: string; successes: number; rate: number });
-      return top ? [top.id] : [];
+      const top = Math.max(...qualified.map((p) => Number(p.successes ?? 0)));
+      return qualified.filter((p) => Number(p.successes ?? 0) === top).map((p) => p.id);
     };
-    return [...pickMvps(teamA), ...pickMvps(teamB)];
+    return teamGroups.flatMap((ids) => pickMvps(ids));
   })();
   const mvpIds = derivedMvpIds;
   const pointsDeltaById = new Map<string, number>(
@@ -916,23 +937,25 @@ function BattleCard({
   );
   const pointsDeltaByIdDisplay = (() => {
     if (!isTeams) return pointsDeltaById;
-    const teamASuccesses = teamA.reduce((sum, p) => sum + Number(p.successes ?? 0), 0);
-    const teamBSuccesses = teamB.reduce((sum, p) => sum + Number(p.successes ?? 0), 0);
     const wagerAmount = Math.max(0, Number((battle as any).wager_amount ?? 0));
-    const lead = Math.abs(teamASuccesses - teamBSuccesses);
     const pointsPerRep = Math.max(3, Number((battle as any).points_per_rep ?? (battle as any).wager_pct ?? 5));
+    const sorted = [...teamStats].sort((a, b) => b.successes - a.successes);
+    const lead = sorted.length >= 2 && sorted[0].successes !== sorted[1].successes ? sorted[0].successes - sorted[1].successes : 0;
     const payoutTotal = wagerAmount > 0 ? wagerAmount * participants.length : lead * pointsPerRep;
-    const winnerIds = (() => {
+    const winnerTeamIndex = (() => {
       if (battle.winner_id) {
         const winner = String(battle.winner_id);
-        if (teamAIds.includes(winner)) return teamAIds;
-        if (teamBIds.includes(winner)) return teamBIds;
+        const idx = teamGroups.findIndex((ids) => ids.includes(winner));
+        if (idx >= 0) return idx;
       }
-      if (teamASuccesses === teamBSuccesses) return [];
-      return teamASuccesses > teamBSuccesses ? teamAIds : teamBIds;
+      if (sorted.length < 2 || sorted[0].successes === sorted[1].successes) return -1;
+      const top = sorted[0];
+      return teamGroups.findIndex((ids) => ids === top.ids);
     })();
+    const winnerIds = winnerTeamIndex >= 0 ? teamGroups[winnerTeamIndex] : [];
     const loserIds = winnerIds.length ? participants.map((p) => p.id).filter((id) => !winnerIds.includes(id)) : [];
-    const perWinner = wagerAmount > 0 ? wagerAmount : winnerIds.length ? Math.floor(payoutTotal / Math.max(1, winnerIds.length)) : 0;
+    const perWinnerGross = winnerIds.length ? Math.floor(payoutTotal / Math.max(1, winnerIds.length)) : 0;
+    const perWinnerNet = wagerAmount > 0 ? Math.max(0, perWinnerGross - wagerAmount) : perWinnerGross;
     const perLoser = wagerAmount > 0 ? wagerAmount : loserIds.length ? Math.floor(payoutTotal / Math.max(1, loserIds.length)) : 0;
     const computed = new Map<string, number>();
     participants.forEach((p) => {
@@ -941,12 +964,12 @@ function BattleCard({
         return;
       }
       if (winnerIds.includes(p.id)) {
-        let earned = perWinner;
-        if (mvpIds.includes(p.id) && earned > 0) earned += perWinner;
+        let earned = perWinnerNet;
+        if (mvpIds.includes(p.id) && earned > 0) earned += perWinnerNet;
         computed.set(p.id, earned);
       } else {
         let loss = -perLoser;
-        if (mvpIds.includes(p.id)) loss = Math.min(0, loss + 10);
+        if (mvpIds.includes(p.id)) loss = 0;
         computed.set(p.id, loss);
       }
     });
@@ -1024,9 +1047,10 @@ function BattleCard({
   const teamHpTimers = useRef(new Map<"top" | "bottom", ReturnType<typeof setTimeout>>());
   const flashTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const teamFlashTimers = useRef(new Map<"top" | "bottom", ReturnType<typeof setTimeout>>());
+  const now = () => new Date().getTime();
 
   const triggerHit = (id: string) => {
-    setHitById((prev) => ({ ...prev, [id]: Date.now() }));
+    setHitById((prev) => ({ ...prev, [id]: now() }));
     const timer = hitTimers.current.get(id);
     if (timer) clearTimeout(timer);
     hitTimers.current.set(
@@ -1043,7 +1067,7 @@ function BattleCard({
   };
 
   const triggerTeamHit = (side: "top" | "bottom") => {
-    setTeamHit((prev) => ({ ...prev, [side]: Date.now() }));
+    setTeamHit((prev) => ({ ...prev, [side]: now() }));
     const timer = teamHitTimers.current.get(side);
     if (timer) clearTimeout(timer);
     teamHitTimers.current.set(
@@ -1060,13 +1084,13 @@ function BattleCard({
   };
 
   const reschedulePendingDrainStarts = () => {
-    const delay = Math.max(0, lastEffectAtGlobalRef.current + 3000 - Date.now());
+    const delay = Math.max(0, lastEffectAtGlobalRef.current + 3000 - now());
     drainFxStartTimers.current.forEach((timer, id) => {
       clearTimeout(timer);
       drainFxStartTimers.current.set(
         id,
         setTimeout(() => {
-          const at = Date.now();
+          const at = now();
           setDrainFxById((prev) => ({ ...prev, [id]: at }));
           drainFxStartTimers.current.delete(id);
           const fxTimer = drainFxTimers.current.get(id);
@@ -1090,7 +1114,7 @@ function BattleCard({
       teamDrainFxStartTimers.current.set(
         side,
         setTimeout(() => {
-          const at = Date.now();
+          const at = now();
           setTeamDrainFx((prev) => ({ ...prev, [side]: at }));
           teamDrainFxStartTimers.current.delete(side);
           const fxTimer = teamDrainFxTimers.current.get(side);
@@ -1112,7 +1136,7 @@ function BattleCard({
   };
 
   const triggerAttackFx = (id: string, type: string) => {
-    const at = Date.now();
+    const at = now();
     attackFxAtRef.current.set(id, at);
     lastEffectAtGlobalRef.current = Math.max(lastEffectAtGlobalRef.current, at);
     setAttackFxById((prev) => ({ ...prev, [id]: { type, at } }));
@@ -1134,7 +1158,7 @@ function BattleCard({
   };
 
   const triggerTeamAttackFx = (side: "top" | "bottom", type: string) => {
-    const at = Date.now();
+    const at = now();
     teamAttackFxAtRef.current = { ...teamAttackFxAtRef.current, [side]: at };
     lastEffectAtGlobalRef.current = Math.max(lastEffectAtGlobalRef.current, at);
     setTeamAttackFx((prev) => ({ ...prev, [side]: { type, at } }));
@@ -1161,7 +1185,7 @@ function BattleCard({
     drainFxStartTimers.current.set(
       id,
       setTimeout(() => {
-        const at = Date.now();
+        const at = now();
         setDrainFxById((prev) => ({ ...prev, [id]: at }));
         drainFxStartTimers.current.delete(id);
         const timer = drainFxTimers.current.get(id);
@@ -1177,7 +1201,7 @@ function BattleCard({
             drainFxTimers.current.delete(id);
           }, 3000)
         );
-      }, Math.max(0, lastEffectAtGlobalRef.current + 3000 - Date.now()))
+      }, Math.max(0, lastEffectAtGlobalRef.current + 3000 - now()))
     );
   };
 
@@ -1187,7 +1211,7 @@ function BattleCard({
     teamDrainFxStartTimers.current.set(
       side,
       setTimeout(() => {
-        const at = Date.now();
+        const at = now();
         setTeamDrainFx((prev) => ({ ...prev, [side]: at }));
         teamDrainFxStartTimers.current.delete(side);
         const timer = teamDrainFxTimers.current.get(side);
@@ -1203,12 +1227,12 @@ function BattleCard({
             teamDrainFxTimers.current.delete(side);
           }, 3000)
         );
-      }, Math.max(0, lastEffectAtGlobalRef.current + 3000 - Date.now()))
+      }, Math.max(0, lastEffectAtGlobalRef.current + 3000 - now()))
     );
   };
 
   const triggerFlash = (id: string, type: string) => {
-    setFlashById((prev) => ({ ...prev, [id]: { type, at: Date.now() } }));
+    setFlashById((prev) => ({ ...prev, [id]: { type, at: now() } }));
     setTimeout(() => {
       triggerAttackFx(id, type);
     }, 80);
@@ -1228,7 +1252,7 @@ function BattleCard({
   };
 
   const triggerTeamFlash = (side: "top" | "bottom", type: string) => {
-    setTeamFlash((prev) => ({ ...prev, [side]: { type, at: Date.now() } }));
+    setTeamFlash((prev) => ({ ...prev, [side]: { type, at: now() } }));
     setTimeout(() => {
       triggerTeamAttackFx(side, type);
     }, 80);
@@ -1476,7 +1500,7 @@ function BattleCard({
           <div className="battle-skill">{battle.skill_name}</div>
         </div>
         <div className={`battle-body ${isTeams ? "teams" : isFfa ? "ffa" : "duel"}`}>
-          {!isTeams && !isFfa ? (
+          {!isTeams && !isFfa && (
             <div className="battle-duel">
               {duelTop ? (
                 <BattleSlot
@@ -1536,10 +1560,64 @@ function BattleCard({
                 <EmptySlot label="Opponent" />
               )}
             </div>
-          ) : null}
-          {isTeams ? (
-            <div className="battle-team">
-              <div
+          )}
+          {isTeams && (
+            teamGroups.length > 2 && !isLanes ? (
+              <div className="battle-team-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 18 }}>
+                {teamStats.map((team, idx) => {
+                  const win = winnerReveal && winnerTeamIndex === idx;
+                  const ratio = team.members.length ? team.successes / Math.max(1, target * team.members.length) : 0;
+                  return (
+                    <div
+                      key={team.key}
+                      className={`battle-team-row${win ? " winner reveal" : ""}${team.compact ? " compact" : ""}`}
+                      style={{ display: "grid", gap: 10 }}
+                    >
+                      <div className="battle-team-score">
+                        <span className="battle-team-score-value">{team.successes}</span>
+                        <span className="battle-team-score-potential">({team.potential})</span>
+                      </div>
+                      {win ? <div className="battle-team-winner">Winner</div> : null}
+                      <div style={{ display: "grid", gridTemplateColumns: `repeat(${team.columns}, minmax(0, 1fr))`, gap: 10 }}>
+                        {team.members.length ? (
+                          team.members.map((p) => (
+                            <BattleSlot
+                              key={p.id}
+                              participant={p}
+                              variant="team"
+                              compact={team.compact}
+                              target={target}
+                              effectConfigByKey={effectConfigByKey}
+                              battlePulseEffects={battlePulseEffects}
+                              cornerOffsets={cornerOffsets}
+                              plateOffsets={plateOffsets}
+                              hitActive={!!hitById[p.id]}
+                              hitAt={hitById[p.id]}
+                              flashType={flashById[p.id]?.type}
+                              flashAt={flashById[p.id]?.at}
+                              attackFx={attackFxById[p.id]}
+                              drainFxAt={drainFxById[p.id]}
+                              isWinner={win}
+                              winnerReveal={winnerReveal}
+                              isMvp={mvpIds.includes(p.id)}
+                              pointsDelta={pointsDeltaByIdDisplay.get(p.id) ?? 0}
+                              showPoints={battleDone}
+                            />
+                          ))
+                        ) : (
+                          <EmptySlot label={team.label} />
+                        )}
+                      </div>
+                      <div className="battle-team-hp">
+                        <div className="battle-team-hp-fill" style={{ width: `${Math.round(ratio * 100)}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="battle-team">
+                <div
                 className={`battle-team-row top${teamHit.top ? " hit" : ""}${winnerIsTopTeam ? " winner" : ""}${winnerReveal && winnerIsTopTeam ? " reveal" : ""}${
                   teamACompact ? " compact" : ""
                 }`}
@@ -1701,8 +1779,8 @@ function BattleCard({
                 </div>
               </div>
             </div>
-          ) : null}
-          {isFfa ? (
+          ))}
+          {isFfa && (
             <div className={`battle-ffa grid-${ffaGridKind(participants.length)}`}>
               <div className="battle-ffa-grid">
                 {renderFfaSlots(
@@ -1731,7 +1809,7 @@ function BattleCard({
                 </div>
               </div>
             </div>
-          ) : null}
+          )}
         </div>
       </div>
       <style jsx>{`

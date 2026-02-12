@@ -40,7 +40,28 @@ export async function POST(req: Request) {
   const stat_compare = String(body?.stat_compare ?? ">=").trim();
   const data_point_key = String(body?.data_point_key ?? "").trim() || null;
   const data_point_window_days = Number(body?.data_point_window_days ?? 0) || null;
-  const points_awarded = body?.points_awarded !== undefined && body?.points_awarded !== "" ? Number(body?.points_awarded) : null;
+  const fallbackDefaults: Record<string, number> = {
+    bronze: 15,
+    silver: 30,
+    gold: 60,
+    platinum: 100,
+    diamond: 200,
+    master: 500,
+  };
+  const tierDefaults = { ...fallbackDefaults };
+  const admin = supabaseAdmin();
+  const { data: tierRows, error: tierErr } = await admin.from("challenge_tier_defaults").select("tier,points");
+  if (!tierErr && tierRows) {
+    (tierRows ?? []).forEach((row: any) => {
+      const key = String(row.tier ?? "").toLowerCase();
+      const pts = Number(row.points ?? NaN);
+      if (key && Number.isFinite(pts)) tierDefaults[key] = pts;
+    });
+  }
+  const points_awarded =
+    body?.points_awarded !== undefined && body?.points_awarded !== ""
+      ? Number(body?.points_awarded)
+      : (tierDefaults[String(tier).toLowerCase()] ?? null);
   const limit_mode = String(body?.limit_mode ?? "once").trim();
   const limit_count = Number(body?.limit_count ?? 1) || 1;
   const limit_window_days = Number(body?.limit_window_days ?? 0) || null;
@@ -70,7 +91,6 @@ export async function POST(req: Request) {
     limit_window_days,
   };
 
-  const admin = supabaseAdmin();
   const { data, error } = await admin
     .from("challenges")
     .upsert(payload, { onConflict: "id" })

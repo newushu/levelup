@@ -14,6 +14,28 @@ type HomeQuestSettings = {
   parent_pin_set: boolean;
 };
 
+type HomeChallengeRow = {
+  id: string;
+  name: string;
+  category?: string | null;
+  tier?: string | null;
+  enabled?: boolean | null;
+  home_available?: boolean | null;
+  home_origin?: string | null;
+};
+
+type ParentChallengeRow = {
+  id: string;
+  name: string;
+  description?: string | null;
+  tier?: string | null;
+  points_awarded?: number | null;
+  enabled?: boolean | null;
+  status?: string | null;
+  parent_name?: string | null;
+  created_at?: string | null;
+};
+
 export default function HomeQuestAdminPage() {
   const [settings, setSettings] = useState<HomeQuestSettings | null>(null);
   const [maxPoints, setMaxPoints] = useState(50);
@@ -40,6 +62,11 @@ export default function HomeQuestAdminPage() {
   const [newItemTitle, setNewItemTitle] = useState("");
   const [newItemCategory, setNewItemCategory] = useState("Strength");
   const [newItemType, setNewItemType] = useState("Checklist");
+  const [homeChallenges, setHomeChallenges] = useState<HomeChallengeRow[]>([]);
+  const [parentChallenges, setParentChallenges] = useState<ParentChallengeRow[]>([]);
+  const [parentTierEdits, setParentTierEdits] = useState<Record<string, string>>({});
+  const [parentPointsEdits, setParentPointsEdits] = useState<Record<string, string>>({});
+  const [homeMsg, setHomeMsg] = useState("");
 
   async function loadSettings() {
     setMsg("");
@@ -56,8 +83,36 @@ export default function HomeQuestAdminPage() {
     });
   }
 
+  async function loadHomeChallenges() {
+    setHomeMsg("");
+    const res = await fetch("/api/admin/home-quest/home-available", { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setHomeMsg(data?.error || "Failed to load home challenges");
+    setHomeChallenges((data?.challenges ?? []) as HomeChallengeRow[]);
+  }
+
+  async function loadParentChallenges() {
+    const res = await fetch("/api/admin/home-quest/parent-challenges", { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setHomeMsg(data?.error || "Failed to load parent challenges");
+    const rows = (data?.challenges ?? []) as ParentChallengeRow[];
+    setParentChallenges(rows);
+    const tierMap: Record<string, string> = {};
+    const pointsMap: Record<string, string> = {};
+    rows.forEach((row) => {
+      if (row?.id) {
+        tierMap[row.id] = String(row.tier ?? "bronze");
+        pointsMap[row.id] = String(row.points_awarded ?? 15);
+      }
+    });
+    setParentTierEdits(tierMap);
+    setParentPointsEdits(pointsMap);
+  }
+
   useEffect(() => {
     loadSettings();
+    loadHomeChallenges();
+    loadParentChallenges();
   }, []);
 
   async function saveSettings() {
@@ -76,6 +131,46 @@ export default function HomeQuestAdminPage() {
     setParentPin("");
     setMsg("Saved.");
     loadSettings();
+  }
+
+  async function toggleHomeAvailable(id: string, value: boolean) {
+    setHomeMsg("");
+    const res = await fetch("/api/admin/home-quest/home-available", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, home_available: value }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setHomeMsg(data?.error || "Failed to update");
+    loadHomeChallenges();
+  }
+
+  async function approveParentChallenge(id: string) {
+    setHomeMsg("");
+    const tier = parentTierEdits[id] ?? "bronze";
+    const points_awarded = Number(parentPointsEdits[id] ?? 15);
+    const res = await fetch("/api/admin/home-quest/parent-challenges", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, tier, points_awarded, approve: true }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setHomeMsg(data?.error || "Failed to approve");
+    loadParentChallenges();
+  }
+
+  async function updateParentChallenge(id: string) {
+    setHomeMsg("");
+    const tier = parentTierEdits[id] ?? "bronze";
+    const points_awarded = Number(parentPointsEdits[id] ?? 15);
+    const res = await fetch("/api/admin/home-quest/parent-challenges", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, tier, points_awarded, approve: false }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setHomeMsg(data?.error || "Failed to update");
+    loadParentChallenges();
   }
 
   return (
@@ -157,6 +252,87 @@ export default function HomeQuestAdminPage() {
             placeholder="New PIN"
             style={input()}
           />
+        </div>
+      </div>
+
+      <div style={card()}>
+        <div style={{ fontWeight: 1000, marginBottom: 10 }}>Home Quest Challenge Options</div>
+        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 10 }}>
+          Select which challenges are available on the Parent Home Quest page.
+        </div>
+        {homeMsg ? <div style={notice()}>{homeMsg}</div> : null}
+        <div style={{ display: "grid", gap: 10 }}>
+          {homeChallenges.map((row) => (
+            <div key={row.id} style={rowCard()}>
+              <div>
+                <div style={{ fontWeight: 1000 }}>{row.name}</div>
+                <div style={{ opacity: 0.65, fontSize: 12 }}>
+                  {row.category ? `${row.category} • ` : ""}{row.tier ?? "—"}
+                </div>
+              </div>
+              <label style={toggleRow()}>
+                <input
+                  type="checkbox"
+                  checked={!!row.home_available}
+                  onChange={(e) => toggleHomeAvailable(row.id, e.target.checked)}
+                />
+                Available at home
+              </label>
+            </div>
+          ))}
+          {!homeChallenges.length ? <div style={{ opacity: 0.7, fontSize: 12 }}>No challenges yet.</div> : null}
+        </div>
+      </div>
+
+      <div style={card()}>
+        <div style={{ fontWeight: 1000, marginBottom: 10 }}>Parent-Created Challenges (Approval)</div>
+        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 10 }}>
+          Review and approve parent challenges. Points are capped at 15 for parent challenges.
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          {parentChallenges.map((row) => (
+            <div key={row.id} style={rowCard()}>
+              <div>
+                <div style={{ fontWeight: 1000 }}>{row.name}</div>
+                <div style={{ opacity: 0.7, fontSize: 12 }}>
+                  {row.parent_name ? `From ${row.parent_name} • ` : ""}{row.status ?? "pending"}
+                </div>
+                {row.description ? <div style={{ opacity: 0.7, fontSize: 12 }}>{row.description}</div> : null}
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <select
+                  value={parentTierEdits[row.id] ?? "bronze"}
+                  onChange={(e) => setParentTierEdits((prev) => ({ ...prev, [row.id]: e.target.value }))}
+                  style={input()}
+                >
+                  <option value="bronze">Bronze</option>
+                  <option value="silver">Silver</option>
+                  <option value="gold">Gold</option>
+                  <option value="platinum">Platinum</option>
+                  <option value="diamond">Diamond</option>
+                  <option value="master">Master</option>
+                </select>
+                <input
+                  type="number"
+                  min={1}
+                  max={15}
+                  value={parentPointsEdits[row.id] ?? "15"}
+                  onChange={(e) => setParentPointsEdits((prev) => ({ ...prev, [row.id]: e.target.value }))}
+                  style={input()}
+                />
+                {row.enabled ? (
+                  <button onClick={() => updateParentChallenge(row.id)} style={btnGhost()}>
+                    Save
+                  </button>
+                ) : (
+                  <button onClick={() => approveParentChallenge(row.id)} style={btn()}>
+                    Approve
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          {!parentChallenges.length ? <div style={{ opacity: 0.7, fontSize: 12 }}>No parent challenges yet.</div> : null}
         </div>
       </div>
 
@@ -362,5 +538,16 @@ function chip(): React.CSSProperties {
     background: "rgba(59,130,246,0.2)",
     fontSize: 11,
     fontWeight: 900,
+  };
+}
+
+function rowCard(): React.CSSProperties {
+  return {
+    borderRadius: 14,
+    padding: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(8,10,15,0.7)",
+    display: "grid",
+    gap: 10,
   };
 }

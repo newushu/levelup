@@ -23,7 +23,7 @@ export async function POST(req: Request) {
 
   const { data: battle, error: bErr } = await supabase
     .from("battle_trackers")
-    .select("id,left_student_id,right_student_id,repetitions_target,wager_amount,wager_pct,battle_mode,participant_ids,team_a_ids,team_b_ids,settled_at")
+    .select("id,left_student_id,right_student_id,repetitions_target,wager_amount,wager_pct,battle_mode,participant_ids,team_a_ids,team_b_ids,battle_meta,settled_at")
     .eq("id", battle_id)
     .single();
   if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
@@ -42,6 +42,12 @@ export async function POST(req: Request) {
   const teamB = (Array.isArray(battle?.team_b_ids) ? battle.team_b_ids : [])
     .map((id: any) => String(id ?? "").trim())
     .filter(Boolean);
+  const teamMetaRaw = Array.isArray((battle as any)?.battle_meta?.team_ids) ? (battle as any).battle_meta.team_ids : [];
+  const teamMeta = teamMetaRaw
+    .map((team: any) =>
+      Array.isArray(team) ? team.map((id: any) => String(id ?? "").trim()).filter(Boolean) : []
+    )
+    .filter((team: string[]) => team.length);
 
   if (!participants.includes(student_id)) {
     return NextResponse.json({ ok: false, error: "Student not in battle" }, { status: 400 });
@@ -89,21 +95,32 @@ export async function POST(req: Request) {
   const allDone = participants.every((pid) => (attemptsByStudent.get(pid)?.attempts ?? 0) >= target);
 
   if (allDone) {
+    return NextResponse.json({ ok: true, ready_to_settle: true });
     let winnerIds: string[] = [];
     let payoutTotal = 0;
     let mvpIds: string[] = [];
     const wagerAmount = Number(battle.wager_amount ?? 0);
     const pointsPerRep = Math.max(3, Number(battle.wager_pct ?? 5));
 
-    if (battle?.battle_mode === "teams") {
-      const teamAIds = teamA.length ? teamA : participants.slice(0, Math.max(1, Math.ceil(participants.length / 2)));
-      const teamBIds = teamB.length ? teamB : participants.filter((id) => !teamAIds.includes(id));
-      const teamASuccesses = teamAIds.reduce((sum, id) => sum + (attemptsByStudent.get(id)?.successes ?? 0), 0);
-      const teamBSuccesses = teamBIds.reduce((sum, id) => sum + (attemptsByStudent.get(id)?.successes ?? 0), 0);
-      if (teamASuccesses > teamBSuccesses) winnerIds = teamAIds;
-      if (teamBSuccesses > teamASuccesses) winnerIds = teamBIds;
-      const lead = Math.abs(teamASuccesses - teamBSuccesses);
-      payoutTotal = wagerAmount > 0 ? wagerAmount * participants.length : lead * pointsPerRep;
+    if (battle?.battle_mode === "teams" || battle?.battle_mode === "lanes") {
+      const fallbackA = teamA.length ? teamA : participants.slice(0, Math.max(1, Math.ceil(participants.length / 2)));
+      const fallbackB = teamB.length ? teamB : participants.filter((id) => !fallbackA.includes(id));
+      const teamGroups =
+        battle?.battle_mode === "teams"
+          ? (teamMeta.length ? teamMeta : [fallbackA, fallbackB].filter((t) => t.length))
+          : [fallbackA, fallbackB];
+      const teamScores = teamGroups.map((ids) => ({
+        ids,
+        successes: ids.reduce((sum, id) => sum + (attemptsByStudent.get(id)?.successes ?? 0), 0),
+      }));
+      const topScore = Math.max(0, ...teamScores.map((t) => t.successes));
+      const topTeams = teamScores.filter((t) => t.successes === topScore);
+      if (topTeams.length === 1) winnerIds = topTeams[0].ids;
+      const sortedScores = teamScores.map((t) => t.successes).sort((a, b) => b - a);
+      const lead = sortedScores.length >= 2 ? Math.max(0, sortedScores[0] - sortedScores[1]) : 0;
+      const losers = participants.filter((id) => !winnerIds.includes(id));
+      const perPerson = lead * pointsPerRep;
+      payoutTotal = wagerAmount > 0 ? wagerAmount * participants.length : perPerson * losers.length;
       const pickTeamMvp = (ids: string[]) => {
         const eligible = ids
           .map((id) => {
@@ -117,7 +134,7 @@ export async function POST(req: Request) {
         const top = Math.max(...eligible.map((row) => row.successes));
         return eligible.filter((row) => row.successes === top).map((row) => row.id);
       };
-      mvpIds = [...pickTeamMvp(teamAIds), ...pickTeamMvp(teamBIds)];
+      mvpIds = teamGroups.flatMap((team) => pickTeamMvp(team));
     } else {
       const ranked = participants
         .map((id) => ({ id, successes: attemptsByStudent.get(id)?.successes ?? 0 }))
@@ -130,7 +147,7 @@ export async function POST(req: Request) {
       payoutTotal = wagerAmount > 0 ? wagerAmount * participants.length : lead * pointsPerRep;
     }
 
-    if (battle?.battle_mode !== "teams") {
+    if (battle?.battle_mode !== "teams" && battle?.battle_mode !== "lanes") {
       mvpIds = [];
     }
 
@@ -211,35 +228,44 @@ export async function POST(req: Request) {
 
       const ledgerRows: Array<{ student_id: string; points: number; note: string; category: string; created_by: string }> = [];
       const baseWinById = new Map<string, number>();
+      const netWinById = new Map<string, number>();
+      const lossById = new Map<string, number>();
 
       if (wagerAmount > 0) {
-        const share = Math.floor(payoutTotal / Math.max(1, winnerIds.length));
-        if (share > 0) {
-          participants.forEach((pid) => {
-            ledgerRows.push({
-              student_id: pid,
-              points: -wagerAmount,
-              note: `Battle Pulse wager (-${wagerAmount})`,
-              category: "manual",
-              created_by: u.user.id,
+        if (winnerIds.length) {
+          const share = Math.floor(payoutTotal / Math.max(1, winnerIds.length));
+          const netShare = Math.max(0, share - wagerAmount);
+          if (share > 0) {
+            participants.forEach((pid) => {
+              ledgerRows.push({
+                student_id: pid,
+                points: -wagerAmount,
+                note: `Battle Pulse wager (-${wagerAmount})`,
+                category: "manual",
+                created_by: u.user.id,
+              });
+              lossById.set(pid, wagerAmount);
             });
-          });
-          winnerIds.forEach((pid) => {
-            ledgerRows.push({
-              student_id: pid,
-              points: share,
-              note: `Battle Pulse win (+${share})`,
-              category: "manual",
-              created_by: u.user.id,
+            winnerIds.forEach((pid) => {
+              if (netShare > 0) {
+                ledgerRows.push({
+                  student_id: pid,
+                  points: netShare,
+                  note: `Battle Pulse win (+${netShare})`,
+                  category: "manual",
+                  created_by: u.user.id,
+                });
+              }
+              baseWinById.set(pid, netShare);
+              netWinById.set(pid, netShare);
             });
-            baseWinById.set(pid, share);
-          });
+          }
         }
       } else {
         const losers = participants.filter((pid) => !winnerIds.includes(pid));
         if (losers.length) {
           const loserDebits = new Map<string, number>();
-          if (battle?.battle_mode === "teams") {
+          if (battle?.battle_mode === "teams" || battle?.battle_mode === "lanes") {
             const baseLoss = Math.floor(payoutTotal / Math.max(1, losers.length));
             const remainder = payoutTotal - baseLoss * losers.length;
             let maxLoser: { id: string; balance: number } | null = null;
@@ -290,6 +316,7 @@ export async function POST(req: Request) {
                 category: "manual",
                 created_by: u.user.id,
               });
+              lossById.set(pid, debit);
             });
             winnerIds.forEach((pid) => {
               const extra = remainderWin > 0 && maxWinner?.id === pid ? remainderWin : 0;
@@ -303,35 +330,119 @@ export async function POST(req: Request) {
                 created_by: u.user.id,
               });
               baseWinById.set(pid, payout);
+              netWinById.set(pid, payout);
             });
           }
         }
       }
 
-      if (mvpIds.length) {
-        mvpIds.forEach((pid) => {
-          const baseWin = baseWinById.get(pid) ?? 0;
-          if (baseWin > 0) {
+      if (ledgerRows.length) {
+        const insLedger = await supabase.from("ledger").insert(ledgerRows);
+        if (insLedger.error) return NextResponse.json({ ok: false, error: insLedger.error.message }, { status: 500 });
+
+        for (const pid of participants) {
+          const rpc = await supabase.rpc("recompute_student_points", { p_student_id: pid });
+          if (rpc.error) return NextResponse.json({ ok: false, error: rpc.error.message }, { status: 500 });
+        }
+      }
+    }
+
+    if (!limitReached && mvpIds.length) {
+      const ledgerRows: Array<{ student_id: string; points: number; note: string; category: string; created_by: string }> = [];
+      mvpIds.forEach((pid) => {
+        const baseWin = baseWinById.get(pid) ?? 0;
+        const netWin = netWinById.get(pid) ?? baseWin;
+        const isWinner = winnerIds.includes(pid);
+        if (battle?.battle_mode === "teams") {
+          if (!winnerIds.length) return;
+          if (isWinner) {
+            const bonus = Math.max(0, netWin);
+            if (bonus > 0) {
+              ledgerRows.push({
+                student_id: pid,
+                points: bonus,
+                note: `Battle Pulse MVP bonus (+${bonus})`,
+                category: "manual",
+                created_by: u.user.id,
+              });
+            }
+            return;
+          }
+          const refund = lossById.get(pid) ?? 0;
+          if (refund > 0) {
             ledgerRows.push({
               student_id: pid,
-              points: baseWin,
-              note: `Battle Pulse MVP bonus (+${baseWin})`,
+              points: refund,
+              note: `Battle Pulse MVP refund (+${refund})`,
               category: "manual",
+              created_by: u.user.id,
+            });
+          }
+          return;
+        }
+        if (battle?.battle_mode === "lanes") {
+          if (!winnerIds.length) {
+            ledgerRows.push({
+              student_id: pid,
+              points: 10,
+              note: "Skill Lanes MVP tie (+10)",
+              category: "system",
               created_by: u.user.id,
             });
             return;
           }
-          if (winnerIds.length && !winnerIds.includes(pid)) {
+          if (isWinner && netWin > 0) {
             ledgerRows.push({
               student_id: pid,
-              points: 10,
-              note: "Battle Pulse MVP consolation (+10)",
-              category: "manual",
+              points: netWin,
+              note: `Skill Lanes MVP bonus (+${netWin})`,
+              category: "system",
               created_by: u.user.id,
             });
+          } else if (!isWinner) {
+            const refund = lossById.get(pid) ?? 0;
+            if (refund > 0) {
+              ledgerRows.push({
+                student_id: pid,
+                points: refund,
+                note: `Skill Lanes MVP refund (+${refund}) (non-lifetime)`,
+                category: "system",
+                created_by: u.user.id,
+              });
+            }
           }
-        });
-      }
+          return;
+        }
+        if (!winnerIds.length) {
+          ledgerRows.push({
+            student_id: pid,
+            points: 10,
+            note: "Battle Pulse MVP tie (+10)",
+            category: "manual",
+            created_by: u.user.id,
+          });
+          return;
+        }
+        if (baseWin > 0) {
+          ledgerRows.push({
+            student_id: pid,
+            points: baseWin,
+            note: `Battle Pulse MVP bonus (+${baseWin})`,
+            category: "manual",
+            created_by: u.user.id,
+          });
+          return;
+        }
+        if (winnerIds.length && !winnerIds.includes(pid)) {
+          ledgerRows.push({
+            student_id: pid,
+            points: 10,
+            note: "Battle Pulse MVP consolation (+10)",
+            category: "manual",
+            created_by: u.user.id,
+          });
+        }
+      });
 
       if (ledgerRows.length) {
         const insLedger = await supabase.from("ledger").insert(ledgerRows);

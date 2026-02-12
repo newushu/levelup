@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
 type RouletteWheel = {
@@ -45,6 +45,7 @@ export default function AdminRoulettePage() {
   const [newWheel, setNewWheel] = useState<RouletteWheel>({ name: "", wheel_type: "prize", enabled: true });
   const [msg, setMsg] = useState("");
   const [saving, setSaving] = useState(false);
+  const localIdCounterRef = useRef(0);
 
   useEffect(() => {
     loadWheels();
@@ -210,8 +211,9 @@ export default function AdminRoulettePage() {
 
   function addSegment(wheel: WheelBundle) {
     if (!wheel.id) return;
+    const localId = `local-${wheel.id}-${localIdCounterRef.current++}`;
     const next: RouletteSegment = {
-      local_id: `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      local_id: localId,
       wheel_id: wheel.id,
       label: "Earn Points +0",
       segment_type: "points_add",

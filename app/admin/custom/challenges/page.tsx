@@ -41,6 +41,14 @@ async function safeJson(res: Response) {
 }
 
 const tiers = ["bronze", "silver", "gold", "platinum", "diamond", "master"];
+const defaultTierDefaults: Record<string, number> = {
+  bronze: 15,
+  silver: 30,
+  gold: 60,
+  platinum: 100,
+  diamond: 200,
+  master: 500,
+};
 const compares = [">=", "<=", ">", "<", "="];
 const limitModes = ["once", "daily", "weekly", "monthly", "yearly", "lifetime", "custom"];
 const challengeTypes = ["task", "quota", "stat", "data"];
@@ -60,6 +68,7 @@ export default function ChallengesAdminPage() {
   const [tab, setTab] = useState<"medals" | "challenges">("challenges");
   const [categoryDraft, setCategoryDraft] = useState("");
   const [extraCategories, setExtraCategories] = useState<string[]>([]);
+  const [tierDefaults, setTierDefaults] = useState<Record<string, number>>({ ...defaultTierDefaults });
 
   const [draft, setDraft] = useState<ChallengeRow>({
     id: "",
@@ -105,6 +114,23 @@ export default function ChallengesAdminPage() {
     if (dJson.ok) setDataPoints((dJson.json?.data_points ?? []) as DataPointRow[]);
   }
 
+  async function loadTierDefaults() {
+    const res = await fetch("/api/admin/challenges/tier-defaults", { cache: "no-store" });
+    const sj = await safeJson(res);
+    if (sj.ok) setTierDefaults((sj.json?.defaults ?? {}) as Record<string, number>);
+  }
+
+  async function saveTierDefaults() {
+    const res = await fetch("/api/admin/challenges/tier-defaults", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaults: tierDefaults }),
+    });
+    const sj = await safeJson(res);
+    if (!sj.ok) return setMsg(sj.json?.error || "Failed to save tier defaults");
+    setMsg("Tier defaults saved.");
+  }
+
   async function loadMedals() {
     const res = await fetch("/api/admin/challenges/medals", { cache: "no-store" });
     const sj = await safeJson(res);
@@ -116,6 +142,7 @@ export default function ChallengesAdminPage() {
   useEffect(() => {
     loadAll();
     loadMedals();
+    loadTierDefaults();
   }, []);
 
   async function saveMedal(tier: string, badge_library_id: string | null) {
@@ -309,7 +336,18 @@ export default function ChallengesAdminPage() {
               </label>
               <label style={label()}>
                 Tier
-                <select value={draft.tier} onChange={(e) => setDraft((d) => ({ ...d, tier: e.target.value }))} style={input()}>
+                <select
+                  value={draft.tier}
+                  onChange={(e) => {
+                    const nextTier = e.target.value;
+                    setDraft((d) => ({
+                      ...d,
+                      tier: nextTier,
+                      points_awarded: d.points_awarded ?? tierDefaults[nextTier] ?? d.points_awarded,
+                    }));
+                  }}
+                  style={input()}
+                >
                   {tiers.map((t) => (
                     <option key={t} value={t}>{t}</option>
                   ))}
@@ -357,7 +395,7 @@ export default function ChallengesAdminPage() {
                 Points awarded
                 <input
                   type="number"
-                  value={draft.points_awarded ?? ""}
+                  value={draft.points_awarded ?? tierDefaults[draft.tier] ?? ""}
                   onChange={(e) => setDraft((d) => ({ ...d, points_awarded: Number(e.target.value) }))}
                   style={input()}
                 />
@@ -466,6 +504,26 @@ export default function ChallengesAdminPage() {
             </div>
           </div>
 
+          <section style={card()}>
+            <div style={{ fontWeight: 1000 }}>Tier Default Points</div>
+            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(6, minmax(120px, 1fr))" }}>
+              {tiers.map((t) => (
+                <label key={t} style={label()}>
+                  {t}
+                  <input
+                    type="number"
+                    value={tierDefaults[t] ?? ""}
+                    onChange={(e) => setTierDefaults((prev) => ({ ...prev, [t]: Number(e.target.value) }))}
+                    style={input()}
+                  />
+                </label>
+              ))}
+            </div>
+            <div style={{ display: "grid", justifyContent: "end" }}>
+              <button onClick={saveTierDefaults} style={btn()}>Save Defaults</button>
+            </div>
+          </section>
+
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} style={input()}>
               <option value="all">All categories</option>
@@ -493,13 +551,25 @@ export default function ChallengesAdminPage() {
                 <option key={c} value={c} />
               ))}
             </datalist>
-            {filtered.map((row) => (
-              <div key={row.id} style={smallCard()}>
+            {filtered.map((row, idx) => (
+              <div key={row.id} style={smallCard(idx % 2 === 1)}>
                 <div style={{ display: "grid", gap: 10 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
                     <input value={row.name} onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, name: e.target.value } : r)))} style={input()} />
                     <input value={row.id} disabled style={input()} />
-                    <select value={row.tier ?? "bronze"} onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, tier: e.target.value } : r)))} style={input()}>
+                    <select
+                      value={row.tier ?? "bronze"}
+                      onChange={(e) =>
+                        setRows((prev) =>
+                          prev.map((r) =>
+                            r.id === row.id
+                              ? { ...r, tier: e.target.value, points_awarded: r.points_awarded ?? tierDefaults[e.target.value] ?? r.points_awarded }
+                              : r
+                          )
+                        )
+                      }
+                      style={input()}
+                    >
                       {tiers.map((t) => (
                         <option key={t} value={t}>{t}</option>
                       ))}
@@ -533,7 +603,13 @@ export default function ChallengesAdminPage() {
                   </div>
 
                   <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr 1fr" }}>
-                    <input type="number" value={row.points_awarded ?? ""} onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, points_awarded: Number(e.target.value) } : r)))} placeholder="Points awarded" style={input()} />
+                    <input
+                      type="number"
+                      value={row.points_awarded ?? tierDefaults[String(row.tier ?? "bronze")] ?? ""}
+                      onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, points_awarded: Number(e.target.value) } : r)))}
+                      placeholder="Points awarded"
+                      style={input()}
+                    />
                     <input type="number" value={row.limit_count ?? 1} onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, limit_count: Number(e.target.value) } : r)))} placeholder="Limit count" style={input()} />
                     <input type="number" value={row.limit_window_days ?? ""} onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, limit_window_days: Number(e.target.value) } : r)))} placeholder="Limit window (days)" style={input()} />
                   </div>
@@ -616,6 +692,9 @@ export default function ChallengesAdminPage() {
                       {saving[row.id] ? "Saving..." : "Save"}
                     </button>
                   </div>
+                  <div style={challengeSummary()}>
+                    {buildChallengeSummary(row)}
+                  </div>
                 </div>
               </div>
             ))}
@@ -638,16 +717,49 @@ function card(): React.CSSProperties {
   };
 }
 
-function smallCard(): React.CSSProperties {
+function smallCard(alt = false): React.CSSProperties {
   return {
     borderRadius: 14,
     padding: 12,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(15,23,42,0.55)",
+    border: alt ? "1px solid rgba(56,189,248,0.25)" : "1px solid rgba(255,255,255,0.12)",
+    background: alt ? "rgba(8,18,35,0.75)" : "rgba(15,23,42,0.55)",
     display: "grid",
     gap: 10,
     boxShadow: "0 12px 28px rgba(0,0,0,0.25)",
   };
+}
+
+function challengeSummary(): React.CSSProperties {
+  return {
+    fontSize: 12,
+    opacity: 0.8,
+    paddingTop: 6,
+    borderTop: "1px dashed rgba(255,255,255,0.18)",
+  };
+}
+
+function buildLimitSummary(row: ChallengeRow): string {
+  const count = Number(row.limit_count ?? 1);
+  const mode = String(row.limit_mode ?? "once");
+  const windowDays = Number(row.limit_window_days ?? 0);
+  if (mode === "daily") return `${count} time${count === 1 ? "" : "s"} per day`;
+  if (mode === "weekly") return `${count} time${count === 1 ? "" : "s"} per week`;
+  if (mode === "monthly") return `${count} time${count === 1 ? "" : "s"} per month`;
+  if (mode === "yearly") return `${count} time${count === 1 ? "" : "s"} per year`;
+  if (mode === "lifetime" || mode === "once") return `${count} time${count === 1 ? "" : "s"} total`;
+  if (mode === "custom" && windowDays > 0) {
+    return `${count} time${count === 1 ? "" : "s"} per ${windowDays} day${windowDays === 1 ? "" : "s"}`;
+  }
+  if (mode === "custom") return `${count} time${count === 1 ? "" : "s"} per custom window`;
+  return `${count} time${count === 1 ? "" : "s"}`;
+}
+
+function buildChallengeSummary(row: ChallengeRow): string {
+  const name = String(row.name ?? "Challenge");
+  const tier = String(row.tier ?? "bronze");
+  const points = Number(row.points_awarded ?? 0);
+  const limit = buildLimitSummary(row);
+  return `${name} is a ${tier} level challenge and earns ${points} points on completion and can be completed ${limit}.`;
 }
 
 function input(): React.CSSProperties {

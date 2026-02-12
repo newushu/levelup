@@ -81,6 +81,15 @@ export default function ToolsPage() {
                 Open runner →
               </a>
             </div>
+            <div style={toolCard("linear-gradient(135deg, rgba(244,114,182,0.35), rgba(2,6,23,0.7))")}>
+              <div style={{ fontWeight: 1000 }}>WALTER</div>
+              <div style={{ opacity: 0.75, marginTop: 6, fontSize: 12 }}>
+                Wushu Assistive Learning Tools for Evaluation + Refinement.
+              </div>
+              <a href="/tools/walter" style={linkBtn()}>
+                Open suite →
+              </a>
+            </div>
             <div style={toolCard("linear-gradient(135deg, rgba(16,185,129,0.35), rgba(2,6,23,0.65))")}>
               <div style={{ fontWeight: 1000 }}>CTF Scorekeeper</div>
               <div style={{ opacity: 0.75, marginTop: 6, fontSize: 12 }}>

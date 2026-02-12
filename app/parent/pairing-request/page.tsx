@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AuthGate from "@/components/AuthGate";
+import ParentImpersonationBar from "@/components/ParentImpersonationBar";
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -27,6 +28,9 @@ function ParentPairingRequestInner() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const isParent = role === "parent";
+  const isAdmin = role === "admin";
+  const canView = isParent || isAdmin;
 
   useEffect(() => {
     (async () => {
@@ -58,7 +62,7 @@ function ParentPairingRequestInner() {
     window.setTimeout(() => setSubmitted(false), 1600);
   }
 
-  if (role !== "parent") {
+  if (!canView) {
     return (
       <main style={{ padding: 18 }}>
         <div style={{ fontSize: 22, fontWeight: 900 }}>Parent access only.</div>
@@ -69,6 +73,12 @@ function ParentPairingRequestInner() {
   return (
     <main style={page()}>
       <div style={card()}>
+        <ParentImpersonationBar enabled={isAdmin} />
+        {isAdmin ? (
+          <div style={{ marginBottom: 6, padding: "8px 12px", borderRadius: 10, background: "rgba(251,191,36,0.16)", border: "1px solid rgba(251,191,36,0.45)", fontSize: 12 }}>
+            Admin preview: submissions are disabled.
+          </div>
+        ) : null}
         <div style={{ fontSize: 24, fontWeight: 1000 }}>Request Student Pairing</div>
         <div style={{ opacity: 0.75, marginTop: 6 }}>
           Add another student by name. Include a note for the admin team if needed.
@@ -89,8 +99,8 @@ function ParentPairingRequestInner() {
             style={textarea()}
           />
           {msg ? <div style={{ fontSize: 12, opacity: 0.75 }}>{msg}</div> : null}
-          <button onClick={submit} style={btn()} disabled={busy}>
-            {busy ? "Submitting..." : submitted ? "Submitted!" : "Submit Request"}
+          <button onClick={submit} style={btn()} disabled={busy || isAdmin}>
+            {isAdmin ? "Admin Preview" : busy ? "Submitting..." : submitted ? "Submitted!" : "Submit Request"}
           </button>
         </div>
       </div>

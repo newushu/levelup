@@ -86,6 +86,7 @@ type BattleRow = {
   participant_ids?: string[];
   team_a_ids?: string[];
   team_b_ids?: string[];
+  battle_meta?: any;
   participants?: Array<{
     id: string;
     name: string;
@@ -211,6 +212,7 @@ function parseReasons(input?: string | null) {
 export default function SkillTrackerPage() {
   const [msg, setMsg] = useState("");
   const [students, setStudents] = useState<StudentRow[]>([]);
+  const [mvpCountById, setMvpCountById] = useState<Record<string, number>>({});
   const [skills, setSkills] = useState<SkillRow[]>([]);
   const [elements, setElements] = useState<SkillElement[]>([]);
   const [formSkillSearch, setFormSkillSearch] = useState("");
@@ -272,15 +274,22 @@ export default function SkillTrackerPage() {
   const [battleRightId, setBattleRightId] = useState<string>("");
   const [battleLeftQuery, setBattleLeftQuery] = useState("");
   const [battleRightQuery, setBattleRightQuery] = useState("");
-  const [battleMode, setBattleMode] = useState<"duel" | "ffa" | "teams">("duel");
+  const [battleMode, setBattleMode] = useState<"duel" | "ffa" | "teams" | "lanes">("duel");
   const [battleParticipantIdsState, setBattleParticipantIdsState] = useState<string[]>([]);
   const [battleParticipantQuery, setBattleParticipantQuery] = useState("");
   const [battleTeamAIds, setBattleTeamAIds] = useState<string[]>([]);
   const [battleTeamBIds, setBattleTeamBIds] = useState<string[]>([]);
+  const [battleTeamCIds, setBattleTeamCIds] = useState<string[]>([]);
+  const [battleTeamDIds, setBattleTeamDIds] = useState<string[]>([]);
   const [battleTeamAQuery, setBattleTeamAQuery] = useState("");
   const [battleTeamBQuery, setBattleTeamBQuery] = useState("");
+  const [battleTeamCQuery, setBattleTeamCQuery] = useState("");
+  const [battleTeamDQuery, setBattleTeamDQuery] = useState("");
   const [battleSkillId, setBattleSkillId] = useState<string>("");
   const [battleReps, setBattleReps] = useState<number>(5);
+  const [battleLaneCategories, setBattleLaneCategories] = useState<string[]>([]);
+  const [battleLaneAssignments, setBattleLaneAssignments] = useState<Record<string, string[]>>({});
+  const [battleLaneSkills, setBattleLaneSkills] = useState<Record<string, string[]>>({});
   const [battleFilters, setBattleFilters] = useState({
     base_name: "",
     quality: "",
@@ -295,8 +304,23 @@ export default function SkillTrackerPage() {
   const [resultTracker, setResultTracker] = useState<TrackerRow | null>(null);
   const [battleResultOpen, setBattleResultOpen] = useState(false);
   const [battleResult, setBattleResult] = useState<BattleRow | null>(null);
+  const [laneSuccessPulse, setLaneSuccessPulse] = useState<{ battleId: string; playerId: string; at: number } | null>(null);
+  const [battleTurnState, setBattleTurnState] = useState<
+    Record<
+      string,
+      {
+        order: string[];
+        index: number;
+        mode: "duel" | "ffa" | "teams" | "lanes";
+        label?: string;
+      }
+    >
+  >({});
+  const [battleCoinState, setBattleCoinState] = useState<Record<string, { label: string; at: number }>>({});
+  const autoSettleInFlight = useRef<Set<string>>(new Set());
   const [clearOpen, setClearOpen] = useState(false);
   const [clearCompleted, setClearCompleted] = useState(false);
+  const [clearCompletedBattles, setClearCompletedBattles] = useState(false);
   const [clearOld, setClearOld] = useState(false);
   const [clearAll, setClearAll] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
@@ -342,14 +366,14 @@ export default function SkillTrackerPage() {
   useEffect(() => {
     (async () => {
       const path = typeof window !== "undefined" ? window.location.pathname : "";
-      const tablet = path === "/skill-pulse";
+      const tablet = path === "/skill-pulse" || path === "/classroom/skill-pulse";
       setIsTabletRoute(tablet);
       const res = await fetch("/api/auth/me", { cache: "no-store" });
       const data = await safeJson(res);
       if (!data.ok) return;
       const role = String(data.json?.role ?? "coach");
       setViewerRole(role);
-      const canUseTablet = tablet && ["skill_user", "skill_pulse"].includes(role);
+      const canUseTablet = tablet && ["skill_user", "skill_pulse", "classroom"].includes(role);
       if (!["admin", "coach"].includes(role) && !canUseTablet) setStudentBlocked(true);
     })();
   }, []);
@@ -367,6 +391,9 @@ export default function SkillTrackerPage() {
     }
     const list = (sj.json?.students ?? []) as StudentRow[];
     setStudents(list);
+    if (list.length) {
+      refreshMvpCounts(list.map((s) => s.id));
+    }
 
     if (!preserveSelected) return;
     const saved = (() => {
@@ -406,6 +433,18 @@ export default function SkillTrackerPage() {
     const sj = await safeJson(r);
     if (!sj.ok) return;
     setElements((sj.json?.elements ?? []) as SkillElement[]);
+  }
+
+  async function refreshMvpCounts(ids: string[]) {
+    if (!ids.length) return;
+    const res = await fetch("/api/mvp/counts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ student_ids: ids }),
+    });
+    const sj = await safeJson(res);
+    if (!sj.ok) return;
+    setMvpCountById(sj.json?.counts ?? {});
   }
 
   async function refreshTrackers() {
@@ -461,7 +500,14 @@ export default function SkillTrackerPage() {
       setMsg(sj.json?.error || "Failed to load battles");
       return;
     }
-    setBattles((sj.json?.battles ?? []) as BattleRow[]);
+    const nextBattles = (sj.json?.battles ?? []) as BattleRow[];
+    setBattles(nextBattles);
+    if (!isTabletRouteRef.current) {
+      queueAutoSettle(nextBattles);
+    }
+    if (students.length) {
+      refreshMvpCounts(students.map((s) => s.id));
+    }
   }
 
   async function refreshFeed() {
@@ -480,6 +526,11 @@ export default function SkillTrackerPage() {
     refreshBattles();
     refreshFeed();
   }, []);
+
+  useEffect(() => {
+    if (!students.length) return;
+    refreshMvpCounts(students.map((s) => s.id));
+  }, [students]);
 
   useEffect(() => {
     if (!isTabletRoute) return;
@@ -671,10 +722,66 @@ export default function SkillTrackerPage() {
       .slice(0, 6);
   }
 
+  function renderStudentSuggestion(s: StudentRow) {
+    const mvpCount = mvpCountById[s.id] ?? 0;
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <span>{s.name}</span>
+        <span style={{ fontSize: 11, fontWeight: 900, color: "#facc15" }}>MVP: {mvpCount}</span>
+      </div>
+    );
+  }
+
   function hasExactStudentMatch(query: string) {
     const q = query.trim().toLowerCase();
     if (!q) return false;
     return students.some((s) => s.name.toLowerCase() === q);
+  }
+
+  function normalizeLaneCategoryList(value: unknown): string[] {
+    if (Array.isArray(value)) {
+      const seen = new Set<string>();
+      return value
+        .map((entry) => String(entry ?? "").trim())
+        .filter((entry) => entry)
+        .filter((entry) => {
+          if (seen.has(entry)) return false;
+          seen.add(entry);
+          return true;
+        });
+    }
+    const single = String(value ?? "").trim();
+    return single ? [single] : [];
+  }
+
+  function normalizeLaneAssignments(raw: Record<string, unknown> | null | undefined): Record<string, string[]> {
+    if (!raw || typeof raw !== "object") return {};
+    const next: Record<string, string[]> = {};
+    Object.entries(raw).forEach(([id, value]) => {
+      const cats = normalizeLaneCategoryList(value);
+      if (cats.length) next[id] = cats;
+    });
+    return next;
+  }
+
+  function getAssignedLaneCategories(assignments: Record<string, unknown>, id: string): string[] {
+    return normalizeLaneCategoryList(assignments[id]);
+  }
+
+  function getPrimaryLaneCategory(assignments: Record<string, unknown>, id: string): string {
+    return getAssignedLaneCategories(assignments, id)[0] ?? "";
+  }
+
+  function buildLaneSkillPool(categorySkills: Record<string, unknown> | null | undefined, cats: string[]) {
+    const pool: Array<{ cat: string; skillId: string }> = [];
+    cats.forEach((cat) => {
+      const list = Array.isArray((categorySkills as any)?.[cat]) ? (categorySkills as any)[cat] : [];
+      list.forEach((skillId: unknown) => {
+        const clean = String(skillId ?? "").trim();
+        if (clean) pool.push({ cat, skillId: clean });
+      });
+    });
+    return pool;
   }
 
   function addBattleParticipant(id: string) {
@@ -690,7 +797,7 @@ export default function SkillTrackerPage() {
     setBattleParticipantIdsState((prev) => prev.filter((pid) => pid !== id));
   }
 
-  function addBattleTeamMember(team: "a" | "b", id: string) {
+  function addBattleTeamMember(team: "a" | "b" | "c" | "d", id: string) {
     const sid = String(id ?? "").trim();
     if (!sid) return;
     if (team === "a") {
@@ -699,18 +806,46 @@ export default function SkillTrackerPage() {
         return [...prev, sid];
       });
       setBattleTeamBIds((prev) => prev.filter((pid) => pid !== sid));
-    } else {
+      setBattleTeamCIds((prev) => prev.filter((pid) => pid !== sid));
+      setBattleTeamDIds((prev) => prev.filter((pid) => pid !== sid));
+    } else if (team === "b") {
       setBattleTeamBIds((prev) => {
         if (prev.includes(sid)) return prev;
         return [...prev, sid];
       });
       setBattleTeamAIds((prev) => prev.filter((pid) => pid !== sid));
+      setBattleTeamCIds((prev) => prev.filter((pid) => pid !== sid));
+      setBattleTeamDIds((prev) => prev.filter((pid) => pid !== sid));
+    } else if (team === "c") {
+      setBattleTeamCIds((prev) => {
+        if (prev.includes(sid)) return prev;
+        return [...prev, sid];
+      });
+      setBattleTeamAIds((prev) => prev.filter((pid) => pid !== sid));
+      setBattleTeamBIds((prev) => prev.filter((pid) => pid !== sid));
+      setBattleTeamDIds((prev) => prev.filter((pid) => pid !== sid));
+    } else {
+      setBattleTeamDIds((prev) => {
+        if (prev.includes(sid)) return prev;
+        return [...prev, sid];
+      });
+      setBattleTeamAIds((prev) => prev.filter((pid) => pid !== sid));
+      setBattleTeamBIds((prev) => prev.filter((pid) => pid !== sid));
+      setBattleTeamCIds((prev) => prev.filter((pid) => pid !== sid));
     }
   }
 
-  function removeBattleTeamMember(team: "a" | "b", id: string) {
+  function removeBattleTeamMember(team: "a" | "b" | "c" | "d", id: string) {
     if (team === "a") setBattleTeamAIds((prev) => prev.filter((pid) => pid !== id));
-    else setBattleTeamBIds((prev) => prev.filter((pid) => pid !== id));
+    else if (team === "b") setBattleTeamBIds((prev) => prev.filter((pid) => pid !== id));
+    else if (team === "c") setBattleTeamCIds((prev) => prev.filter((pid) => pid !== id));
+    else setBattleTeamDIds((prev) => prev.filter((pid) => pid !== id));
+    setBattleLaneAssignments((prev) => {
+      if (!prev[id]) return prev;
+      const copy = { ...prev };
+      delete copy[id];
+      return copy;
+    });
   }
 
   function openCreate() {
@@ -921,7 +1056,7 @@ export default function SkillTrackerPage() {
   }
 
   async function clearTrackers() {
-    if (!clearCompleted && !clearOld && !clearAll) {
+    if (!clearCompleted && !clearCompletedBattles && !clearOld && !clearAll) {
       setMsg("Choose at least one clear option.");
       return;
     }
@@ -932,6 +1067,7 @@ export default function SkillTrackerPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         clear_completed: clearCompleted,
+        clear_completed_battles: clearCompletedBattles,
         clear_old: clearOld,
         clear_all: clearAll,
       }),
@@ -942,6 +1078,7 @@ export default function SkillTrackerPage() {
     } else {
       setClearOpen(false);
       setClearCompleted(false);
+      setClearCompletedBattles(false);
       setClearOld(false);
       setClearAll(false);
       await refreshTrackers();
@@ -1123,6 +1260,13 @@ export default function SkillTrackerPage() {
       setFlash(null);
       return setMsg(sj.json?.error || "Failed to log battle attempt");
     }
+    const battle = battles.find((b) => b.id === battleId);
+    if (success && (battle?.battle_mode ?? "duel") === "lanes") {
+      setLaneSuccessPulse({ battleId, playerId: studentIdForLog, at: Date.now() });
+    }
+    if ((battle?.battle_mode ?? "duel") === "lanes") {
+      nextBattleTurn(battleId);
+    }
     await refreshBattles();
     await refreshFeed();
     setFlash(null);
@@ -1260,19 +1404,26 @@ export default function SkillTrackerPage() {
     setBattleParticipantQuery("");
     setBattleTeamAIds([]);
     setBattleTeamBIds([]);
+    setBattleTeamCIds([]);
+    setBattleTeamDIds([]);
     setBattleTeamAQuery("");
     setBattleTeamBQuery("");
+    setBattleTeamCQuery("");
+    setBattleTeamDQuery("");
     setBattleSkillSearch("");
     setBattleSkillId(skills[0]?.id || "");
     setBattleReps(5);
     setBattleWagerOn(false);
     setBattleWagerAmount(10);
     setBattlePointsPerRep(5);
+    setBattleLaneCategories([]);
+    setBattleLaneAssignments({});
+    setBattleLaneSkills({});
     setBattleOpen(true);
   }
 
   function openRematch(b: BattleRow) {
-    const mode = (b.battle_mode ?? "duel") as "duel" | "ffa" | "teams";
+    const mode = (b.battle_mode ?? "duel") as "duel" | "ffa" | "teams" | "lanes";
     setBattleMode(mode);
     setBattleLeftId(b.left_student_id);
     setBattleRightId(b.right_student_id);
@@ -1280,15 +1431,37 @@ export default function SkillTrackerPage() {
     setBattleRightQuery(b.right_name ?? getStudentName(b.right_student_id));
     setBattleParticipantIdsState(b.participant_ids ?? []);
     setBattleParticipantQuery("");
-    setBattleTeamAIds(b.team_a_ids ?? []);
-    setBattleTeamBIds(b.team_b_ids ?? []);
+    const metaTeams = Array.isArray(b.battle_meta?.team_ids) ? b.battle_meta?.team_ids : [];
+    const metaA = Array.isArray(metaTeams?.[0]) ? metaTeams[0] : [];
+    const metaB = Array.isArray(metaTeams?.[1]) ? metaTeams[1] : [];
+    const metaC = Array.isArray(metaTeams?.[2]) ? metaTeams[2] : [];
+    const metaD = Array.isArray(metaTeams?.[3]) ? metaTeams[3] : [];
+    setBattleTeamAIds(metaA.length ? metaA : b.team_a_ids ?? []);
+    setBattleTeamBIds(metaB.length ? metaB : b.team_b_ids ?? []);
+    setBattleTeamCIds(metaC ?? []);
+    setBattleTeamDIds(metaD ?? []);
     setBattleTeamAQuery("");
     setBattleTeamBQuery("");
+    setBattleTeamCQuery("");
+    setBattleTeamDQuery("");
     setBattleSkillId(b.skill_id);
     setBattleReps(b.repetitions_target || 5);
     setBattleWagerOn(Number(b.wager_amount ?? 0) > 0);
     setBattleWagerAmount(Number(b.wager_amount ?? 0) || 10);
     setBattlePointsPerRep(Math.max(3, Number(b.points_per_rep ?? 5)));
+    if (mode === "lanes") {
+      const meta = b.battle_meta ?? {};
+      const cats = Array.isArray(meta.categories) ? meta.categories : [];
+      const assignments = normalizeLaneAssignments(meta.assignments ?? {});
+      const catSkills = meta.category_skills ?? {};
+      setBattleLaneCategories(cats);
+      setBattleLaneAssignments(assignments);
+      setBattleLaneSkills(catSkills);
+    } else {
+      setBattleLaneCategories([]);
+      setBattleLaneAssignments({});
+      setBattleLaneSkills({});
+    }
     setBattleOpen(true);
   }
 
@@ -1296,40 +1469,94 @@ export default function SkillTrackerPage() {
     const participantIds =
       battleMode === "duel"
         ? [battleLeftId, battleRightId].filter(Boolean)
-        : battleMode === "teams"
-        ? Array.from(new Set([...battleTeamAIds, ...battleTeamBIds]))
+        : battleMode === "teams" || battleMode === "lanes"
+        ? Array.from(new Set([...battleTeamAIds, ...battleTeamBIds, ...battleTeamCIds, ...battleTeamDIds]))
         : battleParticipantIdsState;
-    if (!participantIds.length || !battleSkillId) return;
+    let laneAssignmentsForSave = battleLaneAssignments;
+    const defaultLaneSkill =
+      battleMode === "lanes"
+        ? battleLaneSkills[battleLaneCategories[0] ?? ""]?.[0] ?? ""
+        : "";
+    const effectiveSkillId = battleMode === "lanes" ? battleSkillId || defaultLaneSkill : battleSkillId;
+    if (!participantIds.length || !effectiveSkillId) return;
     if (participantIds.length < 2) {
       return setMsg("Battle needs at least 2 students.");
     }
-    if (battleMode === "teams" && (!battleTeamAIds.length || !battleTeamBIds.length)) {
+    if ((battleMode === "teams" || battleMode === "lanes") && (!battleTeamAIds.length || !battleTeamBIds.length)) {
       return setMsg("Both teams need at least one student.");
+    }
+    if (battleMode === "teams") {
+      const teamGroups = [battleTeamAIds, battleTeamBIds, battleTeamCIds, battleTeamDIds].filter((t) => t.length);
+      if (teamGroups.length < 2) {
+        return setMsg("Battle Pulse teams need at least two teams.");
+      }
+    }
+    if (battleMode === "lanes") {
+      if (battleTeamAIds.length < 2 || battleTeamBIds.length < 2) {
+        return setMsg("Skill Lanes needs at least 2 players per team.");
+      }
+      if (battleTeamAIds.length !== battleTeamBIds.length) {
+        return setMsg("Skill Lanes teams must be the same size.");
+      }
+      if (battleLaneCategories.length < 1) {
+        return setMsg("Select at least 1 category.");
+      }
+      const allowed = new Set(battleLaneCategories);
+      const allIds = new Set([...battleTeamAIds, ...battleTeamBIds]);
+      const cleanedAssignments: Record<string, string[]> = {};
+      for (const id of allIds) {
+        const cats = getAssignedLaneCategories(battleLaneAssignments, id).filter((cat) => allowed.has(cat));
+        if (!cats.length) return setMsg("Every player needs at least one category.");
+        cleanedAssignments[id] = cats;
+      }
+      laneAssignmentsForSave = cleanedAssignments;
+      const laneSkillMin = Math.max(1, Math.max(battleTeamAIds.length, battleTeamBIds.length) > 3 ? 3 : 1);
+      if (!battleLaneCategories.every((cat) => (battleLaneSkills[cat] ?? []).length >= laneSkillMin)) {
+        return setMsg(`Each category must have at least ${laneSkillMin} skill${laneSkillMin === 1 ? "" : "s"} selected.`);
+      }
     }
     if (battleMode === "ffa" && !battleWagerOn) {
       return setMsg("FFA battles must use wager mode.");
     }
-    if (battleWagerInsufficient) {
+    if (battleMode !== "lanes" && battleWagerInsufficient) {
       return setMsg("All participants need at least 15 points to wager.");
+    }
+    if (battleMode === "lanes") {
+      setBattleWagerOn(false);
+      setBattleWagerAmount(0);
     }
     const created_source = isTabletRoute ? "skill_pulse" : undefined;
     const res = await fetch("/api/skill-tracker/battle/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        left_student_id: battleLeftId,
-        right_student_id: battleRightId,
-        battle_mode: battleMode,
-        participant_ids: participantIds,
-        team_a_ids: battleMode === "teams" ? battleTeamAIds : [],
-        team_b_ids: battleMode === "teams" ? battleTeamBIds : [],
-        skill_id: battleSkillId,
-        repetitions_target: battleReps,
-        wager_amount: battleWagerOn ? battleWagerAmount : 0,
-        points_per_rep: Math.max(3, battlePointsPerRep),
-        created_source,
-      }),
-    });
+        body: JSON.stringify({
+          left_student_id: battleLeftId,
+          right_student_id: battleRightId,
+          battle_mode: battleMode,
+          participant_ids: participantIds,
+          team_a_ids: battleMode === "teams" || battleMode === "lanes" ? battleTeamAIds : [],
+          team_b_ids: battleMode === "teams" || battleMode === "lanes" ? battleTeamBIds : [],
+          team_c_ids: battleMode === "teams" ? battleTeamCIds : [],
+          team_d_ids: battleMode === "teams" ? battleTeamDIds : [],
+          skill_id: effectiveSkillId,
+          repetitions_target: battleReps,
+          wager_amount: battleWagerOn ? battleWagerAmount : 0,
+          points_per_rep: Math.max(3, battlePointsPerRep),
+          battle_meta:
+            battleMode === "lanes"
+              ? {
+                  categories: battleLaneCategories,
+                  assignments: laneAssignmentsForSave,
+                  category_skills: battleLaneSkills,
+                }
+              : battleMode === "teams"
+                ? {
+                    team_ids: [battleTeamAIds, battleTeamBIds, battleTeamCIds, battleTeamDIds].filter((t) => t.length),
+                  }
+                : null,
+          created_source,
+        }),
+      });
     const sj = await safeJson(res);
     if (!sj.ok) return setMsg(sj.json?.error || "Failed to create battle");
     setBattleOpen(false);
@@ -1370,6 +1597,40 @@ export default function SkillTrackerPage() {
     await refreshFeed();
   }
 
+  async function settleBattle(battleId: string) {
+    if (!battleId) return;
+    setMsg("");
+    const res = await fetch("/api/skill-tracker/battle/settle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ battle_id: battleId }),
+    });
+    const sj = await safeJson(res);
+    if (!sj.ok) {
+      setMsg(sj.json?.error || "Failed to settle battle");
+      return;
+    }
+    await refreshBattles();
+    await refreshFeed();
+  }
+
+  function queueAutoSettle(battlesToCheck: BattleRow[]) {
+    battlesToCheck.forEach((b) => {
+      if (b.settled_at) return;
+      const participants = b.participants ?? [];
+      if (!participants.length) return;
+      const target = Number(b.repetitions_target ?? 0);
+      if (target <= 0) return;
+      const allDone = participants.every((p) => Number(p.attempts ?? 0) >= target);
+      if (!allDone) return;
+      if (autoSettleInFlight.current.has(b.id)) return;
+      autoSettleInFlight.current.add(b.id);
+      settleBattle(b.id).finally(() => {
+        autoSettleInFlight.current.delete(b.id);
+      });
+    });
+  }
+
   const skillsByCategory = useMemo(() => {
     const map = new Map<string, SkillRow[]>();
     for (const s of skills) {
@@ -1377,6 +1638,12 @@ export default function SkillTrackerPage() {
       map.set(key, [...(map.get(key) ?? []), s]);
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [skills]);
+
+  const skillNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    skills.forEach((s) => map.set(s.id, s.name));
+    return map;
   }, [skills]);
 
   const matchesSkillQuery = useCallback((skill: SkillRow, query: string) => {
@@ -1458,14 +1725,11 @@ export default function SkillTrackerPage() {
   const battleLeftSuggestions = studentSuggestions(battleLeftQuery, [battleRightId].filter(Boolean));
   const battleRightSuggestions = studentSuggestions(battleRightQuery, [battleLeftId].filter(Boolean));
   const battleParticipantSuggestions = studentSuggestions(battleParticipantQuery, battleParticipantIdsState);
-  const battleTeamASuggestions = studentSuggestions(
-    battleTeamAQuery,
-    Array.from(new Set([...battleTeamAIds, ...battleTeamBIds]))
-  );
-  const battleTeamBSuggestions = studentSuggestions(
-    battleTeamBQuery,
-    Array.from(new Set([...battleTeamAIds, ...battleTeamBIds]))
-  );
+  const battleTeamTakenIds = Array.from(new Set([...battleTeamAIds, ...battleTeamBIds, ...battleTeamCIds, ...battleTeamDIds]));
+  const battleTeamASuggestions = studentSuggestions(battleTeamAQuery, battleTeamTakenIds);
+  const battleTeamBSuggestions = studentSuggestions(battleTeamBQuery, battleTeamTakenIds);
+  const battleTeamCSuggestions = studentSuggestions(battleTeamCQuery, battleTeamTakenIds);
+  const battleTeamDSuggestions = studentSuggestions(battleTeamDQuery, battleTeamTakenIds);
 
   const allFailureReasons = useMemo(() => {
     const set = new Set<string>();
@@ -1486,11 +1750,13 @@ export default function SkillTrackerPage() {
   const showBattleParticipantSuggestions = battleParticipantSuggestions.length > 0 && !hasExactStudentMatch(battleParticipantQuery);
   const showBattleTeamASuggestions = battleTeamASuggestions.length > 0 && !hasExactStudentMatch(battleTeamAQuery);
   const showBattleTeamBSuggestions = battleTeamBSuggestions.length > 0 && !hasExactStudentMatch(battleTeamBQuery);
+  const showBattleTeamCSuggestions = battleTeamCSuggestions.length > 0 && !hasExactStudentMatch(battleTeamCQuery);
+  const showBattleTeamDSuggestions = battleTeamDSuggestions.length > 0 && !hasExactStudentMatch(battleTeamDQuery);
   const battleParticipantIds =
     battleMode === "duel"
       ? [battleLeftId, battleRightId].filter(Boolean)
-      : battleMode === "teams"
-      ? Array.from(new Set([...battleTeamAIds, ...battleTeamBIds]))
+      : battleMode === "teams" || battleMode === "lanes"
+      ? Array.from(new Set([...battleTeamAIds, ...battleTeamBIds, ...battleTeamCIds, ...battleTeamDIds]))
       : battleParticipantIdsState;
   const battleLeftBalance = students.find((s) => s.id === battleLeftId)?.points_total ?? 0;
   const battleRightBalance = students.find((s) => s.id === battleRightId)?.points_total ?? 0;
@@ -1510,16 +1776,63 @@ export default function SkillTrackerPage() {
   const battleWagerTooLow = battleWagerOn && battleWagerAmount > 0 && battleWagerAmount < battleMinWager;
   const battleNormalInsufficient =
     !battleWagerOn && (!!battleLeftId || !!battleRightId) && battleNormalMaxPerRep > 0 && battleNormalMaxPerRep < 3;
+  const laneSkillMin = Math.max(1, Math.max(battleTeamAIds.length, battleTeamBIds.length) > 3 ? 3 : 1);
+  const laneAssignmentsComplete = (() => {
+    if (battleMode !== "lanes") return true;
+    const ids = [...battleTeamAIds, ...battleTeamBIds];
+    return ids.every((id) => getAssignedLaneCategories(battleLaneAssignments, id).length > 0);
+  })();
+  const laneSkillsValid = (() => {
+    if (battleMode !== "lanes") return true;
+    if (battleLaneCategories.length < 1) return false;
+    return battleLaneCategories.every((cat) => (battleLaneSkills[cat] ?? []).length >= laneSkillMin);
+  })();
+  const laneCategoryCountsValid = (() => {
+    if (battleMode !== "lanes") return true;
+    if (battleLaneCategories.length < 1) return false;
+    if (battleTeamAIds.length < 2 || battleTeamBIds.length < 2) return false;
+    if (battleTeamAIds.length !== battleTeamBIds.length) return false;
+    const allowed = new Set(battleLaneCategories);
+    const ids = [...battleTeamAIds, ...battleTeamBIds];
+    if (
+      ids.some((id) =>
+        getAssignedLaneCategories(battleLaneAssignments, id).some((cat) => !allowed.has(cat))
+      )
+    )
+      return false;
+    return true;
+  })();
+  const laneErrors =
+    battleMode === "lanes"
+      ? buildLaneErrors({
+          teamAIds: battleTeamAIds,
+          teamBIds: battleTeamBIds,
+          categories: battleLaneCategories,
+          assignmentsComplete: laneAssignmentsComplete,
+          skillsValid: laneSkillsValid,
+          countsValid: laneCategoryCountsValid,
+          skillMin: laneSkillMin,
+        })
+      : [];
+
+  const canAssignLaneCategory = useCallback(
+    (_teamIds: string[], _playerId: string, cat: string) => {
+      if (!cat || !battleLaneCategories.includes(cat)) return false;
+      return true;
+    },
+    [battleLaneCategories]
+  );
   const battleParticipantInvalid =
     battleParticipantIds.length < 2 ||
     (battleMode === "duel" && (!battleLeftId || !battleRightId)) ||
-    (battleMode === "teams" && (!battleTeamAIds.length || !battleTeamBIds.length));
+    ((battleMode === "teams" || battleMode === "lanes") && (!battleTeamAIds.length || !battleTeamBIds.length)) ||
+    (battleMode === "lanes" && (!laneAssignmentsComplete || !laneCategoryCountsValid || !laneSkillsValid));
   const battleCreateDisabled =
     battleParticipantInvalid ||
-    battleWagerInsufficient ||
-    battleWagerTooLow ||
-    (battleWagerOn && battleWagerAmount <= 0) ||
-    battleNormalInsufficient;
+    (battleMode !== "lanes" && battleWagerInsufficient) ||
+    (battleMode !== "lanes" && battleWagerTooLow) ||
+    (battleMode !== "lanes" && battleWagerOn && battleWagerAmount <= 0) ||
+    (battleMode !== "lanes" && battleNormalInsufficient);
 
   useEffect(() => {
     if (battleWagerOn) return;
@@ -1533,6 +1846,14 @@ export default function SkillTrackerPage() {
       setBattleWagerOn(true);
     }
   }, [battleMode, battleWagerOn]);
+
+  useEffect(() => {
+    if (battleMode !== "lanes") {
+      setBattleLaneCategories([]);
+      setBattleLaneAssignments({});
+      setBattleLaneSkills({});
+    }
+  }, [battleMode]);
 
   const particlesInit = useCallback(async (engine: Engine) => {
     await loadSlim(engine);
@@ -1559,6 +1880,90 @@ export default function SkillTrackerPage() {
     }),
     []
   );
+
+  useEffect(() => {
+    if (!battles.length) return;
+    setBattleTurnState((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      battles.forEach((b) => {
+        if ((b.battle_mode ?? "duel") !== "lanes") return;
+        if (next[b.id]?.order?.length) return;
+        const meta = b.battle_meta ?? {};
+        const assignments = meta.assignments ?? {};
+        const categories = Array.isArray(meta.categories) ? meta.categories : [];
+        const teamAIds = b.team_a_ids ?? [];
+        const teamBIds = b.team_b_ids ?? [];
+        if (!categories.length || !teamAIds.length || !teamBIds.length) return;
+        const order: string[] = [];
+        categories.forEach((cat: string) => {
+          const aIds = teamAIds.filter((id) => getPrimaryLaneCategory(assignments, id) === cat);
+          const bIds = teamBIds.filter((id) => getPrimaryLaneCategory(assignments, id) === cat);
+          const max = Math.max(aIds.length, bIds.length);
+          for (let i = 0; i < max; i += 1) {
+            if (aIds[i]) order.push(aIds[i]);
+            if (bIds[i]) order.push(bIds[i]);
+          }
+        });
+        if (!order.length) return;
+        next[b.id] = { order, index: 0, mode: "lanes" };
+        changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [battles]);
+
+  const cryptoRand = useCallback((max: number) => {
+    if (max <= 0) return 0;
+    const arr = new Uint32Array(1);
+    crypto.getRandomValues(arr);
+    return arr[0] % max;
+  }, []);
+
+  const shuffleList = useCallback(
+    <T,>(list: T[]) => {
+      const copy = [...list];
+      for (let i = copy.length - 1; i > 0; i -= 1) {
+        const j = cryptoRand(i + 1);
+        [copy[i], copy[j]] = [copy[j], copy[i]];
+      }
+      return copy;
+    },
+    [cryptoRand]
+  );
+
+  const setTurnOrderForBattle = useCallback(
+    (battle: BattleRow, mode: "duel" | "ffa" | "teams" | "lanes", order: string[], label?: string) => {
+      setBattleTurnState((prev) => ({
+        ...prev,
+        [battle.id]: {
+          order,
+          index: 0,
+          mode,
+          label,
+        },
+      }));
+    },
+    []
+  );
+
+  const nextBattleTurn = useCallback((battleId: string, order?: string[]) => {
+    setBattleTurnState((prev) => {
+      const current = prev[battleId];
+      const activeOrder = order ?? current?.order ?? [];
+      if (!activeOrder.length || activeOrder.length <= 1) return prev;
+      const nextIndex = ((current?.index ?? 0) + 1) % activeOrder.length;
+      return {
+        ...prev,
+        [battleId]: {
+          order: activeOrder,
+          index: nextIndex,
+          mode: current?.mode ?? "duel",
+          label: current?.label,
+        },
+      };
+    });
+  }, []);
 
   const isTabletMode = isTabletRoute;
   const avatarContextKey = isTabletMode ? "skill_pulse_tracker" : "skill_pulse";
@@ -1685,6 +2090,9 @@ export default function SkillTrackerPage() {
                 <button onClick={openBattle} style={battlePulseBtn()}>
                   ⚔️ Battle Pulse
                 </button>
+                <a href="/admin/skill-strike" style={skillStrikeBtn()}>
+                  🎴 Skill Strike
+                </a>
                 <button onClick={openGroup} style={groupBtn()}>
                   👥 Group Tracker
                 </button>
@@ -1728,16 +2136,47 @@ export default function SkillTrackerPage() {
           const isMulti = (b.battle_mode ?? "duel") !== "duel";
           if (isMulti) {
             const participants = b.participants ?? [];
+            const battleMode = (b.battle_mode ?? "duel") as "duel" | "ffa" | "teams" | "lanes";
             const seedTeamA = b.team_a_ids ?? [];
             const seedTeamB = b.team_b_ids ?? [];
-            const teamAIds = seedTeamA.length
+            let teamAIds = seedTeamA.length
               ? seedTeamA
               : participants.slice(0, Math.max(1, Math.ceil(participants.length / 2))).map((p) => p.id);
-            const teamBIds = seedTeamB.length
+            let teamBIds = seedTeamB.length
               ? seedTeamB
               : participants.filter((p) => !teamAIds.includes(p.id)).map((p) => p.id);
+            const metaTeamsRaw = Array.isArray(b.battle_meta?.team_ids) ? (b.battle_meta?.team_ids as any[]) : [];
+            const metaTeams = metaTeamsRaw
+              .map((team) => (Array.isArray(team) ? team.map((id) => String(id ?? "").trim()).filter(Boolean) : []))
+              .filter((team) => team.length);
+            const teamGroups = battleMode === "teams" && metaTeams.length ? metaTeams : [teamAIds, teamBIds].filter((t) => t.length);
+            if (battleMode === "teams" && teamGroups.length) {
+              teamAIds = teamGroups[0] ?? [];
+              teamBIds = teamGroups[1] ?? [];
+            }
             const teamA = participants.filter((p) => teamAIds.includes(p.id));
             const teamB = participants.filter((p) => teamBIds.includes(p.id));
+            const teamKeys = ["a", "b", "c", "d"] as const;
+            const teamStats = teamGroups.map((ids, idx) => {
+              const key = teamKeys[idx] ?? "a";
+              const members = participants.filter((p) => ids.includes(p.id));
+              const attempts = members.reduce((sum, p) => sum + (p.attempts_list?.length ?? 0), 0);
+              const successes = members.reduce((sum, p) => sum + Number(p.successes ?? 0), 0);
+              const remaining = Math.max(0, Number(b.repetitions_target ?? 0) * members.length - attempts);
+              const potential = successes + remaining;
+              const fails = Math.max(0, attempts - successes);
+              return {
+                key,
+                label: `Team ${key.toUpperCase()}`,
+                ids,
+                members,
+                attempts,
+                successes,
+                remaining,
+                potential,
+                fails,
+              };
+            });
             const teamASuccesses = teamA.reduce((sum, p) => sum + Number(p.successes ?? 0), 0);
             const teamBSuccesses = teamB.reduce((sum, p) => sum + Number(p.successes ?? 0), 0);
             const teamADone = teamA.reduce((sum, p) => sum + (p.attempts_list?.length ?? 0), 0);
@@ -1749,6 +2188,7 @@ export default function SkillTrackerPage() {
             const teamAFails = Math.max(0, teamADone - teamASuccesses);
             const teamBFails = Math.max(0, teamBDone - teamBSuccesses);
             const done = participants.length > 0 && participants.every((p) => (p.attempts_list?.length ?? 0) >= b.repetitions_target);
+            const isSettled = Boolean(b.settled_at);
             const teamHp = (team: typeof teamA, otherTeam: typeof teamB) => {
               const target = Math.max(1, Number(b.repetitions_target ?? 1));
               const teamSuccesses = team.reduce((sum, p) => sum + Number(p.successes ?? 0), 0);
@@ -1766,13 +2206,948 @@ export default function SkillTrackerPage() {
             };
             const teamHpA = teamHp(teamA, teamB);
             const teamHpB = teamHp(teamB, teamA);
-            const liveWinnerLabel = teamHpA <= 0 && teamHpB > 0 ? "Team B" : teamHpB <= 0 && teamHpA > 0 ? "Team A" : "";
+            const liveWinnerLabel = (() => {
+              if (battleMode === "teams" && teamGroups.length > 2) {
+                const sorted = [...teamStats].sort((a, b) => b.successes - a.successes);
+                if (sorted.length < 2 || sorted[0].successes === sorted[1].successes) return "";
+                return sorted[0].label;
+              }
+              return teamHpA <= 0 && teamHpB > 0 ? "Team B" : teamHpB <= 0 && teamHpA > 0 ? "Team A" : "";
+            })();
             const flashType = flash?.id === b.id ? flash.type : null;
             const mvpIds = Array.isArray(b.mvp_ids) ? b.mvp_ids.map(String) : [];
+            const turnState = battleTurnState[b.id];
+            const currentTurnId = turnState?.order?.[turnState.index] ?? "";
+            const turnOrderNames = (turnState?.order ?? [])
+              .map((id) => participants.find((p) => p.id === id)?.name ?? "Student")
+              .join(" → ");
+            const coinLabel = battleCoinState[b.id]?.label ?? "";
+            function flipCoin() {
+              if (battleMode === "teams") {
+                const teamCount = Math.max(2, teamGroups.length || 2);
+                const startIndex = cryptoRand(teamCount);
+                const label = `Team ${teamKeys[startIndex]?.toUpperCase() ?? "A"} starts`;
+                setBattleCoinState((prev) => ({ ...prev, [b.id]: { label, at: Date.now() } }));
+                return;
+              }
+              if (battleMode === "lanes") {
+                const start = cryptoRand(2) === 0 ? "Team A" : "Team B";
+                setBattleCoinState((prev) => ({ ...prev, [b.id]: { label: `${start} starts`, at: Date.now() } }));
+                return;
+              }
+              if (participants.length) {
+                const pick = participants[cryptoRand(participants.length)];
+                const name = pick?.name ?? "Player";
+                setBattleCoinState((prev) => ({ ...prev, [b.id]: { label: `${name} starts`, at: Date.now() } }));
+              }
+            }
+            function pickTurnOrder() {
+              if (!participants.length) return;
+              if (battleMode === "ffa") {
+                const order = shuffleList(participants.map((p) => p.id));
+                setTurnOrderForBattle(b, "ffa", order, "Order set");
+                setBattleCoinState((prev) => ({ ...prev, [b.id]: { label: "Turn order set", at: Date.now() } }));
+                return;
+              }
+              if (battleMode === "teams" || battleMode === "lanes") {
+                const startTeam = cryptoRand(2) === 0 ? "a" : "b";
+                const order: string[] = [];
+                if (battleMode === "lanes") {
+                  const meta = b.battle_meta ?? {};
+                  const assignments = meta.assignments ?? {};
+                  const categories = Array.isArray(meta.categories) ? meta.categories : [];
+                  categories.forEach((cat: string) => {
+                    const aIds = teamAIds.filter((id) => getPrimaryLaneCategory(assignments, id) === cat);
+                    const bIds = teamBIds.filter((id) => getPrimaryLaneCategory(assignments, id) === cat);
+                    const max = Math.max(aIds.length, bIds.length);
+                    for (let i = 0; i < max; i += 1) {
+                      if (startTeam === "a") {
+                        if (aIds[i]) order.push(aIds[i]);
+                        if (bIds[i]) order.push(bIds[i]);
+                      } else {
+                        if (bIds[i]) order.push(bIds[i]);
+                        if (aIds[i]) order.push(aIds[i]);
+                      }
+                    }
+                  });
+                } else {
+                  const teamsForOrder = teamGroups.length ? teamGroups : [teamAIds, teamBIds].filter((t) => t.length);
+                  const teamOrders = teamsForOrder.map((ids) => shuffleList(ids));
+                  const maxLen = Math.max(0, ...teamOrders.map((list) => list.length));
+                  const startIndex = startTeam === "a" ? 0 : 1;
+                  for (let i = 0; i < maxLen; i += 1) {
+                    for (let t = 0; t < teamOrders.length; t += 1) {
+                      const idx = (startIndex + t) % teamOrders.length;
+                      const pick = teamOrders[idx]?.[i];
+                      if (pick) order.push(pick);
+                    }
+                  }
+                }
+                setTurnOrderForBattle(
+                  b,
+                  battleMode,
+                  order,
+                  `${startTeam === "a" ? "Team A" : "Team B"} starts`
+                );
+                setBattleCoinState((prev) => ({
+                  ...prev,
+                  [b.id]: { label: `${startTeam === "a" ? "Team A" : "Team B"} starts`, at: Date.now() },
+                }));
+              }
+            }
             const pointsDeltaById = new Map<string, number>(
               Object.entries(b.points_delta_by_id ?? {}).map(([key, value]) => [String(key), Number(value)])
             );
-            const renderBattleScore = (successesCount: number, attemptsCount: number) => {
+            const pointsDeltaSummary = Array.from(pointsDeltaById.entries())
+              .map(([id, delta]) => {
+                const name = participants.find((p) => p.id === id)?.name ?? "Student";
+                const sign = delta > 0 ? "+" : "";
+                return `${name} ${sign}${delta}`;
+              })
+              .join(" • ");
+            const debugLaneData = !isTabletMode
+              ? {
+                  id: b.id,
+                  battle_mode: b.battle_mode,
+                  repetitions_target: b.repetitions_target,
+                  wager_amount: b.wager_amount,
+                  points_per_rep: b.points_per_rep,
+                  settled_at: b.settled_at,
+                  winner_id: b.winner_id,
+                  team_a_ids: teamAIds,
+                  team_b_ids: teamBIds,
+                  participant_ids: participants.map((p) => p.id),
+                  participant_stats: participants.map((p) => ({
+                    id: p.id,
+                    name: p.name,
+                    attempts: p.attempts,
+                    successes: p.successes,
+                  })),
+                  mvp_ids: mvpIds,
+                  points_delta_by_id: Object.fromEntries(pointsDeltaById.entries()),
+                }
+              : null;
+            if (b.battle_mode === "lanes") {
+              const meta = b.battle_meta ?? {};
+              const assignments = meta.assignments ?? {};
+              const laneCats = Array.isArray(meta.categories) ? meta.categories : [];
+                      const teamAOrdered = teamAIds.map((id) => teamA.find((p) => p.id === id)).filter(Boolean) as typeof teamA;
+                      const teamBOrdered = teamBIds.map((id) => teamB.find((p) => p.id === id)).filter(Boolean) as typeof teamB;
+              const scoreFromParticipant = (p: BattleRow["participants"][number]) => {
+                const attemptsCount = p.attempts_list?.length ?? (p.attempts ?? 0);
+                const successesCount = typeof p.successes === "number" ? p.successes : p.attempts_list?.filter((v) => v).length ?? 0;
+                return { attemptsCount, successesCount };
+              };
+              const deriveOrder = () => {
+                if (turnState?.order?.length) return turnState.order;
+                const order: string[] = [];
+                laneCats.forEach((cat: string) => {
+                  const aIds = teamAIds.filter((id) => getPrimaryLaneCategory(assignments, id) === cat);
+                  const bIds = teamBIds.filter((id) => getPrimaryLaneCategory(assignments, id) === cat);
+                  const max = Math.max(aIds.length, bIds.length);
+                  for (let i = 0; i < max; i += 1) {
+                    if (aIds[i]) order.push(aIds[i]);
+                    if (bIds[i]) order.push(bIds[i]);
+                  }
+                });
+                return order.length ? order : [...teamAIds, ...teamBIds];
+              };
+              const deriveMvpIds = () => {
+                if (mvpIds.length) return mvpIds;
+                if (!done) return [];
+                const pickTeamMvp = (ids: string[]) => {
+                  const eligible = teamAOrdered
+                    .concat(teamBOrdered)
+                    .filter((p) => ids.includes(p.id))
+                    .map((p) => {
+                      const attempts = p.attempts_list?.length ?? Number(p.attempts ?? 0);
+                      const successes = Number(p.successes ?? 0);
+                      const rate = attempts > 0 ? successes / attempts : 0;
+                      return { id: p.id, successes, rate };
+                    })
+                    .filter((row) => row.rate >= 0.6 && row.successes > 0);
+                  if (!eligible.length) return [];
+                  const top = Math.max(...eligible.map((row) => row.successes));
+                  return eligible.filter((row) => row.successes === top).map((row) => row.id);
+                };
+                return [...pickTeamMvp(teamAIds), ...pickTeamMvp(teamBIds)];
+              };
+              const laneMvpIds = deriveMvpIds();
+              const buildLaneSuccessColors = (teamKey: "a" | "b", teamList: typeof teamAOrdered) => {
+                const order = deriveOrder();
+                const maxSegments = teamList.length * Math.max(1, Number(b.repetitions_target ?? 1));
+                const successColors: string[] = [];
+                const attemptIndex = new Map<string, number>();
+                let guard = 0;
+                while (successColors.length < maxSegments && guard < maxSegments * 8) {
+                  guard += 1;
+                  let progressed = false;
+                  for (const pid of order) {
+                    const teamForPlayer = teamAIds.includes(pid) ? "a" : teamBIds.includes(pid) ? "b" : null;
+                    if (teamForPlayer !== teamKey) continue;
+                    const p = teamList.find((x) => x.id === pid);
+                    if (!p) continue;
+                    const idx = attemptIndex.get(pid) ?? 0;
+                    const attemptsList = p.attempts_list ?? [];
+                    if (idx >= attemptsList.length) continue;
+                    const success = attemptsList[idx] === true;
+                    attemptIndex.set(pid, idx + 1);
+                    if (success) {
+                      const assignedCats = getAssignedLaneCategories(assignments, pid);
+                      const primaryCat = assignedCats[0] ?? "Category";
+                      const pool = buildLaneSkillPool(meta.category_skills, assignedCats);
+                      const pick = pool.length ? pool[idx % pool.length] : null;
+                      const cat = pick?.cat ?? primaryCat;
+                      successColors.push(laneColor(cat, laneCats));
+                    }
+                    progressed = true;
+                    if (successColors.length >= maxSegments) break;
+                  }
+                  if (!progressed) break;
+                }
+                return { colors: successColors, total: maxSegments };
+              };
+              const renderLaneRow = (teamKey: "a" | "b", teamList: typeof teamAOrdered) => {
+                const built = buildLaneSuccessColors(teamKey, teamList);
+                return (
+                  <div className={`lane-row lane-row-${teamKey}`}>
+                    {Array.from({ length: built.total }).map((_, idx) => {
+                      const color = built.colors[idx];
+                      const filled = Boolean(color);
+                      const flashActive =
+                        laneSuccessPulse?.battleId === b.id &&
+                        laneSuccessPulse?.playerId &&
+                        filled &&
+                        idx === built.colors.length - 1 &&
+                        Date.now() - laneSuccessPulse.at < 1400;
+                      return (
+                        <span
+                          key={`${teamKey}-${idx}`}
+                          className={`lane-segment ${flashActive ? "lane-segment-flash" : ""}`}
+                          style={{
+                            background: filled ? color : "rgba(255,255,255,0.08)",
+                            boxShadow: filled ? `0 0 10px ${color}` : undefined,
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                );
+              };
+              const countFilled = (teamKey: "a" | "b", teamList: typeof teamAOrdered) => {
+                const built = buildLaneSuccessColors(teamKey, teamList);
+                return { filled: built.colors.length, total: built.total };
+              };
+              const currentTurnPlayer = participants.find((p) => p.id === currentTurnId) ?? null;
+              const currentTurnSkill = (() => {
+                if (!currentTurnPlayer) return "";
+                const assignedCats = getAssignedLaneCategories(assignments, currentTurnPlayer.id);
+                const pool = buildLaneSkillPool(meta.category_skills, assignedCats);
+                if (!pool.length) return "";
+                const attemptsList = currentTurnPlayer.attempts_list ?? [];
+                const pick = pool[attemptsList.length % pool.length];
+                return pick ? skillNameById.get(pick.skillId) ?? "" : "";
+              })();
+              return (
+                <div key={b.id} style={{ ...battleCard(flashType, done), gridColumn: "1 / -1" }}>
+                  <div style={{ ...battleCardContent() }}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeBattle(b.id);
+                      }}
+                      style={closeBtnBottom()}
+                      title="Remove battle"
+                    >
+                      ✖
+                    </button>
+                    <div style={{ fontWeight: 1000, fontSize: 18, textAlign: "center" }}>SKILL LANES</div>
+                    <div style={{ textAlign: "center", fontSize: 11, opacity: 0.6 }}>ID: {b.id}</div>
+                    <div style={{ textAlign: "center", fontSize: 12, opacity: 0.8 }}>
+                      Categories: {laneCats.join(", ") || "—"} • Reps {b.repetitions_target}
+                    </div>
+                    <div style={{ textAlign: "center", fontSize: 11, opacity: 0.55 }}>
+                      Points delta: {pointsDeltaSummary || "—"}
+                    </div>
+                    {!isTabletMode ? (
+                      <details style={debugDetails()}>
+                        <summary style={debugSummary()}>Debug</summary>
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
+                          <button onClick={() => settleBattle(b.id)} style={debugBtn()}>
+                            Force settle
+                          </button>
+                        </div>
+                        <pre style={debugPre()}>{JSON.stringify(debugLaneData, null, 2)}</pre>
+                      </details>
+                    ) : null}
+                    <div className="battle-turn-controls">
+                      <button type="button" className="battle-coin-btn" onClick={flipCoin}>
+                        COIN FLIP
+                      </button>
+                      <button type="button" className="battle-order-btn" onClick={pickTurnOrder}>
+                        HELP ME PICK THE ORDER
+                      </button>
+                      {turnState?.order?.length ? (
+                        <button type="button" className="battle-order-btn" onClick={() => nextBattleTurn(b.id)}>
+                          NEXT TURN
+                        </button>
+                      ) : null}
+                    </div>
+                    {coinLabel ? <div className="battle-coin-result">{coinLabel}</div> : null}
+                    <div className="lane-mini-summary">
+                      <div className="lane-mini-box">
+                        <div className="lane-mini-title">Team A</div>
+                        {teamAOrdered.map((p) => {
+                          const attemptsList = p.attempts_list ?? [];
+                          const successCount = attemptsList.filter((v) => v).length;
+                          const failCount = attemptsList.length - successCount;
+                          const useNumbers = Number(b.repetitions_target ?? 0) > 8;
+                          return (
+                            <div key={`mini-a-${p.id}`} className="lane-mini-row">
+                              <span className="lane-mini-name">
+                                {p.name}
+                                {laneMvpIds.includes(p.id) ? <span className="lane-mini-mvp">MVP</span> : null}
+                              </span>
+                              {useNumbers ? (
+                                <span className="lane-mini-counts">
+                                  {successCount}✓ {failCount}✕
+                                </span>
+                              ) : (
+                                <span className="lane-mini-dots">
+                                  {attemptsList.map((ok, idx) => (
+                                    <span
+                                      key={`a-${p.id}-${idx}`}
+                                      className={`lane-mini-dot ${ok ? "lane-mini-dot-good" : "lane-mini-dot-bad"}`}
+                                    />
+                                  ))}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="lane-mini-box">
+                        <div className="lane-mini-title">Team B</div>
+                        {teamBOrdered.map((p) => {
+                          const attemptsList = p.attempts_list ?? [];
+                          const successCount = attemptsList.filter((v) => v).length;
+                          const failCount = attemptsList.length - successCount;
+                          const useNumbers = Number(b.repetitions_target ?? 0) > 8;
+                          return (
+                            <div key={`mini-b-${p.id}`} className="lane-mini-row">
+                              <span className="lane-mini-name">
+                                {p.name}
+                                {laneMvpIds.includes(p.id) ? <span className="lane-mini-mvp">MVP</span> : null}
+                              </span>
+                              {useNumbers ? (
+                                <span className="lane-mini-counts">
+                                  {successCount}✓ {failCount}✕
+                                </span>
+                              ) : (
+                                <span className="lane-mini-dots">
+                                  {attemptsList.map((ok, idx) => (
+                                    <span
+                                      key={`b-${p.id}-${idx}`}
+                                      className={`lane-mini-dot ${ok ? "lane-mini-dot-good" : "lane-mini-dot-bad"}`}
+                                    />
+                                  ))}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="lane-board">
+                      <div className="lane-team lane-team-a">
+                        <div className="lane-team-header">Team A remaining: {teamARemaining}</div>
+                        {teamAOrdered.map((p) => {
+                          const assignedCats = getAssignedLaneCategories(assignments, p.id);
+                          const primaryCat = assignedCats[0] ?? "Category";
+                          const catLabel = assignedCats.length ? assignedCats.join(" + ") : "Category";
+                          const color = laneColor(primaryCat, laneCats);
+                          const attemptsList = p.attempts_list ?? [];
+                          const doneP = attemptsList.length >= b.repetitions_target;
+                          const remainingP = Math.max(0, Number(b.repetitions_target ?? 0) - attemptsList.length);
+                          const delta = pointsDeltaById.get(p.id) ?? 0;
+                          const beforePoints = p.points !== undefined && p.points !== null ? Number(p.points ?? 0) - delta : null;
+                          const pulseActive =
+                            laneSuccessPulse?.battleId === b.id &&
+                            laneSuccessPulse?.playerId === p.id &&
+                            Date.now() - laneSuccessPulse.at < 1400;
+                          const pool = buildLaneSkillPool(meta.category_skills, assignedCats);
+                          const skillPick = pool.length ? pool[attemptsList.length % pool.length] : null;
+                          const skillName = skillPick ? skillNameById.get(skillPick.skillId) ?? "Skill" : "No skill selected";
+                          return (
+                            <div
+                              key={p.id}
+                              className={`lane-player ${currentTurnId === p.id ? "lane-player-active" : ""}`}
+                              style={{ position: "relative" }}
+                            >
+                              {isSettled ? (
+                                <div style={netPointsOverlayContainer()}>
+                                  <div style={netPointsChangeChip(delta)}>
+                                    <span>{formatPointsValue(beforePoints)}</span>
+                                    <span>{delta >= 0 ? "▲" : "▼"}</span>
+                                    <span>{formatPointsValue(p.points)}</span>
+                                  </div>
+                                  <div style={netDeltaChip(delta)}>{formatNetDelta(delta)}</div>
+                                </div>
+                              ) : null}
+                              <div className="lane-player-header">
+                                <div className="lane-player-name">
+                                  {p.name}
+                                  {laneMvpIds.includes(p.id) ? <span className="lane-mvp-chip">MVP</span> : null}
+                                </div>
+                                <div className="lane-player-level">Lv {p.level ?? 0} • {p.points ?? 0} pts</div>
+                                <div className="lane-player-remaining">Remaining: {remainingP}</div>
+                              </div>
+                              {done && delta !== 0 ? (
+                                <div className={`lane-points-chip ${delta > 0 ? "lane-points-win" : "lane-points-loss"}`}>
+                                  <span className="lane-points-before">{beforePoints}</span>
+                                  <span className="lane-points-arrow">{delta > 0 ? "▲" : "▼"}</span>
+                                  <span className="lane-points-after">{p.points ?? 0}</span>
+                                </div>
+                              ) : null}
+                              <div className="lane-player-cat" style={{ color, borderColor: color }}>
+                                {catLabel}
+                              </div>
+                              <div className="lane-player-skill">Next: {skillName}</div>
+                              {done ? (
+                                <div
+                                  className="lane-player-points"
+                                  style={{
+                                    borderColor: (pointsDeltaById.get(p.id) ?? 0) >= 0 ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.5)",
+                                    background:
+                                      (pointsDeltaById.get(p.id) ?? 0) >= 0 ? "rgba(34,197,94,0.18)" : "rgba(239,68,68,0.18)",
+                                    color:
+                                      (pointsDeltaById.get(p.id) ?? 0) >= 0 ? "rgba(34,197,94,0.95)" : "rgba(239,68,68,0.95)",
+                                  }}
+                                >
+                                  {(pointsDeltaById.get(p.id) ?? 0) >= 0 ? "+" : ""}
+                                  {pointsDeltaById.get(p.id) ?? 0} pts
+                                </div>
+                              ) : null}
+                              {currentTurnId === p.id ? <div className="lane-turn">YOUR TURN</div> : null}
+                              <div className="lane-controls">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!doneP) logBattleAttempt(b.id, p.id, true);
+                                  }}
+                                  style={{ ...battleBtn("good", doneP), width: 40, height: 40, fontSize: 18 }}
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!doneP) logBattleAttempt(b.id, p.id, false);
+                                  }}
+                                  style={{ ...battleBtn("bad", doneP), width: 40, height: 40, fontSize: 18 }}
+                                >
+                                  ✕
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (attemptsList.length > 0) undoBattleAttempt(b.id, p.id);
+                                  }}
+                                  style={{ ...battleUndoBtn(attemptsList.length <= 0), width: 40, height: 40, fontSize: 16 }}
+                                  title="Undo"
+                                >
+                                  ↩
+                                </button>
+                              </div>
+                              <div
+                                className={`lane-connector ${pulseActive ? "lane-connector-active" : ""}`}
+                                style={{ background: color }}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="lane-middle">
+                        {(() => {
+                          const aCount = countFilled("a", teamAOrdered);
+                          return (
+                            <div className="lane-score lane-score-a">
+                              {aCount.filled}/{aCount.total}
+                            </div>
+                          );
+                        })()}
+                        {renderLaneRow("a", teamAOrdered)}
+                        {renderLaneRow("b", teamBOrdered)}
+                        {(() => {
+                          const bCount = countFilled("b", teamBOrdered);
+                          return (
+                            <div className="lane-score lane-score-b">
+                              {bCount.filled}/{bCount.total}
+                            </div>
+                          );
+                        })()}
+                        <div className="lane-remaining">
+                          Remaining reps: {Math.max(0, b.repetitions_target * (teamAOrdered.length + teamBOrdered.length) - (teamADone + teamBDone))}
+                        </div>
+                        {currentTurnPlayer ? (
+                          <div className="lane-current-turn">
+                            <div className="lane-current-name">{currentTurnPlayer.name}</div>
+                            <div className="lane-current-skill">{currentTurnSkill || "Skill"}</div>
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="lane-team lane-team-b">
+                        <div className="lane-team-header">Team B remaining: {teamBRemaining}</div>
+                        {teamBOrdered.map((p) => {
+                          const assignedCats = getAssignedLaneCategories(assignments, p.id);
+                          const primaryCat = assignedCats[0] ?? "Category";
+                          const catLabel = assignedCats.length ? assignedCats.join(" + ") : "Category";
+                          const color = laneColor(primaryCat, laneCats);
+                          const attemptsList = p.attempts_list ?? [];
+                          const doneP = attemptsList.length >= b.repetitions_target;
+                          const remainingP = Math.max(0, Number(b.repetitions_target ?? 0) - attemptsList.length);
+                          const delta = pointsDeltaById.get(p.id) ?? 0;
+                          const beforePoints = p.points !== undefined && p.points !== null ? Number(p.points ?? 0) - delta : null;
+                          const pulseActive =
+                            laneSuccessPulse?.battleId === b.id &&
+                            laneSuccessPulse?.playerId === p.id &&
+                            Date.now() - laneSuccessPulse.at < 1400;
+                          const pool = buildLaneSkillPool(meta.category_skills, assignedCats);
+                          const skillPick = pool.length ? pool[attemptsList.length % pool.length] : null;
+                          const skillName = skillPick ? skillNameById.get(skillPick.skillId) ?? "Skill" : "No skill selected";
+                          return (
+                            <div
+                              key={p.id}
+                              className={`lane-player ${currentTurnId === p.id ? "lane-player-active" : ""}`}
+                              style={{ position: "relative" }}
+                            >
+                              {isSettled ? (
+                                <div style={netPointsOverlayContainer()}>
+                                  <div style={netPointsChangeChip(delta)}>
+                                    <span>{formatPointsValue(beforePoints)}</span>
+                                    <span>{delta >= 0 ? "▲" : "▼"}</span>
+                                    <span>{formatPointsValue(p.points)}</span>
+                                  </div>
+                                  <div style={netDeltaChip(delta)}>{formatNetDelta(delta)}</div>
+                                </div>
+                              ) : null}
+                              <div className="lane-player-header">
+                                <div className="lane-player-name">
+                                  {p.name}
+                                  {laneMvpIds.includes(p.id) ? <span className="lane-mvp-chip">MVP</span> : null}
+                                </div>
+                                <div className="lane-player-level">Lv {p.level ?? 0} • {p.points ?? 0} pts</div>
+                                <div className="lane-player-remaining">Remaining: {remainingP}</div>
+                              </div>
+                              {done && delta !== 0 ? (
+                                <div className={`lane-points-chip ${delta > 0 ? "lane-points-win" : "lane-points-loss"}`}>
+                                  <span className="lane-points-before">{beforePoints}</span>
+                                  <span className="lane-points-arrow">{delta > 0 ? "▲" : "▼"}</span>
+                                  <span className="lane-points-after">{p.points ?? 0}</span>
+                                </div>
+                              ) : null}
+                              <div className="lane-player-cat" style={{ color, borderColor: color }}>
+                                {catLabel}
+                              </div>
+                              <div className="lane-player-skill">Next: {skillName}</div>
+                              {done ? (
+                                <div
+                                  className="lane-player-points"
+                                  style={{
+                                    borderColor: (pointsDeltaById.get(p.id) ?? 0) >= 0 ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.5)",
+                                    background:
+                                      (pointsDeltaById.get(p.id) ?? 0) >= 0 ? "rgba(34,197,94,0.18)" : "rgba(239,68,68,0.18)",
+                                    color:
+                                      (pointsDeltaById.get(p.id) ?? 0) >= 0 ? "rgba(34,197,94,0.95)" : "rgba(239,68,68,0.95)",
+                                  }}
+                                >
+                                  {(pointsDeltaById.get(p.id) ?? 0) >= 0 ? "+" : ""}
+                                  {pointsDeltaById.get(p.id) ?? 0} pts
+                                </div>
+                              ) : null}
+                              {currentTurnId === p.id ? <div className="lane-turn">YOUR TURN</div> : null}
+                              <div className="lane-controls">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!doneP) logBattleAttempt(b.id, p.id, true);
+                                  }}
+                                  style={{ ...battleBtn("good", doneP), width: 40, height: 40, fontSize: 18 }}
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!doneP) logBattleAttempt(b.id, p.id, false);
+                                  }}
+                                  style={{ ...battleBtn("bad", doneP), width: 40, height: 40, fontSize: 18 }}
+                                >
+                                  ✕
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (attemptsList.length > 0) undoBattleAttempt(b.id, p.id);
+                                  }}
+                                  style={{ ...battleUndoBtn(attemptsList.length <= 0), width: 40, height: 40, fontSize: 16 }}
+                                  title="Undo"
+                                >
+                                  ↩
+                                </button>
+                              </div>
+                              <div
+                                className={`lane-connector ${pulseActive ? "lane-connector-active" : ""}`}
+                                style={{ background: color }}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    {turnOrderNames ? <div className="lane-order">Turn order: {turnOrderNames}</div> : null}
+                  </div>
+                </div>
+              );
+            }
+            const teamBattleContent =
+              b.battle_mode === "teams" ? (
+                teamStats.length > 2 ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+                    {teamStats.map((team) => (
+                      <div key={team.key} style={{ display: "grid", gap: 10 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 6px" }}>
+                          <div style={{ fontWeight: 900, fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.7 }}>
+                            {team.label} total
+                          </div>
+                          {renderTeamScore(team.successes, team.potential)}
+                        </div>
+                        <div style={teamGroupWrap(team.key)}>
+                          {team.members.length ? (
+                            team.members.map((p) => {
+                              const attemptsList = p.attempts_list ?? [];
+                              const doneP = attemptsList.length >= b.repetitions_target;
+                              const stats = scoreFromParticipant(p);
+                              const histAttempts = p.history_attempts ?? 0;
+                              const histSuccesses = p.history_successes ?? 0;
+                              const histRate = p.history_rate ?? (histAttempts ? Math.round((histSuccesses / histAttempts) * 100) : 0);
+                              const hist30Attempts = p.history_last30_attempts ?? 0;
+                              const hist30Successes = p.history_last30_successes ?? 0;
+                              const hist30Rate = p.history_last30_rate ?? (hist30Attempts ? Math.round((hist30Successes / hist30Attempts) * 100) : 0);
+                              const delta = pointsDeltaById.get(p.id) ?? 0;
+                              return (
+                                <div
+                                  key={p.id}
+                                  style={{
+                                    ...teamMemberCard(team.key),
+                                    ...(currentTurnId === p.id ? turnHighlightCard(team.key) : null),
+                                    position: "relative",
+                                  }}
+                                >
+                                  <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                      {p.name}
+                                      {mvpIds.includes(p.id) ? <span style={mvpChip()}>MVP</span> : null}
+                                    </span>
+                                    <span style={{ fontSize: 11, opacity: 0.7 }}>
+                                      Lv {p.level ?? 0} • {p.points ?? 0} pts
+                                    </span>
+                                  </div>
+                                  {isSettled ? (
+                                    <div style={netPointsRow()}>
+                                      <div style={netPointsChangeChip(delta)}>
+                                        <span>{formatPointsValue((p.points ?? 0) - delta)}</span>
+                                        <span>{delta >= 0 ? "▲" : "▼"}</span>
+                                        <span>{formatPointsValue(p.points)}</span>
+                                      </div>
+                                      <div style={netDeltaChip(delta)}>{formatNetDelta(delta)}</div>
+                                    </div>
+                                  ) : null}
+                                  {currentTurnId === p.id ? <div style={turnBadge()}>YOUR TURN</div> : null}
+                                  <div style={{ fontSize: 11, opacity: 0.7 }}>{team.label}</div>
+                                  {renderBattleScore(stats.successesCount, stats.attemptsCount)}
+                                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                                    {Array.from({ length: b.repetitions_target }).map((_, i) => {
+                                      const filled = i < attemptsList.length;
+                                      const success = attemptsList[i] === true;
+                                      const bg = filled
+                                        ? success
+                                          ? "rgba(34,197,94,0.85)"
+                                          : "rgba(239,68,68,0.85)"
+                                        : "rgba(148,163,184,0.30)";
+                                      return (
+                                        <span
+                                          key={i}
+                                          style={{
+                                            width: 12,
+                                            height: 12,
+                                            borderRadius: 999,
+                                            background: bg,
+                                            border: "1px solid rgba(255,255,255,0.20)",
+                                          }}
+                                        />
+                                      );
+                                    })}
+                                  </div>
+                                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (!doneP) logBattleAttempt(b.id, p.id, true);
+                                      }}
+                                      style={{ ...battleBtn("good", doneP), width: 48, height: 48, fontSize: 20 }}
+                                    >
+                                      ✓
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (!doneP) logBattleAttempt(b.id, p.id, false);
+                                      }}
+                                      style={{ ...battleBtn("bad", doneP), width: 48, height: 48, fontSize: 20 }}
+                                    >
+                                      ✕
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (attemptsList.length > 0) undoBattleAttempt(b.id, p.id);
+                                      }}
+                                      style={{ ...battleUndoBtn(attemptsList.length <= 0), width: 48, height: 48, fontSize: 18 }}
+                                      title="Undo"
+                                    >
+                                      ↩
+                                    </button>
+                                  </div>
+                                  <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
+                                    History {histSuccesses}/{histAttempts} • {histRate}%
+                                    <div style={{ fontSize: 11, opacity: 0.7 }}>
+                                      30d {hist30Successes}/{hist30Attempts} • {hist30Rate}%
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div style={{ padding: 16, borderRadius: 14, border: "1px dashed rgba(255,255,255,0.2)", opacity: 0.6 }}>
+                              Empty {team.label}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 6px" }}>
+                      <div style={{ fontWeight: 900, fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.7 }}>
+                        Team A total
+                      </div>
+                      {renderTeamScore(teamASuccesses, teamAPotential)}
+                    </div>
+                    <div style={teamGroupWrap("a")}>
+                      {participants
+                        .filter((p) => teamAIds.includes(p.id))
+                        .map((p) => {
+                          const attemptsList = p.attempts_list ?? [];
+                          const doneP = attemptsList.length >= b.repetitions_target;
+                          const stats = scoreFromParticipant(p);
+                          const histAttempts = p.history_attempts ?? 0;
+                          const histSuccesses = p.history_successes ?? 0;
+                          const histRate = p.history_rate ?? (histAttempts ? Math.round((histSuccesses / histAttempts) * 100) : 0);
+                          const hist30Attempts = p.history_last30_attempts ?? 0;
+                          const hist30Successes = p.history_last30_successes ?? 0;
+                          const hist30Rate = p.history_last30_rate ?? (hist30Attempts ? Math.round((hist30Successes / hist30Attempts) * 100) : 0);
+                          const delta = pointsDeltaById.get(p.id) ?? 0;
+                          return (
+                            <div
+                              key={p.id}
+                              style={{
+                                ...teamMemberCard("a"),
+                                ...(currentTurnId === p.id ? turnHighlightCard("a") : null),
+                                position: "relative",
+                              }}
+                            >
+                              <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  {p.name}
+                                  {mvpIds.includes(p.id) ? <span style={mvpChip()}>MVP</span> : null}
+                                </span>
+                                <span style={{ fontSize: 11, opacity: 0.7 }}>
+                                  Lv {p.level ?? 0} • {p.points ?? 0} pts
+                                </span>
+                              </div>
+                              {isSettled ? (
+                                <div style={netPointsRow()}>
+                                  <div style={netPointsChangeChip(delta)}>
+                                    <span>{formatPointsValue((p.points ?? 0) - delta)}</span>
+                                    <span>{delta >= 0 ? "▲" : "▼"}</span>
+                                    <span>{formatPointsValue(p.points)}</span>
+                                  </div>
+                                  <div style={netDeltaChip(delta)}>{formatNetDelta(delta)}</div>
+                                </div>
+                              ) : null}
+                              {currentTurnId === p.id ? <div style={turnBadge()}>YOUR TURN</div> : null}
+                              <div style={{ fontSize: 11, opacity: 0.7 }}>Team A</div>
+                              {renderBattleScore(stats.successesCount, stats.attemptsCount)}
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                                {Array.from({ length: b.repetitions_target }).map((_, i) => {
+                                  const filled = i < attemptsList.length;
+                                  const success = attemptsList[i] === true;
+                                  const bg = filled
+                                    ? success
+                                      ? "rgba(34,197,94,0.85)"
+                                      : "rgba(239,68,68,0.85)"
+                                    : "rgba(148,163,184,0.30)";
+                                  return <span key={i} style={{ width: 12, height: 12, borderRadius: 999, background: bg, border: "1px solid rgba(255,255,255,0.20)" }} />;
+                                })}
+                              </div>
+                              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!doneP) logBattleAttempt(b.id, p.id, true);
+                                  }}
+                                  style={{ ...battleBtn("good", doneP), width: 48, height: 48, fontSize: 20 }}
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!doneP) logBattleAttempt(b.id, p.id, false);
+                                  }}
+                                  style={{ ...battleBtn("bad", doneP), width: 48, height: 48, fontSize: 20 }}
+                                >
+                                  ✕
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (attemptsList.length > 0) undoBattleAttempt(b.id, p.id);
+                                  }}
+                                  style={{ ...battleUndoBtn(attemptsList.length <= 0), width: 48, height: 48, fontSize: 18 }}
+                                  title="Undo"
+                                >
+                                  ↩
+                                </button>
+                              </div>
+                              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
+                                History {histSuccesses}/{histAttempts} • {histRate}%
+                                <div style={{ fontSize: 11, opacity: 0.7 }}>30d {hist30Successes}/{hist30Attempts} • {hist30Rate}%</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                    <div style={{ display: "grid", placeItems: "center" }}>
+                      <div className="battle-vs-glow">VS</div>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 6px" }}>
+                      <div style={{ fontWeight: 900, fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.7 }}>
+                        Team B total
+                      </div>
+                      {renderTeamScore(teamBSuccesses, teamBPotential)}
+                    </div>
+                    <div style={teamGroupWrap("b")}>
+                      {participants
+                        .filter((p) => teamBIds.includes(p.id))
+                        .map((p) => {
+                          const attemptsList = p.attempts_list ?? [];
+                          const doneP = attemptsList.length >= b.repetitions_target;
+                          const stats = scoreFromParticipant(p);
+                          const histAttempts = p.history_attempts ?? 0;
+                          const histSuccesses = p.history_successes ?? 0;
+                          const histRate = p.history_rate ?? (histAttempts ? Math.round((histSuccesses / histAttempts) * 100) : 0);
+                          const hist30Attempts = p.history_last30_attempts ?? 0;
+                          const hist30Successes = p.history_last30_successes ?? 0;
+                          const hist30Rate = p.history_last30_rate ?? (hist30Attempts ? Math.round((hist30Successes / hist30Attempts) * 100) : 0);
+                          const delta = pointsDeltaById.get(p.id) ?? 0;
+                          return (
+                            <div
+                              key={p.id}
+                              style={{
+                                ...teamMemberCard("b"),
+                                ...(currentTurnId === p.id ? turnHighlightCard("b") : null),
+                                position: "relative",
+                              }}
+                            >
+                              <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  {p.name}
+                                  {mvpIds.includes(p.id) ? <span style={mvpChip()}>MVP</span> : null}
+                                </span>
+                                <span style={{ fontSize: 11, opacity: 0.7 }}>
+                                  Lv {p.level ?? 0} • {p.points ?? 0} pts
+                                </span>
+                              </div>
+                              {isSettled ? (
+                                <div style={netPointsRow(true)}>
+                                  <div style={netPointsChangeChip(delta)}>
+                                    <span>{formatPointsValue((p.points ?? 0) - delta)}</span>
+                                    <span>{delta >= 0 ? "▲" : "▼"}</span>
+                                    <span>{formatPointsValue(p.points)}</span>
+                                  </div>
+                                  <div style={netDeltaChip(delta)}>{formatNetDelta(delta)}</div>
+                                </div>
+                              ) : null}
+                              {currentTurnId === p.id ? <div style={turnBadge()}>YOUR TURN</div> : null}
+                              <div style={{ fontSize: 11, opacity: 0.7 }}>Team B</div>
+                              {renderBattleScore(stats.successesCount, stats.attemptsCount)}
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                                {Array.from({ length: b.repetitions_target }).map((_, i) => {
+                                  const filled = i < attemptsList.length;
+                                  const success = attemptsList[i] === true;
+                                  const bg = filled
+                                    ? success
+                                      ? "rgba(34,197,94,0.85)"
+                                      : "rgba(239,68,68,0.85)"
+                                    : "rgba(148,163,184,0.30)";
+                                  return <span key={i} style={{ width: 12, height: 12, borderRadius: 999, background: bg, border: "1px solid rgba(255,255,255,0.20)" }} />;
+                                })}
+                              </div>
+                              <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!doneP) logBattleAttempt(b.id, p.id, true);
+                                  }}
+                                  style={{ ...battleBtn("good", doneP), width: 48, height: 48, fontSize: 20 }}
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!doneP) logBattleAttempt(b.id, p.id, false);
+                                  }}
+                                  style={{ ...battleBtn("bad", doneP), width: 48, height: 48, fontSize: 20 }}
+                                >
+                                  ✕
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (attemptsList.length > 0) undoBattleAttempt(b.id, p.id);
+                                  }}
+                                  style={{ ...battleUndoBtn(attemptsList.length <= 0), width: 48, height: 48, fontSize: 18 }}
+                                  title="Undo"
+                                >
+                                  ↩
+                                </button>
+                              </div>
+                              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
+                                History {histSuccesses}/{histAttempts} • {histRate}%
+                                <div style={{ fontSize: 11, opacity: 0.7 }}>30d {hist30Successes}/{hist30Attempts} • {hist30Rate}%</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </>
+                )
+              ) : null;
+            function renderBattleScore(successesCount: number, attemptsCount: number) {
               const remaining = Math.max(0, Number(b.repetitions_target ?? 0) - attemptsCount);
               const potential = successesCount + remaining;
               return (
@@ -1783,25 +3158,42 @@ export default function SkillTrackerPage() {
                   <div style={{ fontSize: 12, opacity: 0.7 }}>({potential})</div>
                 </div>
               );
-            };
-            const renderTeamScore = (successesCount: number, potentialCount: number) => (
-              <div style={{ display: "inline-flex", alignItems: "baseline", gap: 6, fontWeight: 1000 }}>
-                <div style={{ fontSize: 30, color: "rgba(34,197,94,0.95)", textShadow: "0 0 12px rgba(34,197,94,0.35)" }}>
-                  {successesCount}
+            }
+            function renderTeamScore(successesCount: number, potentialCount: number) {
+              return (
+                <div style={{ display: "inline-flex", alignItems: "baseline", gap: 6, fontWeight: 1000 }}>
+                  <div style={{ fontSize: 30, color: "rgba(34,197,94,0.95)", textShadow: "0 0 12px rgba(34,197,94,0.35)" }}>
+                    {successesCount}
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>({potentialCount})</div>
                 </div>
-                <div style={{ fontSize: 12, opacity: 0.7 }}>({potentialCount})</div>
-              </div>
-            );
-            const scoreFromParticipant = (p: BattleRow["participants"][number]) => {
+              );
+            }
+            function scoreFromParticipant(p: BattleRow["participants"][number]) {
               const attemptsCount = p.attempts_list?.length ?? (p.attempts ?? 0);
               const successesCount = typeof p.successes === "number" ? p.successes : p.attempts_list?.filter((v) => v).length ?? 0;
               return { attemptsCount, successesCount };
-            };
-            const teamWinnerLabel =
-              teamASuccesses > teamBSuccesses ? "Team A" : teamBSuccesses > teamASuccesses ? "Team B" : "No winner";
-            const teamWinnerIds = teamASuccesses > teamBSuccesses ? teamAIds : teamBSuccesses > teamASuccesses ? teamBIds : [];
+            }
+            const teamWinner = (() => {
+              if (battleMode !== "teams") {
+                return {
+                  label: teamASuccesses > teamBSuccesses ? "Team A" : teamBSuccesses > teamASuccesses ? "Team B" : "No winner",
+                  ids: teamASuccesses > teamBSuccesses ? teamAIds : teamBSuccesses > teamASuccesses ? teamBIds : [],
+                };
+              }
+              const sorted = [...teamStats].sort((a, b) => b.successes - a.successes);
+              if (sorted.length < 2 || sorted[0].successes === sorted[1].successes) return { label: "No winner", ids: [] as string[] };
+              return { label: sorted[0].label, ids: sorted[0].ids };
+            })();
+            const teamWinnerLabel = teamWinner.label;
+            const teamWinnerIds = teamWinner.ids;
             const perPersonEarned = (() => {
-              const lead = Math.abs(teamASuccesses - teamBSuccesses);
+              const lead = (() => {
+                if (battleMode !== "teams") return Math.abs(teamASuccesses - teamBSuccesses);
+                const sorted = [...teamStats].sort((a, b) => b.successes - a.successes);
+                if (sorted.length < 2 || sorted[0].successes === sorted[1].successes) return 0;
+                return sorted[0].successes - sorted[1].successes;
+              })();
               if (!lead || !teamWinnerIds.length) return 0;
               if (b.wager_amount > 0) {
                 const gross = Math.floor((Number(b.wager_amount ?? 0) * participants.length) / Math.max(1, teamWinnerIds.length));
@@ -1809,6 +3201,58 @@ export default function SkillTrackerPage() {
               }
               return Math.floor((lead * Math.max(3, Number(b.points_per_rep ?? 5))) / Math.max(1, teamWinnerIds.length));
             })();
+            const teamSummaryLine =
+              battleMode === "teams" && teamStats.length > 2
+                ? teamStats.map((team) => `${team.label} ${team.successes}✓ ${team.fails}✕`).join(" • ")
+                : `Team A ${teamASuccesses}✓ ${teamAFails}✕ • Team B ${teamBSuccesses}✓ ${teamBFails}✕`;
+            const flipCoinLegacy = () => {
+              if (battleMode === "teams" || battleMode === "lanes") {
+                const start = cryptoRand(2) === 0 ? "Team A" : "Team B";
+                setBattleCoinState((prev) => ({ ...prev, [b.id]: { label: `${start} starts`, at: Date.now() } }));
+                return;
+              }
+              if (participants.length) {
+                const pick = participants[cryptoRand(participants.length)];
+                const name = pick?.name ?? "Player";
+                setBattleCoinState((prev) => ({ ...prev, [b.id]: { label: `${name} starts`, at: Date.now() } }));
+              }
+            };
+            const pickTurnOrderLegacy = () => {
+              if (!participants.length) return;
+              if (battleMode === "ffa") {
+                const order = shuffleList(participants.map((p) => p.id));
+                setTurnOrderForBattle(b, "ffa", order, "Order set");
+                setBattleCoinState((prev) => ({ ...prev, [b.id]: { label: "Turn order set", at: Date.now() } }));
+                return;
+              }
+              if (battleMode === "teams" || battleMode === "lanes") {
+                const aOrder = shuffleList(teamAIds);
+                const bOrder = shuffleList(teamBIds);
+                const startTeam = cryptoRand(2) === 0 ? "a" : "b";
+                const order: string[] = [];
+                let ai = 0;
+                let bi = 0;
+                while (ai < aOrder.length || bi < bOrder.length) {
+                  if (startTeam === "a") {
+                    if (ai < aOrder.length) order.push(aOrder[ai++]);
+                    if (bi < bOrder.length) order.push(bOrder[bi++]);
+                  } else {
+                    if (bi < bOrder.length) order.push(bOrder[bi++]);
+                    if (ai < aOrder.length) order.push(aOrder[ai++]);
+                  }
+                }
+                setTurnOrderForBattle(
+                  b,
+                  "teams",
+                  order,
+                  `${startTeam === "a" ? "Team A" : "Team B"} starts`
+                );
+                setBattleCoinState((prev) => ({
+                  ...prev,
+                  [b.id]: { label: `${startTeam === "a" ? "Team A" : "Team B"} starts`, at: Date.now() },
+                }));
+              }
+            };
             if (!pointsDeltaById.size && done && b.battle_mode === "ffa" && b.wager_amount > 0) {
               const wager = Number(b.wager_amount ?? 0);
               const ranked = participants
@@ -1856,6 +3300,7 @@ export default function SkillTrackerPage() {
                   <div style={{ fontWeight: 1000, fontSize: 18, textAlign: "center" }}>
                     {b.battle_mode === "teams" ? "TEAM BATTLE PULSE" : "FREE-FOR-ALL BATTLE PULSE"}
                   </div>
+                  <div style={{ textAlign: "center", fontSize: 11, opacity: 0.6 }}>ID: {b.id}</div>
                   <div style={{ textAlign: "center", fontSize: 12, opacity: 0.8 }}>
                     {b.skill_name} • Reps {b.repetitions_target}
                     {b.wager_amount > 0
@@ -1863,16 +3308,70 @@ export default function SkillTrackerPage() {
                           const pool = b.wager_amount * participants.length;
                           const winnerCount =
                             b.battle_mode === "teams"
-                              ? Math.max(1, (b.team_a_ids ?? []).length || Math.floor(participants.length / 2))
+                              ? Math.max(1, teamWinnerIds.length || Math.floor(participants.length / Math.max(1, teamGroups.length || 2)))
                               : 1;
                           const perWinnerGross = Math.floor(pool / winnerCount);
                           const perWinnerNet = Math.max(0, perWinnerGross - b.wager_amount);
                           return ` • Wager ${b.wager_amount} pts each • Net +${perWinnerNet} pts per winner • Losers -${b.wager_amount} pts`;
                         })()
                       : b.battle_mode === "teams"
-                        ? ` • Winner: ${teamWinnerLabel} • Team A ${teamASuccesses}✓ ${teamAFails}✕ • Team B ${teamBSuccesses}✓ ${teamBFails}✕${perPersonEarned ? ` • +${perPersonEarned} pts per person` : ""}`
+                        ? ` • Winner: ${teamWinnerLabel} • ${teamSummaryLine}${perPersonEarned ? ` • +${perPersonEarned} pts per person` : ""}`
                         : ` • +${b.points_per_rep ?? 5} pts per rep lead`}
                   </div>
+                  <div style={{ textAlign: "center", fontSize: 11, opacity: 0.55 }}>
+                    Points delta: {pointsDeltaSummary || "—"}
+                  </div>
+                  {!isTabletMode ? (
+                    <details style={debugDetails()}>
+                      <summary style={debugSummary()}>Debug</summary>
+                      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
+                        <button onClick={() => settleBattle(b.id)} style={debugBtn()}>
+                          Force settle
+                        </button>
+                      </div>
+                      <pre style={debugPre()}>
+                        {JSON.stringify(
+                          {
+                            id: b.id,
+                            battle_mode: b.battle_mode,
+                            repetitions_target: b.repetitions_target,
+                            wager_amount: b.wager_amount,
+                            points_per_rep: b.points_per_rep,
+                            settled_at: b.settled_at,
+                            winner_id: b.winner_id,
+                            team_a_ids: teamAIds,
+                            team_b_ids: teamBIds,
+                            participant_ids: participants.map((p) => p.id),
+                            participant_stats: participants.map((p) => ({
+                              id: p.id,
+                              name: p.name,
+                              attempts: p.attempts,
+                              successes: p.successes,
+                            })),
+                            mvp_ids: mvpIds,
+                            points_delta_by_id: Object.fromEntries(pointsDeltaById.entries()),
+                          },
+                          null,
+                          2
+                        )}
+                      </pre>
+                    </details>
+                  ) : null}
+                  <div className="battle-turn-controls">
+                    <button type="button" className="battle-coin-btn" onClick={flipCoin}>
+                      COIN FLIP
+                    </button>
+                    <button type="button" className="battle-order-btn" onClick={pickTurnOrder}>
+                      HELP ME PICK THE ORDER
+                    </button>
+                    {turnState?.order?.length ? (
+                      <button type="button" className="battle-order-btn" onClick={() => nextBattleTurn(b.id)}>
+                        NEXT TURN
+                      </button>
+                    ) : null}
+                    {coinLabel ? <div className="battle-coin-result">{coinLabel}</div> : null}
+                  </div>
+                  {turnOrderNames ? <div className="battle-turn-order">Turn order: {turnOrderNames}</div> : null}
                   {!done && liveWinnerLabel ? (
                     <div
                       style={{
@@ -1899,167 +3398,7 @@ export default function SkillTrackerPage() {
                     }}
                   >
                     {b.battle_mode === "teams" ? (
-                      <>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 6px" }}>
-                          <div style={{ fontWeight: 900, fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.7 }}>
-                            Team A total
-                          </div>
-                          {renderTeamScore(teamASuccesses, teamAPotential)}
-                        </div>
-                        <div style={teamGroupWrap("a")}>
-                          {participants
-                            .filter((p) => teamAIds.includes(p.id))
-                            .map((p) => {
-                              const attemptsList = p.attempts_list ?? [];
-                              const doneP = attemptsList.length >= b.repetitions_target;
-                              const stats = scoreFromParticipant(p);
-                              const histAttempts = p.history_attempts ?? 0;
-                              const histSuccesses = p.history_successes ?? 0;
-                              const histRate = p.history_rate ?? (histAttempts ? Math.round((histSuccesses / histAttempts) * 100) : 0);
-                              const hist30Attempts = p.history_last30_attempts ?? 0;
-                              const hist30Successes = p.history_last30_successes ?? 0;
-                              const hist30Rate = p.history_last30_rate ?? (hist30Attempts ? Math.round((hist30Successes / hist30Attempts) * 100) : 0);
-                              return (
-                                <div key={p.id} style={teamMemberCard("a")}>
-                                  <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", justifyContent: "space-between", gap: 8 }}>
-                                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                      {p.name}
-                                      {mvpIds.includes(p.id) ? <span style={mvpChip()}>MVP</span> : null}
-                                    </span>
-                                    <span style={{ fontSize: 11, opacity: 0.7 }}>
-                                      Lv {p.level ?? 0} • {p.points ?? 0} pts
-                                    </span>
-                                  </div>
-                                  <div style={{ fontSize: 11, opacity: 0.7 }}>Team A</div>
-                                  {renderBattleScore(stats.successesCount, stats.attemptsCount)}
-                                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-                                    {Array.from({ length: b.repetitions_target }).map((_, i) => {
-                                      const filled = i < attemptsList.length;
-                                      const success = attemptsList[i] === true;
-                                      const bg = filled ? (success ? "rgba(34,197,94,0.85)" : "rgba(239,68,68,0.85)") : "rgba(148,163,184,0.30)";
-                                      return <span key={i} style={{ width: 12, height: 12, borderRadius: 999, background: bg, border: "1px solid rgba(255,255,255,0.20)" }} />;
-                                    })}
-                                  </div>
-                                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (!doneP) logBattleAttempt(b.id, p.id, true);
-                                      }}
-                                      style={{ ...battleBtn("good", doneP), width: 48, height: 48, fontSize: 20 }}
-                                    >
-                                      ✓
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (!doneP) logBattleAttempt(b.id, p.id, false);
-                                      }}
-                                      style={{ ...battleBtn("bad", doneP), width: 48, height: 48, fontSize: 20 }}
-                                    >
-                                      ✕
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (attemptsList.length > 0) undoBattleAttempt(b.id, p.id);
-                                      }}
-                                      style={{ ...battleUndoBtn(attemptsList.length <= 0), width: 48, height: 48, fontSize: 18 }}
-                                      title="Undo"
-                                    >
-                                      ↩
-                                    </button>
-                                  </div>
-                                  <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
-                                    History {histSuccesses}/{histAttempts} • {histRate}%
-                                    <div style={{ fontSize: 11, opacity: 0.7 }}>30d {hist30Successes}/{hist30Attempts} • {hist30Rate}%</div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                        </div>
-                        <div style={{ display: "grid", placeItems: "center" }}>
-                          <div className="battle-vs-glow">VS</div>
-                        </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 6px" }}>
-                          <div style={{ fontWeight: 900, fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", opacity: 0.7 }}>
-                            Team B total
-                          </div>
-                          {renderTeamScore(teamBSuccesses, teamBPotential)}
-                        </div>
-                        <div style={teamGroupWrap("b")}>
-                          {participants
-                            .filter((p) => teamBIds.includes(p.id))
-                            .map((p) => {
-                              const attemptsList = p.attempts_list ?? [];
-                              const doneP = attemptsList.length >= b.repetitions_target;
-                              const stats = scoreFromParticipant(p);
-                              const histAttempts = p.history_attempts ?? 0;
-                              const histSuccesses = p.history_successes ?? 0;
-                              const histRate = p.history_rate ?? (histAttempts ? Math.round((histSuccesses / histAttempts) * 100) : 0);
-                              const hist30Attempts = p.history_last30_attempts ?? 0;
-                              const hist30Successes = p.history_last30_successes ?? 0;
-                              const hist30Rate = p.history_last30_rate ?? (hist30Attempts ? Math.round((hist30Successes / hist30Attempts) * 100) : 0);
-                              return (
-                                <div key={p.id} style={teamMemberCard("b")}>
-                                  <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", justifyContent: "space-between", gap: 8 }}>
-                                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                      {p.name}
-                                      {mvpIds.includes(p.id) ? <span style={mvpChip()}>MVP</span> : null}
-                                    </span>
-                                    <span style={{ fontSize: 11, opacity: 0.7 }}>
-                                      Lv {p.level ?? 0} • {p.points ?? 0} pts
-                                    </span>
-                                  </div>
-                                  <div style={{ fontSize: 11, opacity: 0.7 }}>Team B</div>
-                                  {renderBattleScore(stats.successesCount, stats.attemptsCount)}
-                                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-                                    {Array.from({ length: b.repetitions_target }).map((_, i) => {
-                                      const filled = i < attemptsList.length;
-                                      const success = attemptsList[i] === true;
-                                      const bg = filled ? (success ? "rgba(34,197,94,0.85)" : "rgba(239,68,68,0.85)") : "rgba(148,163,184,0.30)";
-                                      return <span key={i} style={{ width: 12, height: 12, borderRadius: 999, background: bg, border: "1px solid rgba(255,255,255,0.20)" }} />;
-                                    })}
-                                  </div>
-                                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (!doneP) logBattleAttempt(b.id, p.id, true);
-                                      }}
-                                      style={{ ...battleBtn("good", doneP), width: 48, height: 48, fontSize: 20 }}
-                                    >
-                                      ✓
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (!doneP) logBattleAttempt(b.id, p.id, false);
-                                      }}
-                                      style={{ ...battleBtn("bad", doneP), width: 48, height: 48, fontSize: 20 }}
-                                    >
-                                      ✕
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (attemptsList.length > 0) undoBattleAttempt(b.id, p.id);
-                                      }}
-                                      style={{ ...battleUndoBtn(attemptsList.length <= 0), width: 48, height: 48, fontSize: 18 }}
-                                      title="Undo"
-                                    >
-                                      ↩
-                                    </button>
-                                  </div>
-                                  <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
-                                    History {histSuccesses}/{histAttempts} • {histRate}%
-                                    <div style={{ fontSize: 11, opacity: 0.7 }}>30d {hist30Successes}/{hist30Attempts} • {hist30Rate}%</div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                        </div>
-                      </>
+                      teamBattleContent
                     ) : b.battle_mode === "ffa" ? (
                       <div className="ffa-grid">
                         <div
@@ -2174,13 +3513,14 @@ export default function SkillTrackerPage() {
                             const hist30Rate = p.history_last30_rate ?? (hist30Attempts ? Math.round((hist30Successes / hist30Attempts) * 100) : 0);
                             const delta = pointsDeltaById.get(p.id) ?? 0;
                             return (
-                              <div key={p.id} className="ffa-card">
+                              <div key={p.id} className="ffa-card" style={currentTurnId === p.id ? turnHighlightCard("ffa") : undefined}>
                                 <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", justifyContent: "space-between" }}>
                                   <span>{p.name}</span>
                                   <span style={{ fontSize: 11, opacity: 0.7 }}>
                                     Lv {p.level ?? 0} • {p.points ?? 0} pts
                                   </span>
                                 </div>
+                                {currentTurnId === p.id ? <div style={turnBadge()}>YOUR TURN</div> : null}
                                 {renderBattleScore(stats.successesCount, stats.attemptsCount)}
                                 {done && delta !== 0 ? (
                                   <div
@@ -2252,6 +3592,7 @@ export default function SkillTrackerPage() {
                       participants.map((p) => {
                       const attemptsList = p.attempts_list ?? [];
                       const doneP = attemptsList.length >= b.repetitions_target;
+                      const isSettled = Boolean(b.settled_at);
                       const stats = scoreFromParticipant(p);
                       const histAttempts = p.history_attempts ?? 0;
                       const histSuccesses = p.history_successes ?? 0;
@@ -2261,13 +3602,34 @@ export default function SkillTrackerPage() {
                       const hist30Rate = p.history_last30_rate ?? (hist30Attempts ? Math.round((hist30Successes / hist30Attempts) * 100) : 0);
                       const delta = pointsDeltaById.get(p.id) ?? 0;
                       return (
-                        <div key={p.id} style={{ padding: 12, borderRadius: 18, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(2,6,23,0.55)" }}>
+                        <div
+                          key={p.id}
+                          style={{
+                            position: "relative",
+                            padding: 12,
+                            borderRadius: 18,
+                            border: "1px solid rgba(255,255,255,0.14)",
+                            background: "rgba(2,6,23,0.55)",
+                            ...(currentTurnId === p.id ? turnHighlightCard("ffa") : null),
+                          }}
+                        >
+                          {isSettled ? (
+                            <div style={netPointsOverlayContainer()}>
+                              <div style={netPointsChangeChip(delta)}>
+                                <span>{formatPointsValue((p.points ?? 0) - delta)}</span>
+                                <span>{delta >= 0 ? "▲" : "▼"}</span>
+                                <span>{formatPointsValue(p.points)}</span>
+                              </div>
+                              <div style={netDeltaChip(delta)}>{formatNetDelta(delta)}</div>
+                            </div>
+                          ) : null}
                           <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", justifyContent: "space-between" }}>
                             <span>{p.name}</span>
                             <span style={{ fontSize: 11, opacity: 0.7 }}>
                               Lv {p.level ?? 0} • {p.points ?? 0} pts
                             </span>
                           </div>
+                          {currentTurnId === p.id ? <div style={turnBadge()}>YOUR TURN</div> : null}
                           {renderBattleScore(stats.successesCount, stats.attemptsCount)}
                           {done && delta !== 0 ? (
                             <div
@@ -2340,9 +3702,8 @@ export default function SkillTrackerPage() {
                     <div style={battleCompletedOverlay()}>
                       <div>Completed</div>
                       {b.battle_mode === "teams" ? (
-                        <div style={{ fontSize: 14, fontWeight: 900 }}>
-                          {teamWinnerLabel === "No winner" ? "No winner" : `Winner: ${teamWinnerLabel}`}
-                          {perPersonEarned ? ` • +${perPersonEarned} pts per person` : ""}
+                        <div style={{ fontSize: 28, fontWeight: 1000 }}>
+                          {teamWinnerLabel === "No winner" ? "Tie Game" : `Winner: ${teamWinnerLabel}`}
                         </div>
                       ) : b.battle_mode === "ffa" && b.winner_id ? (
                         <>
@@ -2357,10 +3718,10 @@ export default function SkillTrackerPage() {
                           </div>
                         </>
                       ) : (
-                        <div style={{ fontSize: 14, fontWeight: 900 }}>
+                        <div style={{ fontSize: 28, fontWeight: 1000 }}>
                           {b.winner_id
                             ? `Winner: ${participants.find((p) => p.id === b.winner_id)?.name ?? "Winner"}`
-                            : "No winner"}
+                            : "Tie Game"}
                         </div>
                       )}
                     </div>
@@ -2380,6 +3741,7 @@ export default function SkillTrackerPage() {
           const leftDone = leftList.length >= b.repetitions_target;
           const rightDone = rightList.length >= b.repetitions_target;
           const done = leftDone && rightDone;
+          const isSettled = Boolean(b.settled_at);
           const flashType = flash?.id === b.id ? flash.type : null;
           const leftHistAttempts = b.left_history_attempts ?? 0;
           const rightHistAttempts = b.right_history_attempts ?? 0;
@@ -2391,12 +3753,45 @@ export default function SkillTrackerPage() {
           const rightHistLabel = rightHistAttempts ? `${rightHistSuccesses}/${rightHistAttempts} • ${rightHistRate}%` : "0/0 • 0%";
           const leftHist30Attempts = b.left_history_last30_attempts ?? 0;
           const rightHist30Attempts = b.right_history_last30_attempts ?? 0;
+          const duelPointsDeltaById = new Map<string, number>(
+            Object.entries(b.points_delta_by_id ?? {}).map(([key, value]) => [String(key), Number(value)])
+          );
+          const leftDelta = duelPointsDeltaById.get(b.left_student_id) ?? 0;
+          const rightDelta = duelPointsDeltaById.get(b.right_student_id) ?? 0;
           const leftHist30Successes = b.left_history_last30_successes ?? 0;
           const rightHist30Successes = b.right_history_last30_successes ?? 0;
           const leftHist30Rate = b.left_history_last30_rate ?? (leftHist30Attempts ? Math.round((leftHist30Successes / leftHist30Attempts) * 100) : 0);
           const rightHist30Rate = b.right_history_last30_rate ?? (rightHist30Attempts ? Math.round((rightHist30Successes / rightHist30Attempts) * 100) : 0);
           const leftHist30Label = leftHist30Attempts ? `${leftHist30Successes}/${leftHist30Attempts} • ${leftHist30Rate}%` : "0/0 • 0%";
           const rightHist30Label = rightHist30Attempts ? `${rightHist30Successes}/${rightHist30Attempts} • ${rightHist30Rate}%` : "0/0 • 0%";
+          const turnState = battleTurnState[b.id];
+          const currentTurnId = turnState?.order?.[turnState.index] ?? "";
+          const coinLabel = battleCoinState[b.id]?.label ?? "";
+          const duelParticipants = [
+            { id: b.left_student_id, name: b.left_name },
+            { id: b.right_student_id, name: b.right_name },
+          ];
+          const turnOrderNames = (turnState?.order ?? [])
+            .map((id) => duelParticipants.find((p) => p.id === id)?.name ?? "Student")
+            .join(" → ");
+          const flipCoin = () => {
+            const pick = cryptoRand(2) === 0 ? duelParticipants[0] : duelParticipants[1];
+            const label = `${pick?.name ?? "Player"} starts`;
+            setBattleCoinState((prev) => ({ ...prev, [b.id]: { label, at: Date.now() } }));
+            setTurnOrderForBattle(
+              b,
+              "duel",
+              pick?.id ? [pick.id, duelParticipants.find((p) => p.id !== pick.id)?.id ?? pick.id] : [],
+              label
+            );
+          };
+          const pickTurnOrder = () => {
+            const order = shuffleList(duelParticipants.map((p) => p.id));
+            const firstName = duelParticipants.find((p) => p.id === order[0])?.name ?? "Player";
+            const label = `${firstName} starts`;
+            setTurnOrderForBattle(b, "duel", order, label);
+            setBattleCoinState((prev) => ({ ...prev, [b.id]: { label, at: Date.now() } }));
+          };
           return (
             <div key={b.id} style={{ ...battleCard(flashType, done), gridColumn: "1 / -1" }} onClick={() => null}>
               {battleCreateId === b.id ? (
@@ -2431,6 +3826,17 @@ export default function SkillTrackerPage() {
                   <div style={{ fontWeight: 1000, fontSize: 24, textShadow: "0 0 16px rgba(59,130,246,0.35)" }}>
                     {b.left_name} <span style={{ fontSize: 13, opacity: 0.75 }}>Lv {b.left_level ?? 0} • {b.left_points ?? 0} pts</span>
                   </div>
+                  {isSettled ? (
+                    <div style={netPointsRow()}>
+                      <div style={netPointsChangeChip(leftDelta)}>
+                        <span>{formatPointsValue((b.left_points ?? 0) - leftDelta)}</span>
+                        <span>{leftDelta >= 0 ? "▲" : "▼"}</span>
+                        <span>{formatPointsValue(b.left_points)}</span>
+                      </div>
+                      <div style={netDeltaChip(leftDelta)}>{formatNetDelta(leftDelta)}</div>
+                    </div>
+                  ) : null}
+                  {currentTurnId === b.left_student_id ? <div style={turnBadge()}>YOUR TURN</div> : null}
                   <div style={{ display: "inline-flex", alignItems: "baseline", gap: 6, fontWeight: 1000 }}>
                     <div style={{ fontSize: 30, color: "rgba(34,197,94,0.95)", textShadow: "0 0 12px rgba(34,197,94,0.35)" }}>
                       {leftSuccesses}
@@ -2536,6 +3942,21 @@ export default function SkillTrackerPage() {
                     <div className="battle-vs-glow">
                       <span className="battle-vs-icon">⚔️</span> VS <span className="battle-vs-icon">⚔️</span>
                     </div>
+                    <div className="battle-turn-controls">
+                      <button type="button" className="battle-coin-btn" onClick={flipCoin}>
+                        COIN FLIP
+                      </button>
+                      <button type="button" className="battle-order-btn" onClick={pickTurnOrder}>
+                        HELP ME PICK THE ORDER
+                      </button>
+                      {turnState?.order?.length ? (
+                        <button type="button" className="battle-order-btn" onClick={() => nextBattleTurn(b.id)}>
+                          NEXT TURN
+                        </button>
+                      ) : null}
+                    </div>
+                    {coinLabel ? <div className="battle-coin-result">{coinLabel}</div> : null}
+                    {turnOrderNames ? <div className="battle-turn-order">Turn order: {turnOrderNames}</div> : null}
                   </div>
                 </div>
 
@@ -2543,6 +3964,17 @@ export default function SkillTrackerPage() {
                   <div style={{ fontWeight: 1000, fontSize: 24, textShadow: "0 0 16px rgba(239,68,68,0.35)" }}>
                     {b.right_name} <span style={{ fontSize: 13, opacity: 0.75 }}>Lv {b.right_level ?? 0} • {b.right_points ?? 0} pts</span>
                   </div>
+                  {isSettled ? (
+                    <div style={netPointsRow(true)}>
+                      <div style={netPointsChangeChip(rightDelta)}>
+                        <span>{formatPointsValue((b.right_points ?? 0) - rightDelta)}</span>
+                        <span>{rightDelta >= 0 ? "▲" : "▼"}</span>
+                        <span>{formatPointsValue(b.right_points)}</span>
+                      </div>
+                      <div style={netDeltaChip(rightDelta)}>{formatNetDelta(rightDelta)}</div>
+                    </div>
+                  ) : null}
+                  {currentTurnId === b.right_student_id ? <div style={turnBadge()}>YOUR TURN</div> : null}
                   <div style={{ display: "inline-flex", alignItems: "baseline", gap: 6, fontWeight: 1000 }}>
                     <div style={{ fontSize: 30, color: "rgba(34,197,94,0.95)", textShadow: "0 0 12px rgba(34,197,94,0.35)" }}>
                       {rightSuccesses}
@@ -2607,10 +4039,10 @@ export default function SkillTrackerPage() {
                 {done ? (
                   <div style={battleCompletedOverlay()}>
                     <div>Completed</div>
-                    <div style={{ fontSize: 14, fontWeight: 900 }}>
+                    <div style={{ fontSize: 28, fontWeight: 1000 }}>
                       {b.winner_id
                         ? `Winner: ${b.winner_id === b.left_student_id ? b.left_name : b.winner_id === b.right_student_id ? b.right_name : "Winner"}`
-                        : "No winner"}
+                        : "Tie Game"}
                     </div>
                   </div>
                 ) : null}
@@ -3214,7 +4646,7 @@ export default function SkillTrackerPage() {
                         }}
                         style={suggestItem()}
                       >
-                        {s.name}
+                        {renderStudentSuggestion(s)}
                       </button>
                     ))}
                   </div>
@@ -3422,7 +4854,7 @@ export default function SkillTrackerPage() {
                         }}
                         style={suggestItem()}
                       >
-                        {s.name}
+                        {renderStudentSuggestion(s)}
                       </button>
                     ))}
                   </div>
@@ -3514,6 +4946,14 @@ export default function SkillTrackerPage() {
                 onChange={(e) => setClearCompleted(e.target.checked)}
               />
               Clear completed trackers
+            </label>
+            <label style={clearOption()}>
+              <input
+                type="checkbox"
+                checked={clearCompletedBattles}
+                onChange={(e) => setClearCompletedBattles(e.target.checked)}
+              />
+              Clear completed battle trackers only
             </label>
             <label style={clearOption()}>
               <input
@@ -3819,8 +5259,8 @@ export default function SkillTrackerPage() {
       )}
 
       {battleOpen && (
-        <Overlay title="Battle Pulse" onClose={() => setBattleOpen(false)}>
-          <div style={{ display: "grid", gap: 12 }}>
+        <OverlayWide title="Battle Pulse" onClose={() => setBattleOpen(false)}>
+          <div style={{ display: "grid", gap: 12, fontSize: 14 }}>
             {battleIntroOpen ? (
               <div className="battle-open-intro">
                 <div className="battle-open-glow" />
@@ -3840,6 +5280,9 @@ export default function SkillTrackerPage() {
                 </button>
                 <button onClick={() => setBattleMode("teams")} style={modeBtn(battleMode === "teams")}>
                   Teams
+                </button>
+                <button onClick={() => setBattleMode("lanes")} style={modeBtn(battleMode === "lanes")}>
+                  Skill Lanes
                 </button>
               </div>
               <div style={{ fontSize: 12, opacity: 0.7 }}>
@@ -3885,7 +5328,7 @@ export default function SkillTrackerPage() {
                             }}
                             style={suggestItem()}
                           >
-                            {s.name}
+                            {renderStudentSuggestion(s)}
                           </button>
                         ))}
                       </div>
@@ -3928,7 +5371,7 @@ export default function SkillTrackerPage() {
                             }}
                             style={suggestItem()}
                           >
-                            {s.name}
+                            {renderStudentSuggestion(s)}
                           </button>
                         ))}
                       </div>
@@ -3966,7 +5409,7 @@ export default function SkillTrackerPage() {
                           }}
                           style={suggestItem()}
                         >
-                          {s.name}
+                          {renderStudentSuggestion(s)}
                         </button>
                       ))}
                     </div>
@@ -3986,8 +5429,276 @@ export default function SkillTrackerPage() {
                   })}
                 </div>
               </div>
+            ) : battleMode === "lanes" ? (
+              <div style={{ display: "grid", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={formLabel()}>Team A (min 2)</div>
+                    <div style={{ position: "relative" }}>
+                      <input
+                        value={battleTeamAQuery}
+                        onChange={(e) => setBattleTeamAQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          const suggestion = studentSuggestions(battleTeamAQuery, battleTeamTakenIds);
+                          if (suggestion[0]) {
+                            addBattleTeamMember("a", suggestion[0].id);
+                            setBattleTeamAQuery("");
+                          }
+                        }}
+                        placeholder="Add team A student"
+                        style={select()}
+                      />
+                      {showBattleTeamASuggestions ? (
+                        <div style={suggestBox()}>
+                          {battleTeamASuggestions.map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => {
+                                addBattleTeamMember("a", s.id);
+                                setBattleTeamAQuery("");
+                              }}
+                              style={suggestItem()}
+                            >
+                              {renderStudentSuggestion(s)}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {battleTeamAIds.map((id) => {
+                        const s = students.find((x) => x.id === id);
+                        return (
+                          <span key={id} style={chip()}>
+                            {s?.name ?? "Student"}
+                            <button onClick={() => removeBattleTeamMember("a", id)} style={chipX()}>
+                              ✕
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={formLabel()}>Team B (min 2)</div>
+                    <div style={{ position: "relative" }}>
+                      <input
+                        value={battleTeamBQuery}
+                        onChange={(e) => setBattleTeamBQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          const suggestion = studentSuggestions(battleTeamBQuery, battleTeamTakenIds);
+                          if (suggestion[0]) {
+                            addBattleTeamMember("b", suggestion[0].id);
+                            setBattleTeamBQuery("");
+                          }
+                        }}
+                        placeholder="Add team B student"
+                        style={select()}
+                      />
+                      {showBattleTeamBSuggestions ? (
+                        <div style={suggestBox()}>
+                          {battleTeamBSuggestions.map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => {
+                                addBattleTeamMember("b", s.id);
+                                setBattleTeamBQuery("");
+                              }}
+                              style={suggestItem()}
+                            >
+                              {renderStudentSuggestion(s)}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {battleTeamBIds.map((id) => {
+                        const s = students.find((x) => x.id === id);
+                        return (
+                          <span key={id} style={chip()}>
+                            {s?.name ?? "Student"}
+                            <button onClick={() => removeBattleTeamMember("b", id)} style={chipX()}>
+                              ✕
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={formLabel()}>Skill Lanes Categories (min 1)</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {skillsByCategory.map(([cat]) => {
+                      const active = battleLaneCategories.includes(cat);
+                      return (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() =>
+                            setBattleLaneCategories((prev) => {
+                              if (prev.includes(cat)) {
+                                setBattleLaneSkills((skills) => {
+                                  const copy = { ...skills };
+                                  delete copy[cat];
+                                  return copy;
+                                });
+                                setBattleLaneAssignments((assignments) => {
+                                  const next: Record<string, string[]> = {};
+                                  Object.entries(assignments).forEach(([id, list]) => {
+                                    const cleaned = normalizeLaneCategoryList(list).filter((entry) => entry !== cat);
+                                    if (cleaned.length) next[id] = cleaned;
+                                  });
+                                  return next;
+                                });
+                                return prev.filter((c) => c !== cat);
+                              }
+                              return [...prev, cat];
+                            })
+                          }
+                          style={chip(active)}
+                        >
+                          {cat}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={formLabel()}>Assign Categories Per Player (multi-select)</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    {(["a", "b"] as const).map((teamKey) => {
+                      const teamIds = teamKey === "a" ? battleTeamAIds : battleTeamBIds;
+                      return (
+                        <div
+                          key={teamKey}
+                          style={{
+                            display: "grid",
+                            gap: 8,
+                            padding: 10,
+                            borderRadius: 12,
+                            border: "1px solid rgba(255,255,255,0.12)",
+                            background: "rgba(2,6,23,0.45)",
+                          }}
+                        >
+                          <div style={{ fontWeight: 900, fontSize: 12, letterSpacing: "0.14em", textTransform: "uppercase", opacity: 0.75 }}>
+                            Team {teamKey === "a" ? "A" : "B"}
+                          </div>
+                          <div style={{ display: "grid", gap: 8 }}>
+                            {teamIds.map((id) => {
+                              const s = students.find((x) => x.id === id);
+                              const selected = getAssignedLaneCategories(battleLaneAssignments, id);
+                              return (
+                                <div key={id} style={{ display: "grid", gap: 6 }}>
+                                  <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.85 }}>
+                                    {s?.name ?? "Student"}
+                                  </div>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                    {battleLaneCategories.map((cat) => {
+                                      const active = selected.includes(cat);
+                                      const allowed = canAssignLaneCategory(teamIds, id, cat);
+                                      const color = laneColor(cat, battleLaneCategories);
+                                      return (
+                                        <button
+                                          key={cat}
+                                          type="button"
+                                          onClick={() => {
+                                            if (!allowed) return;
+                                            setBattleLaneAssignments((prev) => {
+                                              const current = getAssignedLaneCategories(prev, id);
+                                              const next = current.includes(cat)
+                                                ? current.filter((entry) => entry !== cat)
+                                                : [...current, cat];
+                                              return { ...prev, [id]: next };
+                                            });
+                                          }}
+                                          style={{
+                                            padding: "4px 10px",
+                                            borderRadius: 999,
+                                            border: `1px solid ${active ? color : "rgba(255,255,255,0.18)"}`,
+                                            background: active ? `linear-gradient(135deg, ${color}, rgba(15,23,42,0.6))` : "rgba(15,23,42,0.5)",
+                                            color: active ? "#0b0f19" : "white",
+                                            fontSize: 11,
+                                            fontWeight: 900,
+                                            letterSpacing: "0.08em",
+                                            textTransform: "uppercase",
+                                            opacity: allowed ? 1 : 0.35,
+                                            cursor: allowed ? "pointer" : "not-allowed",
+                                            boxShadow: active ? `0 0 12px ${color}` : "none",
+                                          }}
+                                          title={!allowed ? "Category not available" : ""}
+                                        >
+                                          {cat}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: 8 }}>
+                  <div style={formLabel()}>Select Skills Per Category (min {laneSkillMin})</div>
+                  <div style={{ display: "grid", gap: 12 }}>
+                    {battleLaneCategories.map((cat) => {
+                      const row = skillsByCategory.find(([name]) => name === cat);
+                      const skillsForCat = row ? row[1] : [];
+                      const selectedSkills = battleLaneSkills[cat] ?? [];
+                      return (
+                        <div key={cat} style={{ padding: 10, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)" }}>
+                          <div style={{ fontWeight: 900, marginBottom: 6 }}>{cat}</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 6 }}>
+                            {skillsForCat.map((skill) => {
+                              const checked = selectedSkills.includes(skill.id);
+                              return (
+                                <label key={skill.id} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() =>
+                                      setBattleLaneSkills((prev) => {
+                                        const list = prev[cat] ?? [];
+                                        const next = checked ? list.filter((id) => id !== skill.id) : [...list, skill.id];
+                                        return { ...prev, [cat]: next };
+                                      })
+                                    }
+                                  />
+                                  <span>{skill.name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <div style={{ fontSize: 11, opacity: 0.7, marginTop: 6 }}>
+                            Selected: {selectedSkills.length}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                {battleMode === "lanes" && laneErrors.length ? (
+                  <div style={{ color: "rgba(248,113,113,0.95)", fontWeight: 900, fontSize: 12 }}>
+                    {laneErrors.map((err) => (
+                      <div key={err}>{err}</div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
                 <div style={{ display: "grid", gap: 6 }}>
                   <div style={formLabel()}>Team A</div>
                   <div style={{ position: "relative" }}>
@@ -3996,7 +5707,7 @@ export default function SkillTrackerPage() {
                       onChange={(e) => setBattleTeamAQuery(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key !== "Enter") return;
-                        const suggestion = studentSuggestions(battleTeamAQuery, Array.from(new Set([...battleTeamAIds, ...battleTeamBIds])));
+                        const suggestion = studentSuggestions(battleTeamAQuery, battleTeamTakenIds);
                         if (suggestion[0]) {
                           addBattleTeamMember("a", suggestion[0].id);
                           setBattleTeamAQuery("");
@@ -4017,7 +5728,7 @@ export default function SkillTrackerPage() {
                             }}
                             style={suggestItem()}
                           >
-                            {s.name}
+                            {renderStudentSuggestion(s)}
                           </button>
                         ))}
                       </div>
@@ -4045,7 +5756,7 @@ export default function SkillTrackerPage() {
                       onChange={(e) => setBattleTeamBQuery(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key !== "Enter") return;
-                        const suggestion = studentSuggestions(battleTeamBQuery, Array.from(new Set([...battleTeamAIds, ...battleTeamBIds])));
+                        const suggestion = studentSuggestions(battleTeamBQuery, battleTeamTakenIds);
                         if (suggestion[0]) {
                           addBattleTeamMember("b", suggestion[0].id);
                           setBattleTeamBQuery("");
@@ -4066,7 +5777,7 @@ export default function SkillTrackerPage() {
                             }}
                             style={suggestItem()}
                           >
-                            {s.name}
+                            {renderStudentSuggestion(s)}
                           </button>
                         ))}
                       </div>
@@ -4079,6 +5790,104 @@ export default function SkillTrackerPage() {
                         <span key={id} style={chip()}>
                           {s?.name ?? "Student"}
                           <button onClick={() => removeBattleTeamMember("b", id)} style={chipX()}>
+                            ✕
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={formLabel()}>Team C</div>
+                  <div style={{ position: "relative" }}>
+                    <input
+                      value={battleTeamCQuery}
+                      onChange={(e) => setBattleTeamCQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        const suggestion = studentSuggestions(battleTeamCQuery, battleTeamTakenIds);
+                        if (suggestion[0]) {
+                          addBattleTeamMember("c", suggestion[0].id);
+                          setBattleTeamCQuery("");
+                        }
+                      }}
+                      placeholder="Add team C student"
+                      style={select()}
+                    />
+                    {showBattleTeamCSuggestions ? (
+                      <div style={suggestBox()}>
+                        {battleTeamCSuggestions.map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => {
+                              addBattleTeamMember("c", s.id);
+                              setBattleTeamCQuery("");
+                            }}
+                            style={suggestItem()}
+                          >
+                            {renderStudentSuggestion(s)}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {battleTeamCIds.map((id) => {
+                      const s = students.find((x) => x.id === id);
+                      return (
+                        <span key={id} style={chip()}>
+                          {s?.name ?? "Student"}
+                          <button onClick={() => removeBattleTeamMember("c", id)} style={chipX()}>
+                            ✕
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={formLabel()}>Team D</div>
+                  <div style={{ position: "relative" }}>
+                    <input
+                      value={battleTeamDQuery}
+                      onChange={(e) => setBattleTeamDQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        const suggestion = studentSuggestions(battleTeamDQuery, battleTeamTakenIds);
+                        if (suggestion[0]) {
+                          addBattleTeamMember("d", suggestion[0].id);
+                          setBattleTeamDQuery("");
+                        }
+                      }}
+                      placeholder="Add team D student"
+                      style={select()}
+                    />
+                    {showBattleTeamDSuggestions ? (
+                      <div style={suggestBox()}>
+                        {battleTeamDSuggestions.map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => {
+                              addBattleTeamMember("d", s.id);
+                              setBattleTeamDQuery("");
+                            }}
+                            style={suggestItem()}
+                          >
+                            {renderStudentSuggestion(s)}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {battleTeamDIds.map((id) => {
+                      const s = students.find((x) => x.id === id);
+                      return (
+                        <span key={id} style={chip()}>
+                          {s?.name ?? "Student"}
+                          <button onClick={() => removeBattleTeamMember("d", id)} style={chipX()}>
                             ✕
                           </button>
                         </span>
@@ -4109,6 +5918,11 @@ export default function SkillTrackerPage() {
                   </optgroup>
                 ))}
               </select>
+              {battleMode === "lanes" ? (
+                <div style={{ fontSize: 12, opacity: 0.7 }}>
+                  Skill Lanes uses categories per player. This skill is a default label for stats.
+                </div>
+              ) : null}
             </div>
 
             <div style={{ display: "grid", gap: 6 }}>
@@ -4234,7 +6048,7 @@ export default function SkillTrackerPage() {
               </button>
             </div>
           </div>
-        </Overlay>
+        </OverlayWide>
       )}
 
       {resultOpen && resultTracker && (
@@ -4552,6 +6366,381 @@ export default function SkillTrackerPage() {
         box-shadow: 0 14px 30px rgba(0,0,0,0.35), 0 0 28px rgba(239,68,68,0.25);
         animation: ffaCardPulse 6s ease-in-out infinite;
       }
+      .lane-board {
+        --lane-gap: 14px;
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: 220px 1fr 220px;
+        gap: var(--lane-gap);
+        align-items: center;
+        position: relative;
+      }
+      .lane-team {
+        display: grid;
+        gap: 10px;
+      }
+      .lane-team-header {
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.75;
+        text-align: center;
+      }
+      .lane-player {
+        position: relative;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.14);
+        background: rgba(2,6,23,0.6);
+        overflow: visible;
+      }
+      .lane-player-active {
+        box-shadow: 0 0 0 2px rgba(250,204,21,0.7), 0 0 24px rgba(250,204,21,0.45);
+      }
+      .lane-player-name {
+        font-weight: 900;
+        font-size: 14px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .lane-player-header {
+        display: grid;
+        gap: 4px;
+      }
+      .lane-player-remaining {
+        font-size: 11px;
+        font-weight: 900;
+        opacity: 0.8;
+        white-space: normal;
+        text-align: right;
+      }
+      .lane-mvp-chip {
+        padding: 2px 6px;
+        border-radius: 999px;
+        border: 1px solid rgba(250,204,21,0.7);
+        background: rgba(250,204,21,0.2);
+        font-size: 10px;
+        letter-spacing: 0.08em;
+      }
+      .lane-player-cat {
+        margin-top: 4px;
+        display: inline-flex;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.2);
+        font-size: 11px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .lane-player-level {
+        margin-left: 8px;
+        font-size: 11px;
+        font-weight: 900;
+        opacity: 0.8;
+      }
+      .lane-mini-summary {
+        margin-top: 10px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .lane-mini-box {
+        padding: 8px 10px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.15);
+        background: rgba(2,6,23,0.55);
+        display: grid;
+        gap: 6px;
+      }
+      .lane-mini-title {
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        opacity: 0.7;
+      }
+      .lane-mini-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 11px;
+        font-weight: 900;
+      }
+      .lane-mini-name {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        white-space: normal;
+      }
+      .lane-mini-mvp {
+        margin-left: 6px;
+        padding: 1px 6px;
+        border-radius: 999px;
+        border: 1px solid rgba(250,204,21,0.7);
+        background: rgba(250,204,21,0.2);
+        font-size: 9px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+      }
+      .lane-mini-dots {
+        display: inline-flex;
+        gap: 4px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .lane-mini-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.25);
+      }
+      .lane-mini-dot-good {
+        background: rgba(34,197,94,0.9);
+        box-shadow: 0 0 6px rgba(34,197,94,0.5);
+      }
+      .lane-mini-dot-bad {
+        background: rgba(239,68,68,0.9);
+        box-shadow: 0 0 6px rgba(239,68,68,0.5);
+      }
+      .lane-mini-counts {
+        opacity: 0.85;
+      }
+      .lane-points-chip {
+        position: absolute;
+        top: 50%;
+        right: 8px;
+        transform: translateY(-50%);
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.3);
+        font-size: 11px;
+        font-weight: 900;
+        z-index: 2;
+        box-shadow: 0 10px 20px rgba(0,0,0,0.35);
+        max-width: calc(100% - 16px);
+        white-space: normal;
+        text-align: center;
+      }
+      .lane-points-win {
+        background: rgba(22,163,74,0.95);
+        color: #fff;
+      }
+      .lane-points-loss {
+        background: rgba(185,28,28,0.95);
+        color: #fff;
+      }
+      .lane-points-before {
+        text-decoration: line-through;
+        opacity: 0.6;
+      }
+      .lane-points-arrow {
+        font-size: 12px;
+      }
+      .lane-points-after {
+        font-size: 12px;
+      }
+      .lane-player-skill {
+        margin-top: 6px;
+        font-size: 11px;
+        font-weight: 900;
+        opacity: 0.8;
+      }
+      .lane-turn {
+        margin-top: 6px;
+        font-size: 11px;
+        font-weight: 900;
+        color: #facc15;
+      }
+      .lane-controls {
+        display: flex;
+        gap: 6px;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+      .lane-connector {
+        position: absolute;
+        top: 50%;
+        right: calc(-1 * (var(--lane-gap) + 10px));
+        width: calc(var(--lane-gap) + 10px);
+        height: 2px;
+        border-radius: 999px;
+        filter: drop-shadow(0 0 8px rgba(255,255,255,0.35));
+        animation: laneFlow 2.8s ease-in-out infinite;
+        z-index: 1;
+      }
+      .lane-team-b .lane-connector {
+        left: calc(-1 * (var(--lane-gap) + 10px));
+        right: auto;
+      }
+      .lane-connector::after {
+        content: "";
+        position: absolute;
+        top: -2px;
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.7);
+        opacity: 0;
+      }
+      .lane-connector-active::after {
+        opacity: 1;
+        animation: laneParticle 0.9s ease-in-out forwards;
+      }
+      .lane-team-b .lane-connector-active::after {
+        right: 0;
+      }
+      .lane-team-a .lane-connector-active::after {
+        left: 0;
+      }
+      .lane-middle {
+        display: grid;
+        gap: 12px;
+        padding: 10px;
+        border-radius: 16px;
+        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(2,6,23,0.7);
+        position: relative;
+      }
+      .lane-score {
+        font-size: 28px;
+        font-weight: 1000;
+        letter-spacing: 1px;
+        text-shadow: 0 0 18px rgba(250,204,21,0.4);
+        position: absolute;
+        z-index: 2;
+      }
+      .lane-score-a {
+        top: -28px;
+        left: 10px;
+      }
+      .lane-score-b {
+        bottom: -28px;
+        right: 10px;
+      }
+      .lane-remaining {
+        margin-top: 8px;
+        text-align: center;
+        font-size: 14px;
+        font-weight: 900;
+        opacity: 0.75;
+      }
+      .lane-current-turn {
+        margin-top: 10px;
+        text-align: center;
+        padding: 8px 10px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(15,23,42,0.6);
+      }
+      .lane-current-name {
+        font-size: 18px;
+        font-weight: 1000;
+      }
+      .lane-current-skill {
+        margin-top: 4px;
+        font-size: 12px;
+        font-weight: 900;
+        opacity: 0.85;
+      }
+      .lane-row {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(12px, 1fr);
+        gap: 4px;
+      }
+      .lane-segment {
+        display: block;
+        height: 12px;
+        border-radius: 6px;
+        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(255,255,255,0.08);
+      }
+      .lane-segment-flash {
+        animation: laneFlash 0.9s ease-in-out;
+      }
+      .lane-row-b {
+        direction: rtl;
+      }
+      .lane-order {
+        margin-top: 10px;
+        text-align: center;
+        font-weight: 900;
+        font-size: 12px;
+        opacity: 0.8;
+      }
+      @keyframes laneFlow {
+        0% { transform: translateX(0); opacity: 0.4; }
+        50% { transform: translateX(6px); opacity: 1; }
+        100% { transform: translateX(0); opacity: 0.4; }
+      }
+      @keyframes laneParticle {
+        0% { transform: translateX(0); opacity: 0.3; }
+        100% { transform: translateX(20px); opacity: 0; }
+      }
+      .lane-team-b .lane-connector-active::after {
+        animation: laneParticleRtl 0.9s ease-in-out forwards;
+      }
+      @keyframes laneParticleRtl {
+        0% { transform: translateX(0); opacity: 0.3; }
+        100% { transform: translateX(-20px); opacity: 0; }
+      }
+      @keyframes laneFlash {
+        0% { transform: scale(1); box-shadow: 0 0 0 rgba(250,204,21,0); }
+        40% { transform: scale(1.1); box-shadow: 0 0 18px rgba(250,204,21,0.7); }
+        100% { transform: scale(1); box-shadow: 0 0 0 rgba(250,204,21,0); }
+      }
+      .battle-turn-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: center;
+        align-items: center;
+        margin-top: 10px;
+      }
+      .battle-coin-btn,
+      .battle-order-btn {
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 999px;
+        padding: 8px 12px;
+        font-weight: 900;
+        font-size: 12px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: white;
+        cursor: pointer;
+        background: linear-gradient(135deg, rgba(59,130,246,0.45), rgba(34,197,94,0.35));
+        box-shadow: 0 12px 24px rgba(15,23,42,0.35), inset 0 0 10px rgba(255,255,255,0.12);
+        transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+      }
+      .battle-order-btn {
+        background: linear-gradient(135deg, rgba(249,115,22,0.35), rgba(239,68,68,0.35));
+      }
+      .battle-coin-btn:active,
+      .battle-order-btn:active {
+        transform: translateY(2px) scale(0.98);
+        box-shadow: 0 6px 14px rgba(15,23,42,0.45), inset 0 0 12px rgba(255,255,255,0.1);
+        filter: saturate(1.2);
+      }
+      .battle-coin-result,
+      .battle-turn-order {
+        text-align: center;
+        font-weight: 900;
+        font-size: 12px;
+        opacity: 0.85;
+      }
+      .battle-coin-result {
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.2);
+        background: rgba(15,23,42,0.75);
+      }
       @keyframes battleVsPulse {
         0% { transform: scale(1); box-shadow: 0 0 16px rgba(249,115,22,0.35); }
         50% { transform: scale(1.04); box-shadow: 0 0 30px rgba(239,68,68,0.6); }
@@ -4673,6 +6862,22 @@ function battlePulseBtn(): React.CSSProperties {
     color: "white",
     fontWeight: 950,
     cursor: "pointer",
+  };
+}
+
+function skillStrikeBtn(): React.CSSProperties {
+  return {
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: "linear-gradient(90deg, rgba(147,51,234,0.45), rgba(59,130,246,0.45))",
+    color: "white",
+    fontWeight: 950,
+    cursor: "pointer",
+    textDecoration: "none",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
   };
 }
 
@@ -5248,6 +7453,12 @@ function battleUndoBtn(disabled: boolean): React.CSSProperties {
   };
 }
 
+function laneColor(category: string, categories: string[]) {
+  const palette = ["#38bdf8", "#f97316", "#facc15", "#34d399", "#c084fc", "#fb7185"];
+  const idx = Math.max(0, categories.indexOf(category));
+  return palette[idx % palette.length];
+}
+
 function battleDivider(): React.CSSProperties {
   return {
     height: "100%",
@@ -5295,9 +7506,49 @@ function battlePulseActionBtn(kind: "primary" | "rematch" = "primary"): React.CS
   };
 }
 
-function teamGroupWrap(team: "a" | "b"): React.CSSProperties {
-  const glow = team === "a" ? "rgba(59,130,246,0.45)" : "rgba(249,115,22,0.45)";
-  const border = team === "a" ? "rgba(59,130,246,0.55)" : "rgba(249,115,22,0.55)";
+function teamPalette(team: "a" | "b" | "c" | "d") {
+  if (team === "a") {
+    return {
+      glow: "rgba(59,130,246,0.45)",
+      border: "rgba(59,130,246,0.55)",
+      cardBorder: "rgba(59,130,246,0.35)",
+      cardBg: "linear-gradient(135deg, rgba(30,58,138,0.32), rgba(2,6,23,0.65))",
+      cardShadow: "0 10px 20px rgba(30,64,175,0.25)",
+      highlight: "rgba(59,130,246,0.85)",
+    };
+  }
+  if (team === "b") {
+    return {
+      glow: "rgba(249,115,22,0.45)",
+      border: "rgba(249,115,22,0.55)",
+      cardBorder: "rgba(249,115,22,0.35)",
+      cardBg: "linear-gradient(135deg, rgba(124,45,18,0.32), rgba(2,6,23,0.65))",
+      cardShadow: "0 10px 20px rgba(194,65,12,0.25)",
+      highlight: "rgba(249,115,22,0.85)",
+    };
+  }
+  if (team === "c") {
+    return {
+      glow: "rgba(34,197,94,0.45)",
+      border: "rgba(34,197,94,0.55)",
+      cardBorder: "rgba(34,197,94,0.35)",
+      cardBg: "linear-gradient(135deg, rgba(22,101,52,0.32), rgba(2,6,23,0.65))",
+      cardShadow: "0 10px 20px rgba(22,163,74,0.25)",
+      highlight: "rgba(34,197,94,0.85)",
+    };
+  }
+  return {
+    glow: "rgba(244,63,94,0.45)",
+    border: "rgba(244,63,94,0.55)",
+    cardBorder: "rgba(244,63,94,0.35)",
+    cardBg: "linear-gradient(135deg, rgba(190,18,60,0.32), rgba(2,6,23,0.65))",
+    cardShadow: "0 10px 20px rgba(190,18,60,0.25)",
+    highlight: "rgba(244,63,94,0.85)",
+  };
+}
+
+function teamGroupWrap(team: "a" | "b" | "c" | "d"): React.CSSProperties {
+  const { glow, border } = teamPalette(team);
   return {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
@@ -5310,19 +7561,41 @@ function teamGroupWrap(team: "a" | "b"): React.CSSProperties {
   };
 }
 
-function teamMemberCard(team: "a" | "b"): React.CSSProperties {
+function teamMemberCard(team: "a" | "b" | "c" | "d"): React.CSSProperties {
+  const { cardBorder, cardBg, cardShadow } = teamPalette(team);
   return {
     padding: 12,
     borderRadius: 18,
-    border: `1px solid ${team === "a" ? "rgba(59,130,246,0.35)" : "rgba(249,115,22,0.35)"}`,
-    background:
-      team === "a"
-        ? "linear-gradient(135deg, rgba(30,58,138,0.32), rgba(2,6,23,0.65))"
-        : "linear-gradient(135deg, rgba(124,45,18,0.32), rgba(2,6,23,0.65))",
-    boxShadow:
-      team === "a"
-        ? "0 10px 20px rgba(30,64,175,0.25)"
-        : "0 10px 20px rgba(194,65,12,0.25)",
+    border: `1px solid ${cardBorder}`,
+    background: cardBg,
+    boxShadow: cardShadow,
+  };
+}
+
+function turnHighlightCard(kind: "a" | "b" | "c" | "d" | "ffa"): React.CSSProperties {
+  const glow = kind === "ffa" ? "rgba(250,204,21,0.85)" : teamPalette(kind).highlight;
+  return {
+    border: `1px solid ${glow}`,
+    boxShadow: `0 0 0 2px ${glow}, 0 0 30px ${glow}`,
+  };
+}
+
+function turnBadge(): React.CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "4px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.35)",
+    background: "linear-gradient(135deg, rgba(250,204,21,0.35), rgba(251,146,60,0.35))",
+    color: "white",
+    fontWeight: 1000,
+    fontSize: 12,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase",
+    boxShadow: "0 8px 20px rgba(250,204,21,0.35)",
+    width: "fit-content",
   };
 }
 
@@ -5398,6 +7671,126 @@ function suggestItem(): React.CSSProperties {
   };
 }
 
+function debugDetails(): React.CSSProperties {
+  return {
+    marginTop: 8,
+    padding: "8px 10px",
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(2,6,23,0.6)",
+  };
+}
+
+function debugSummary(): React.CSSProperties {
+  return {
+    cursor: "pointer",
+    fontSize: 12,
+    fontWeight: 900,
+    opacity: 0.85,
+    listStyle: "none",
+  };
+}
+
+function debugPre(): React.CSSProperties {
+  return {
+    marginTop: 8,
+    fontSize: 11,
+    lineHeight: 1.4,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    opacity: 0.85,
+  };
+}
+
+function debugBtn(): React.CSSProperties {
+  return {
+    padding: "6px 10px",
+    borderRadius: 10,
+    border: "1px solid rgba(250,204,21,0.5)",
+    background: "rgba(250,204,21,0.15)",
+    color: "white",
+    fontWeight: 900,
+    cursor: "pointer",
+    fontSize: 11,
+  };
+}
+
+function formatPointsValue(value: number | null | undefined): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return "0";
+  return new Intl.NumberFormat().format(n);
+}
+
+function formatNetDelta(value: number): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n) || n === 0) return "0";
+  return `${n > 0 ? "+" : ""}${n}`;
+}
+
+function netPointsOverlayContainer(): React.CSSProperties {
+  return {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    zIndex: 6,
+    pointerEvents: "none",
+  };
+}
+
+function netPointsChangeChip(delta: number): React.CSSProperties {
+  const isPositive = delta > 0;
+  const isNegative = delta < 0;
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "6px 10px",
+    borderRadius: 999,
+    fontSize: 16,
+    fontWeight: 1000,
+    border: "1px solid rgba(255,255,255,0.25)",
+    background: isPositive
+      ? "rgba(34,197,94,0.25)"
+      : isNegative
+        ? "rgba(239,68,68,0.25)"
+        : "rgba(148,163,184,0.25)",
+    color: isPositive ? "rgba(34,197,94,0.95)" : isNegative ? "rgba(239,68,68,0.95)" : "rgba(148,163,184,0.95)",
+  };
+}
+
+function netDeltaChip(delta: number): React.CSSProperties {
+  const isPositive = delta > 0;
+  const isNegative = delta < 0;
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "6px 10px",
+    borderRadius: 999,
+    fontSize: 16,
+    fontWeight: 1000,
+    border: "1px solid rgba(255,255,255,0.25)",
+    background: isPositive
+      ? "rgba(34,197,94,0.35)"
+      : isNegative
+        ? "rgba(239,68,68,0.35)"
+        : "rgba(148,163,184,0.35)",
+    color: isPositive ? "rgba(34,197,94,0.95)" : isNegative ? "rgba(239,68,68,0.95)" : "rgba(148,163,184,0.95)",
+  };
+}
+
+function netPointsRow(alignRight = false): React.CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    justifySelf: alignRight ? "end" : "start",
+    zIndex: 6,
+  };
+}
+
 function formLabel(): React.CSSProperties {
   return {
     fontWeight: 900,
@@ -5446,6 +7839,7 @@ function battleCompletedOverlay(): React.CSSProperties {
     textTransform: "uppercase",
     pointerEvents: "none",
     animation: "completedPulse 1.8s ease-in-out infinite",
+    zIndex: 2,
   };
 }
 
@@ -5576,6 +7970,11 @@ function TrendGraph({ logs, wide = false }: { logs: HistoryLog[]; wide?: boolean
   const height = wide ? 220 : 190;
   const pad = 20;
   const minAttempts = 3;
+  const [now, setNow] = useState(0);
+
+  useEffect(() => {
+    setNow(Date.now());
+  }, [logs.length]);
   if (!logs.length) {
     return (
       <div
@@ -5610,8 +8009,8 @@ function TrendGraph({ logs, wide = false }: { logs: HistoryLog[]; wide?: boolean
   const avgY = pad + ((100 - avgRate) / 100) * (height - pad * 2);
 
   const times = logs.map((l) => new Date(l.created_at).getTime()).filter((t) => Number.isFinite(t));
-  const minX = times.length ? Math.min(...times) : Date.now();
-  const maxX = times.length ? Math.max(...times) : Date.now();
+  const minX = times.length ? Math.min(...times) : now;
+  const maxX = times.length ? Math.max(...times) : now;
   const xTicks = timeAxisTicks(minX, maxX, width, pad, [0, 0.5, 1]);
 
   return (
@@ -5683,6 +8082,7 @@ function ComparePanel({
   const height = 320;
   const pad = 36;
   const minAttempts = 3;
+  const [now, setNow] = useState(0);
   const palette = [
     "rgba(34,197,94,0.95)",
     "rgba(59,130,246,0.95)",
@@ -5692,10 +8092,14 @@ function ComparePanel({
     "rgba(245,158,11,0.95)",
   ];
 
+  useEffect(() => {
+    setNow(Date.now());
+  }, [series.length]);
+
   const allPoints = series.flatMap((s) => s.points.map((p) => ({ ...p, student_id: s.student_id })));
   const times = allPoints.map((p) => new Date(p.created_at).getTime()).filter((t) => Number.isFinite(t));
-  const minX = times.length ? Math.min(...times) : Date.now();
-  const maxX = times.length ? Math.max(...times) : Date.now();
+  const minX = times.length ? Math.min(...times) : now;
+  const maxX = times.length ? Math.max(...times) : now;
 
   const colorByStudent = new Map<string, string>();
   series.forEach((s, i) => colorByStudent.set(s.student_id, palette[i % palette.length]));
@@ -5719,7 +8123,7 @@ function ComparePanel({
           Math.sqrt(rates.reduce((sum, r) => sum + Math.pow(r - avg, 2), 0) / rates.length)
         )
       : 0;
-    const now = Date.now();
+    const nowTs = now;
     const month = 30 * 24 * 3600 * 1000;
     function avgInRange(start: number, end: number) {
       const subset = s.points.filter((p) => {
@@ -5729,10 +8133,10 @@ function ComparePanel({
       if (!subset.length) return 0;
       return Math.round(subset.reduce((sum, p) => sum + p.rate, 0) / subset.length);
     }
-    const last30 = avgInRange(now - month, now);
-    const prev30 = avgInRange(now - month * 2, now - month);
-    const last90 = avgInRange(now - month * 3, now);
-    const prev90 = avgInRange(now - month * 6, now - month * 3);
+    const last30 = avgInRange(nowTs - month, nowTs);
+    const prev30 = avgInRange(nowTs - month * 2, nowTs - month);
+    const last90 = avgInRange(nowTs - month * 3, nowTs);
+    const prev90 = avgInRange(nowTs - month * 6, nowTs - month * 3);
     return {
       student_id: s.student_id,
       student_name: s.student_name,
@@ -6105,15 +8509,15 @@ function statValue(): React.CSSProperties {
   return { fontSize: 12, fontWeight: 1000 };
 }
 
-function chip(): React.CSSProperties {
+function chip(active?: boolean): React.CSSProperties {
   return {
     display: "inline-flex",
     gap: 8,
     alignItems: "center",
     padding: "6px 10px",
     borderRadius: 999,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(255,255,255,0.06)",
+    border: active ? "1px solid rgba(96,165,250,0.65)" : "1px solid rgba(255,255,255,0.12)",
+    background: active ? "rgba(59,130,246,0.25)" : "rgba(255,255,255,0.06)",
     color: "white",
     fontSize: 12,
     fontWeight: 900,
@@ -6291,8 +8695,8 @@ function OverlayWide({ title, onClose, children }: { title: string; onClose: () 
     >
       <div
         style={{
-          width: "min(1200px, 96vw)",
-          maxHeight: "88vh",
+          width: "min(1400px, 96vw)",
+          maxHeight: "90vh",
           overflow: "auto",
           borderRadius: 22,
           border: "1px solid rgba(255,255,255,0.10)",
@@ -6374,4 +8778,33 @@ function btnDanger(): React.CSSProperties {
     fontWeight: 950,
     cursor: "pointer",
   };
+}
+
+function buildLaneErrors({
+  teamAIds,
+  teamBIds,
+  categories,
+  assignmentsComplete,
+  skillsValid,
+  countsValid,
+  skillMin,
+}: {
+  teamAIds: string[];
+  teamBIds: string[];
+  categories: string[];
+  assignmentsComplete: boolean;
+  skillsValid: boolean;
+  countsValid: boolean;
+  skillMin: number;
+}) {
+  const errors: string[] = [];
+  if (teamAIds.length < 2 || teamBIds.length < 2) errors.push("Teams must have at least 2 players.");
+  if (teamAIds.length !== teamBIds.length) errors.push("Teams must be the same size.");
+  if (categories.length < 1) errors.push("Select at least 1 category.");
+  if (!assignmentsComplete) errors.push("Each player must be assigned at least one category.");
+  if (!skillsValid) errors.push(`Each category needs at least ${skillMin} selected skill${skillMin === 1 ? "" : "s"}.`);
+  if (!countsValid) {
+    errors.push("All assigned categories must be valid for this battle.");
+  }
+  return errors;
 }

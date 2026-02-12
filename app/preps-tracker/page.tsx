@@ -53,6 +53,7 @@ async function safeJson(res: Response) {
 }
 
 export default function PrepsTrackerPage() {
+  if (blockedView) return blockedView;
   return (
     <AuthGate>
       <PrepsTrackerInner />
@@ -159,16 +160,14 @@ function PrepsTrackerInner() {
     return () => window.removeEventListener("keydown", onKey);
   }, [activeSessionId, openSessionId]);
 
-  if (blocked) {
-    return (
-      <main style={{ display: "grid", gap: 12 }}>
-        <div style={{ fontSize: 26, fontWeight: 1000 }}>P.R.E.P.S Tracker</div>
-        <div style={{ opacity: 0.75 }}>
-          {viewerRole === "classroom" ? "Classroom mode cannot access P.R.E.P.S Tracker." : "Student accounts cannot access P.R.E.P.S Tracker."}
-        </div>
-      </main>
-    );
-  }
+  const blockedView = blocked ? (
+    <main style={{ display: "grid", gap: 12 }}>
+      <div style={{ fontSize: 26, fontWeight: 1000 }}>P.R.E.P.S Tracker</div>
+      <div style={{ opacity: 0.75 }}>
+        {viewerRole === "classroom" ? "Classroom mode cannot access P.R.E.P.S Tracker." : "Student accounts cannot access P.R.E.P.S Tracker."}
+      </div>
+    </main>
+  ) : null;
 
   const filteredForms = useMemo(() => {
     if (!selectedAgeGroupId) return forms;

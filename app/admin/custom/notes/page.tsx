@@ -32,6 +32,13 @@ export default function AdminNotesSettingsPage() {
   const [todoMsg, setTodoMsg] = useState("");
   const [showCompleted, setShowCompleted] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [newCategory, setNewCategory] = useState("note");
+  const [newUrgency, setNewUrgency] = useState("medium");
+  const [newStudentQuery, setNewStudentQuery] = useState("");
+  const [newStudentResults, setNewStudentResults] = useState<Array<{ id: string; name: string }>>([]);
+  const [newStudent, setNewStudent] = useState<{ id: string; name: string } | null>(null);
+  const [newBody, setNewBody] = useState("");
+  const [newSaving, setNewSaving] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -58,6 +65,76 @@ export default function AdminNotesSettingsPage() {
       setTodoMsg("");
     })();
   }, [showCompleted, categoryFilter]);
+
+  useEffect(() => {
+    if (!newStudentQuery.trim()) {
+      setNewStudentResults([]);
+      return;
+    }
+    let active = true;
+    (async () => {
+      const res = await fetch("/api/students/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: newStudentQuery.trim() }),
+      });
+      const sj = await safeJson(res);
+      if (!active) return;
+      if (!sj.ok) {
+        setNewStudentResults([]);
+      } else {
+        setNewStudentResults((sj.json?.students ?? []) as Array<{ id: string; name: string }>);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [newStudentQuery]);
+
+  async function submitNewNote() {
+    if (!newStudent?.id || !newBody.trim()) {
+      setTodoMsg("Student + note required.");
+      return;
+    }
+    setNewSaving(true);
+    setTodoMsg("");
+    const res = await fetch("/api/student-notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        student_id: newStudent.id,
+        body: newBody.trim(),
+        category: newCategory,
+        urgency: newUrgency,
+      }),
+    });
+    const sj = await safeJson(res);
+    if (!sj.ok) {
+      setNewSaving(false);
+      return setTodoMsg(sj.json?.error || "Failed to add note");
+    }
+    setNewBody("");
+    setNewStudent(null);
+    setNewStudentQuery("");
+    setNewStudentResults([]);
+    setNewSaving(false);
+    if (!showCompleted) {
+      setNotes((prev) => [
+        {
+          id: sj.json?.note?.id ?? `${Date.now()}`,
+          student_name: newStudent?.name ?? "Student",
+          body: sj.json?.note?.body ?? newBody.trim(),
+          urgency: sj.json?.note?.urgency ?? newUrgency,
+          category: sj.json?.note?.category ?? newCategory,
+          status: "open",
+          created_at: sj.json?.note?.created_at ?? new Date().toISOString(),
+        },
+        ...prev,
+      ]);
+    } else {
+      setShowCompleted(false);
+    }
+  }
 
   async function markDone(id: string) {
     const res = await fetch("/api/student-notes/status", {
@@ -179,6 +256,55 @@ export default function AdminNotesSettingsPage() {
 
       <section style={card()}>
         <div style={{ fontWeight: 900 }}>Notes & To-Dos</div>
+        <div style={noteForm()}>
+          <div style={{ display: "grid", gap: 6, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
+            <select value={newCategory} onChange={(e) => setNewCategory(e.target.value)} style={input()}>
+              <option value="note">Note</option>
+              <option value="todo">To-Do</option>
+            </select>
+            <select value={newUrgency} onChange={(e) => setNewUrgency(e.target.value)} style={input()}>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+          </div>
+          <input
+            value={newStudentQuery}
+            onChange={(e) => setNewStudentQuery(e.target.value)}
+            placeholder="Search student"
+            style={input()}
+          />
+          {newStudentResults.length ? (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {newStudentResults.slice(0, 6).map((row) => (
+                <button
+                  key={row.id}
+                  onClick={() => {
+                    setNewStudent(row);
+                    setNewStudentQuery(row.name);
+                    setNewStudentResults([]);
+                  }}
+                  style={chip()}
+                >
+                  {row.name}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {newStudent ? <div style={{ fontSize: 12, opacity: 0.7 }}>Selected: {newStudent.name}</div> : null}
+          <textarea
+            value={newBody}
+            onChange={(e) => setNewBody(e.target.value)}
+            placeholder="Write a note or to-do..."
+            style={textarea()}
+          />
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button onClick={submitNewNote} style={saveBtn()} disabled={newSaving}>
+              Add note
+            </button>
+          </div>
+        </div>
         {todoMsg ? <div style={notice()}>{todoMsg}</div> : null}
         <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, opacity: 0.7 }}>
@@ -258,6 +384,17 @@ function card(): React.CSSProperties {
   };
 }
 
+function noteForm(): React.CSSProperties {
+  return {
+    borderRadius: 12,
+    padding: 10,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.04)",
+    display: "grid",
+    gap: 8,
+  };
+}
+
 function input(): React.CSSProperties {
   return {
     borderRadius: 12,
@@ -289,6 +426,19 @@ function emailChip(): React.CSSProperties {
     background: "rgba(59,130,246,0.2)",
     fontSize: 10,
     fontWeight: 800,
+  };
+}
+
+function chip(): React.CSSProperties {
+  return {
+    padding: "4px 8px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: "rgba(255,255,255,0.1)",
+    fontSize: 10,
+    fontWeight: 900,
+    color: "white",
+    cursor: "pointer",
   };
 }
 

@@ -1,20 +1,13 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/authz";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { resolveParentContext } from "../_parentContext";
 
-export async function GET() {
-  const gate = await requireUser();
-  if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 401 });
+export async function GET(req: Request) {
+  const ctx = await resolveParentContext(req);
+  if (!ctx.ok) return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
+  const parent = ctx.parent;
 
   const admin = supabaseAdmin();
-  const { data: parent, error: pErr } = await admin
-    .from("parents")
-    .select("id,name")
-    .eq("auth_user_id", gate.user.id)
-    .maybeSingle();
-  if (pErr) return NextResponse.json({ ok: false, error: pErr.message }, { status: 500 });
-  if (!parent?.id) return NextResponse.json({ ok: false, error: "Not a parent account" }, { status: 403 });
-
   const { data, error } = await admin
     .from("parent_messages")
     .select("id,body,created_at,is_from_admin,admin_user_id,coach_user_id,thread_key,student_id,note_id")

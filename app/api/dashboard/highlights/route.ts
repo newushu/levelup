@@ -32,6 +32,8 @@ export async function POST(req: Request) {
   let pointsEarned = 0;
   let ruleBreakerCount = 0;
   let ruleBreakerPoints = 0;
+  let ruleKeeperCount = 0;
+  let ruleKeeperPoints = 0;
   (ledgerRows ?? []).forEach((row: any) => {
     const points = Number(row.points ?? 0);
     const category = String(row.category ?? "").toLowerCase();
@@ -40,6 +42,10 @@ export async function POST(req: Request) {
     if (category === "rule_breaker" || note.includes("rule breaker")) {
       ruleBreakerCount += 1;
       ruleBreakerPoints += points;
+    }
+    if (category === "rule_keeper" || note.includes("rule keeper")) {
+      ruleKeeperCount += 1;
+      ruleKeeperPoints += points;
     }
   });
 
@@ -110,6 +116,8 @@ export async function POST(req: Request) {
       points_earned: pointsEarned,
       rule_breaker_count: ruleBreakerCount,
       rule_breaker_points: ruleBreakerPoints,
+      rule_keeper_count: ruleKeeperCount,
+      rule_keeper_points: ruleKeeperPoints,
       checkins: checkinsCount ?? 0,
       taolu_completed: taoluCompleted,
       skill_completed: skillCompleted,

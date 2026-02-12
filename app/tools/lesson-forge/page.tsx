@@ -121,6 +121,27 @@ function SectionTimer({
   }, [running, remaining]);
 
   useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const tag = (event.target as HTMLElement | null)?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || (event.target as HTMLElement)?.isContentEditable) {
+        return;
+      }
+      if (event.code === "Space") {
+        event.preventDefault();
+        setRunning((prev) => !prev);
+        return;
+      }
+      if (event.code === "KeyR") {
+        event.preventDefault();
+        setRunning(false);
+        setRemaining(duration);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [duration]);
+
+  useEffect(() => {
     if (!running) return;
     if (remaining > 0) return;
     setRunning(false);
@@ -530,6 +551,24 @@ export default function LessonForgeRunnerPage() {
       .filter((t) => t.section_id === activeSection.id)
       .sort((a, b) => Number(a.sort_order) - Number(b.sort_order));
   }, [tools, activeSection]);
+
+  useEffect(() => {
+    if (!activeSection) return;
+    const timerTool = sectionTools.find((t) => t.tool_type === "timer");
+    const timerSeconds = Math.max(0, Math.floor(Number(timerTool?.config?.seconds ?? 0) || 0));
+    fetch("/api/coach/display-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tool_key: "lesson_forge",
+        tool_payload: {
+          display_url: "/tools/lesson-forge?display=1",
+          section_title: activeSection.title,
+          timer_seconds: timerSeconds || null,
+        },
+      }),
+    }).catch(() => {});
+  }, [activeSection?.id, activeSection?.title, sectionTools]);
 
   const videoMap = useMemo(() => new Map(videos.map((v) => [v.id, v])), [videos]);
 

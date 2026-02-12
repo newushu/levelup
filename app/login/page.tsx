@@ -42,7 +42,7 @@ export default function LoginPage() {
         if (data?.ok) {
           const role = String(data?.role ?? "");
           if (role === "parent") nextPath = "/parent";
-          else if (role === "student") nextPath = "/dashboard";
+          else if (role === "student") nextPath = "/student";
         }
       } catch {}
       window.location.href = nextPath;

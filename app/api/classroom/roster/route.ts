@@ -24,66 +24,69 @@ export async function POST(req: Request) {
     if (iErr) return NextResponse.json({ ok: false, error: iErr.message, step: "load_instance" }, { status: 500 });
     if (!instance) return NextResponse.json({ ok: true, roster: [] });
     let activeSessionId: string | null = null;
-  const classId = String(instance.class_id ?? "").trim();
-  const scheduleEntryId = String(instance.schedule_entry_id ?? "").trim();
-  const sessionDate = String(instance.session_date ?? "").trim();
-  let checkinIds: string[] = [];
-  const isMissingColumn = (err: any, column: string) =>
-    String(err?.message || "").toLowerCase().includes(`column "${column.toLowerCase()}"`);
+    const classId = String(instance.class_id ?? "").trim();
+    const scheduleEntryId = String(instance.schedule_entry_id ?? "").trim();
+    const sessionDate = String(instance.session_date ?? "").trim();
+    let checkinIds: string[] = [];
+    const isMissingColumn = (err: any, column: string) =>
+      String(err?.message || "").toLowerCase().includes(`column "${column.toLowerCase()}"`);
 
-  const { data: checkins, error: cErr } = await admin
-    .from("attendance_checkins")
-    .select("id")
-    .eq("instance_id", instance_id);
-  if (cErr && !isMissingColumn(cErr, "instance_id")) {
-    return NextResponse.json({ ok: false, error: cErr.message }, { status: 500 });
-  }
-  checkinIds = (checkins ?? []).map((c: any) => c.id);
-
-  const findSessionId = async () => {
-    let { data: session, error: sErr } = await admin
-      .from("class_sessions")
+    const { data: checkins, error: cErr } = await admin
+      .from("attendance_checkins")
       .select("id")
-      .eq("instance_id", instance_id)
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (sErr && !isMissingColumn(sErr, "instance_id")) {
-      return { error: sErr };
+      .eq("instance_id", instance_id);
+    if (cErr && !isMissingColumn(cErr, "instance_id")) {
+      return NextResponse.json({ ok: false, error: cErr.message }, { status: 500 });
     }
-    if (!sErr && session?.id) return { id: session.id };
+    checkinIds = (checkins ?? []).map((c: any) => c.id);
 
-    if (classId && scheduleEntryId && sessionDate) {
-      const { data: bySchedule, error: seErr } = await admin
-        .from("class_sessions")
-        .select("id")
-        .eq("class_id", classId)
-        .eq("schedule_entry_id", scheduleEntryId)
-        .eq("session_date", sessionDate)
+    const findSessionId = async () => {
+      let sessionQuery = admin.from("class_sessions").select("id");
+      sessionQuery = sessionQuery.eq("instance_id", instance_id);
+      if (classId) sessionQuery = sessionQuery.eq("class_id", classId);
+      if (scheduleEntryId) sessionQuery = sessionQuery.eq("schedule_entry_id", scheduleEntryId);
+      if (sessionDate) sessionQuery = sessionQuery.eq("session_date", sessionDate);
+      const { data: session, error: sErr } = await sessionQuery
         .order("started_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (seErr && !(isMissingColumn(seErr, "schedule_entry_id") || isMissingColumn(seErr, "session_date"))) {
-        return { error: seErr };
+      if (sErr && !isMissingColumn(sErr, "instance_id")) {
+        return { error: sErr };
       }
-      if (!seErr && bySchedule?.id) return { id: bySchedule.id };
+      if (!sErr && session?.id) return { id: session.id };
+
+      if (classId && scheduleEntryId && sessionDate) {
+        const { data: bySchedule, error: seErr } = await admin
+          .from("class_sessions")
+          .select("id")
+          .eq("class_id", classId)
+          .eq("schedule_entry_id", scheduleEntryId)
+          .eq("session_date", sessionDate)
+          .order("started_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (seErr && !(isMissingColumn(seErr, "schedule_entry_id") || isMissingColumn(seErr, "session_date"))) {
+          return { error: seErr };
+        }
+        if (!seErr && bySchedule?.id) return { id: bySchedule.id };
+      }
+
+      return { id: null };
+    };
+
+    const { id: sessionId, error: sErr } = await findSessionId();
+    if (sErr) return NextResponse.json({ ok: false, error: sErr.message, step: "load_session" }, { status: 500 });
+    activeSessionId = sessionId ?? null;
+    if (sessionId) {
+      const { data: bySession, error: bsErr } = await admin
+        .from("attendance_checkins")
+        .select("id")
+        .eq("session_id", sessionId)
+        .is("instance_id", null);
+      if (bsErr) return NextResponse.json({ ok: false, error: bsErr.message }, { status: 500 });
+      const merged = new Set([...(checkinIds ?? []), ...(bySession ?? []).map((c: any) => c.id)]);
+      checkinIds = Array.from(merged);
     }
-
-    return { id: null };
-  };
-
-  const { id: sessionId, error: sErr } = await findSessionId();
-  if (sErr) return NextResponse.json({ ok: false, error: sErr.message, step: "load_session" }, { status: 500 });
-  activeSessionId = sessionId ?? null;
-  if (sessionId) {
-    const { data: bySession, error: bsErr } = await admin
-      .from("attendance_checkins")
-      .select("id")
-      .eq("session_id", sessionId);
-    if (bsErr) return NextResponse.json({ ok: false, error: bsErr.message }, { status: 500 });
-    const merged = new Set([...(checkinIds ?? []), ...(bySession ?? []).map((c: any) => c.id)]);
-    checkinIds = Array.from(merged);
-  }
     if (!checkinIds.length) return NextResponse.json({ ok: true, roster: [] });
 
   const { data: rows, error } = await admin
@@ -298,7 +301,7 @@ export async function POST(req: Request) {
       const avatarIds = Array.from(
         new Set((settings ?? []).map((s: any) => String(s.avatar_id ?? "").trim()).filter(Boolean))
       );
-      let avatarMap = new Map<string, { storage_path: string | null }>();
+      const avatarMap = new Map<string, { storage_path: string | null }>();
       if (avatarIds.length) {
         const { data: avatars, error: aErr } = await admin
           .from("avatars")
@@ -506,10 +509,11 @@ export async function POST(req: Request) {
       row.student.card_plate_url = avatar.card_plate_url;
     });
 
-    let { data: badgeRows, error: badgeErr } = await admin
+    const { data: badgeRowsInitial, error: badgeErr } = await admin
       .from("student_achievement_badges")
       .select("student_id,achievement_badges:badge_id(id,category,icon_path,badge_library:badge_library_id(image_url))")
       .in("student_id", studentIds);
+    let badgeRows = badgeRowsInitial;
 
     if (badgeErr && (String(badgeErr.message || "").includes("relationship") || String(badgeErr.message || "").includes("column"))) {
       const retry = await admin
@@ -543,6 +547,73 @@ export async function POST(req: Request) {
       const sid = row.student.id;
       row.student.prestige_badges = prestigeMap.get(sid) ?? [];
     });
+  }
+
+  const avatarIds = Array.from(
+    new Set(out.map((row: any) => String(row?.student?.id ?? "")).filter((id: string) => id))
+  );
+  if (avatarIds.length) {
+    const { data: avatarRows, error: aErr } = await admin
+      .from("students")
+      .select(
+        [
+          "id",
+          "avatar_storage_path",
+          "avatar_bg",
+          "avatar_effect",
+          "corner_border_url",
+          "corner_border_render_mode",
+          "corner_border_html",
+          "corner_border_css",
+          "corner_border_js",
+          "corner_border_offset_x",
+          "corner_border_offset_y",
+          "corner_border_offsets_by_context",
+        ].join(",")
+      )
+      .in("id", avatarIds);
+    if (!aErr) {
+      const avatarMap = new Map(
+        (avatarRows ?? []).map((row: any) => [
+          String(row.id),
+          {
+            avatar_storage_path: row.avatar_storage_path ?? null,
+            avatar_bg: row.avatar_bg ?? null,
+            avatar_effect: row.avatar_effect ?? null,
+            corner_border_url: row.corner_border_url ?? null,
+            corner_border_render_mode: row.corner_border_render_mode ?? null,
+            corner_border_html: row.corner_border_html ?? null,
+            corner_border_css: row.corner_border_css ?? null,
+            corner_border_js: row.corner_border_js ?? null,
+            corner_border_offset_x: row.corner_border_offset_x ?? null,
+            corner_border_offset_y: row.corner_border_offset_y ?? null,
+            corner_border_offsets_by_context: row.corner_border_offsets_by_context ?? null,
+          },
+        ])
+      );
+      out = out.map((row: any) => {
+        const next = avatarMap.get(String(row?.student?.id ?? ""));
+        return next
+          ? {
+              ...row,
+              student: {
+                ...row.student,
+                avatar_storage_path: next.avatar_storage_path,
+                avatar_bg: next.avatar_bg,
+                avatar_effect: next.avatar_effect,
+                corner_border_url: next.corner_border_url,
+                corner_border_render_mode: next.corner_border_render_mode,
+                corner_border_html: next.corner_border_html,
+                corner_border_css: next.corner_border_css,
+                corner_border_js: next.corner_border_js,
+                corner_border_offset_x: next.corner_border_offset_x,
+                corner_border_offset_y: next.corner_border_offset_y,
+                corner_border_offsets_by_context: next.corner_border_offsets_by_context,
+              },
+            }
+          : row;
+      });
+    }
   }
 
     return NextResponse.json({ ok: true, session_id: activeSessionId, roster: out });

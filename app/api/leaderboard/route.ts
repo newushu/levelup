@@ -22,7 +22,28 @@ export async function GET() {
 
   const rows = (students ?? []) as StudentRow[];
   const studentIds = rows.map((s) => s.id);
-  const levelById = new Map(rows.map((s) => [s.id, Number(s.level ?? 1)]));
+  let levelById = new Map(rows.map((s) => [s.id, Number(s.level ?? 1)]));
+
+  const { data: levelRows } = await supabase
+    .from("avatar_level_thresholds")
+    .select("level,min_lifetime_points")
+    .order("level", { ascending: true });
+  const thresholds = (levelRows ?? [])
+    .map((row: any) => ({ level: Number(row.level), min: Number(row.min_lifetime_points ?? 0) }))
+    .filter((row: any) => Number.isFinite(row.level))
+    .sort((a: any, b: any) => a.level - b.level);
+  if (thresholds.length) {
+    levelById = new Map(
+      rows.map((s) => {
+        const points = Number(s.lifetime_points ?? 0);
+        let nextLevel = Number(s.level ?? 1);
+        thresholds.forEach((lvl) => {
+          if (points >= lvl.min) nextLevel = lvl.level;
+        });
+        return [s.id, nextLevel];
+      })
+    );
+  }
 
   const { data: settings, error: aErr } = await supabase
     .from("student_avatar_settings")
@@ -33,7 +54,7 @@ export async function GET() {
   const avatarIds = Array.from(
     new Set((settings ?? []).map((s: any) => String(s.avatar_id ?? "").trim()).filter(Boolean))
   );
-  let avatarMap = new Map<string, { storage_path: string | null }>();
+  const avatarMap = new Map<string, { storage_path: string | null }>();
   if (avatarIds.length) {
     const { data: avatars, error: avErr } = await supabase
       .from("avatars")
@@ -123,7 +144,7 @@ export async function GET() {
     return {
       student_id: s.id,
       name: s.name ?? "Student",
-      level: s.level ?? 0,
+      level: levelById.get(s.id) ?? s.level ?? 0,
       points_total: Number(s.points_total ?? 0),
       lifetime_points: Number(s.lifetime_points ?? 0),
       weekly_points: weekly.get(s.id) ?? 0,

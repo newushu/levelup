@@ -20,16 +20,38 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Missing studentId" }, { status: 400 });
     }
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("student_challenges")
-      .select("challenge_id,completed,completed_at")
+      .select("challenge_id,completed,completed_at,tier")
       .eq("student_id", studentId);
+
+    if (error && String(error.message || "").includes("column")) {
+      const retry = await supabase
+        .from("student_challenges")
+        .select("challenge_id,completed,completed_at")
+        .eq("student_id", studentId);
+      data = retry.data as any;
+      error = retry.error;
+    }
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    return NextResponse.json({ rows: data ?? [] });
+    let completions: any[] = [];
+    try {
+      const res = await supabase
+        .from("challenge_completions")
+        .select("challenge_id,completed_at")
+        .eq("student_id", studentId)
+        .order("completed_at", { ascending: false })
+        .limit(2000);
+      completions = res.data ?? [];
+    } catch {
+      completions = [];
+    }
+
+    return NextResponse.json({ rows: data ?? [], completions });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Unknown error" }, { status: 500 });
   }

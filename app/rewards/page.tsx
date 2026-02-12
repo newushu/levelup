@@ -6,12 +6,17 @@ import { useSearchParams } from "next/navigation";
 import StudentTopBar from "@/components/StudentTopBar";
 import CriticalNoticeBar from "@/components/CriticalNoticeBar";
 import { fireFx } from "../../components/GlobalFx";
+import AvatarRender from "@/components/AvatarRender";
+import StudentNavPanel, { studentNavStyles } from "@/components/StudentNavPanel";
 
 type StudentRow = {
   id: string;
   name: string;
   level: number;
   points_total: number;
+  points_balance?: number | null;
+  avatar_storage_path?: string | null;
+  avatar_zoom_pct?: number | null;
   is_competition_team: boolean;
 };
 
@@ -46,6 +51,20 @@ export default function RewardsPage() {
   const [rewards, setRewards] = useState<RewardRow[]>([]);
   const [redeemCounts, setRedeemCounts] = useState<RedeemCounts>({});
   const [pendingCounts, setPendingCounts] = useState<RedeemCounts>({});
+
+  const activeStudent = useMemo(
+    () => students.find((s) => s.id === studentId) ?? null,
+    [students, studentId]
+  );
+  const avatarSrc = useMemo(() => {
+    const path = String(activeStudent?.avatar_storage_path ?? "").trim();
+    if (!path) return null;
+    const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    return base ? `${base}/storage/v1/object/public/avatars/${path}` : null;
+  }, [activeStudent?.avatar_storage_path]);
+  const avatarZoomPct = Math.max(50, Math.min(200, Number(activeStudent?.avatar_zoom_pct ?? 100)));
+  const pointsDisplay = Number(activeStudent?.points_balance ?? activeStudent?.points_total ?? 0);
+  const initials = (activeStudent?.name || "").trim().slice(0, 2).toUpperCase() || "LA";
 
   async function refreshStudents(preserveSelected = true) {
     const r = await fetch("/api/students/list", { cache: "no-store" });
@@ -220,6 +239,26 @@ export default function RewardsPage() {
 
   return (
     <main>
+      <style>{studentNavStyles()}</style>
+      <StudentNavPanel />
+      <button style={backBtn()} onClick={() => window.history.back()}>Back</button>
+      <div style={topBar()}>
+        <div style={identity()}>
+          <div style={studentNameStyle()}>{activeStudent?.name ?? "Student"}</div>
+          <div style={studentMeta()}>Level {activeStudent?.level ?? 1} • {pointsDisplay.toLocaleString()} pts</div>
+          <div style={avatarWrap()}>
+            <AvatarRender
+              size={160}
+              bg="rgba(15,23,42,0.6)"
+              avatarSrc={avatarSrc}
+              avatarZoomPct={avatarZoomPct}
+              showImageBorder={false}
+              style={{ borderRadius: 20 }}
+              fallback={<div style={avatarFallback()}>{initials}</div>}
+            />
+          </div>
+        </div>
+      </div>
       {!isEmbed && (
         <div style={{ position: "fixed", left: 12, top: 150, width: 320, zIndex: 120, display: "grid", gap: 12 }}>
           <StudentTopBar
@@ -430,4 +469,74 @@ export default function RewardsPage() {
       </div>
     </main>
   );
+}
+
+function topBar(): React.CSSProperties {
+  return {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 20,
+    flexWrap: "wrap",
+    alignItems: "flex-start",
+    marginBottom: 16,
+  };
+}
+
+function identity(): React.CSSProperties {
+  return {
+    display: "grid",
+    gap: 8,
+  };
+}
+
+function studentNameStyle(): React.CSSProperties {
+  return {
+    fontSize: "clamp(24px, 4vw, 36px)",
+    fontWeight: 1000,
+  };
+}
+
+function studentMeta(): React.CSSProperties {
+  return {
+    fontSize: 14,
+    opacity: 0.75,
+    fontWeight: 800,
+  };
+}
+
+function avatarWrap(): React.CSSProperties {
+  return {
+    marginTop: 6,
+    display: "grid",
+    placeItems: "start",
+  };
+}
+
+function avatarFallback(): React.CSSProperties {
+  return {
+    width: 160,
+    height: 160,
+    borderRadius: 20,
+    display: "grid",
+    placeItems: "center",
+    fontWeight: 900,
+    fontSize: 30,
+    background: "rgba(30,41,59,0.8)",
+  };
+}
+
+function backBtn(): React.CSSProperties {
+  return {
+    justifySelf: "start",
+    padding: "8px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.2)",
+    background: "rgba(30,41,59,0.7)",
+    color: "inherit",
+    fontWeight: 900,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    fontSize: 11,
+    marginBottom: 12,
+  };
 }

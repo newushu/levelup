@@ -283,7 +283,7 @@ export default function SkillsPage() {
       localStorage.setItem("active_student_id", studentId);
     } catch {}
     refreshProgress(studentId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [studentId]);
 
   const categories = useMemo(() => {

@@ -8,12 +8,14 @@ type CornerOffsets = { x: number; y: number; size: number };
 type BorderAsset = {
   render_mode?: string | null;
   image_url?: string | null;
+  z_layer?: string | null;
+  z_index?: number | null;
   html?: string | null;
   css?: string | null;
   js?: string | null;
   offset_x?: number | null;
   offset_y?: number | null;
-  offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null }> | null;
+  offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null; rotate?: number | null }> | null;
 };
 
 type EffectAsset = {
@@ -24,9 +26,12 @@ type EffectAsset = {
     speed?: number;
     opacity?: number;
     scale?: number;
-    scale_by_context?: Record<string, { scale?: number | null }> | null;
+    scale_by_context?: Record<string, { scale?: number | null; rotate?: number | null }> | null;
+    __layer?: { z_index?: number | null } | null;
   } | null;
   render_mode?: string | null;
+  z_layer?: string | null;
+  z_index?: number | null;
   html?: string | null;
   css?: string | null;
   js?: string | null;
@@ -106,15 +111,38 @@ export default function AvatarRender({
   const offsetX = Number(contextOffset?.x ?? border?.offset_x ?? 0);
   const offsetY = Number(contextOffset?.y ?? border?.offset_y ?? 0);
   const borderScale = Math.max(0.1, Number(contextOffset?.scale ?? 1));
+  const borderRotate = Number(contextOffset?.rotate ?? 0);
   const effectConfig = typeof effect?.config === "object" && effect?.config ? effect.config : {};
   const effectContext = contextKey && effectConfig.scale_by_context ? effectConfig.scale_by_context[contextKey] : null;
   const effectScale = Math.max(0.1, Number(effectContext?.scale ?? effectConfig.scale ?? 1));
+  const effectRotate = Number(effectContext?.rotate ?? 0);
+  const borderLayer = String(border?.z_layer ?? "above_avatar");
+  const effectLayer = String(effect?.z_layer ?? "behind_avatar");
+  const layerValue = (value: string, fallback: number) => {
+    if (value === "behind_all") return 0;
+    if (value === "behind_avatar") return 1;
+    if (value === "above_avatar") return 4;
+    return fallback;
+  };
+  const metaBorderZ = Number((border as any)?.offsets_by_context?.__layer?.z_index);
+  const metaEffectZ = Number((effectConfig as any)?.__layer?.z_index);
+  const borderZ = Number.isFinite(Number(border?.z_index))
+    ? Math.max(0, Math.min(8, Number(border?.z_index)))
+    : Number.isFinite(metaBorderZ)
+      ? Math.max(0, Math.min(8, metaBorderZ))
+      : layerValue(borderLayer, 4);
+  const effectZ = Number.isFinite(Number(effect?.z_index))
+    ? Math.max(0, Math.min(8, Number(effect?.z_index)))
+    : Number.isFinite(metaEffectZ)
+      ? Math.max(0, Math.min(8, metaEffectZ))
+      : layerValue(effectLayer, 1);
+  const avatarZ = 2;
   const effectLayerStyle: React.CSSProperties = {
     position: "absolute",
     inset: 0,
-    transform: `scale(${effectScale})`,
+    transform: `scale(${effectScale}) rotate(${effectRotate}deg)`,
     transformOrigin: "center",
-    zIndex: 0,
+    zIndex: effectZ,
     pointerEvents: "none",
   };
   const cornerSize = Math.max(0, Number(cornerOffsets?.size ?? 72));
@@ -141,7 +169,7 @@ export default function AvatarRender({
           css={border?.css}
           js={border?.js}
           bleed={bleed}
-          style={{ zIndex: 2, transform: `translate(${offsetX}px, ${offsetY}px) scale(${borderScale})`, transformOrigin: "center" }}
+          style={{ zIndex: borderZ, transform: `translate(${offsetX}px, ${offsetY}px) scale(${borderScale}) rotate(${borderRotate}deg)`, transformOrigin: "center" }}
         />
       ) : showImageBorder && border?.image_url ? (
         <>
@@ -150,15 +178,15 @@ export default function AvatarRender({
             alt=""
             style={{
               position: "absolute",
-              top: cornerY,
-              left: cornerX,
+              top: cornerY + offsetY,
+              left: cornerX + offsetX,
               width: cornerSize,
               height: cornerSize,
               objectFit: "contain",
               transform: `scale(${borderScale})`,
               transformOrigin: "top left",
               pointerEvents: "none",
-              zIndex: 2,
+              zIndex: borderZ,
             }}
           />
           <img
@@ -166,15 +194,15 @@ export default function AvatarRender({
             alt=""
             style={{
               position: "absolute",
-              bottom: cornerY,
-              right: cornerX,
+              bottom: cornerY - offsetY,
+              right: cornerX - offsetX,
               width: cornerSize,
               height: cornerSize,
               objectFit: "contain",
               transform: `scale(${borderScale}) rotate(180deg)`,
               transformOrigin: "bottom right",
               pointerEvents: "none",
-              zIndex: 2,
+              zIndex: borderZ,
             }}
           />
         </>
@@ -199,7 +227,7 @@ export default function AvatarRender({
             height: "100%",
             objectFit: "contain",
             position: "relative",
-            zIndex: 1,
+            zIndex: avatarZ,
             transform: `scale(${Math.max(50, Math.min(200, Number(avatarZoomPct))) / 100})`,
             transformOrigin: "center",
           }}

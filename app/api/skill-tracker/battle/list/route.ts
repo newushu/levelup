@@ -9,6 +9,7 @@ type BattleRow = {
   participant_ids?: string[] | null;
   team_a_ids?: string[] | null;
   team_b_ids?: string[] | null;
+  battle_meta?: any;
   skill_id: string;
   repetitions_target: number;
   wager_amount: number;
@@ -33,7 +34,7 @@ export async function GET(req: Request) {
   let q = supabase
     .from("battle_trackers")
     .select(
-      "id,left_student_id,right_student_id,battle_mode,participant_ids,team_a_ids,team_b_ids,skill_id,repetitions_target,wager_amount,wager_pct,created_at,archived_at,settled_at,winner_id,created_source,left:students!battle_trackers_left_student_id_fkey(id,name,level,points_total),right:students!battle_trackers_right_student_id_fkey(id,name,level,points_total),tracker_skills(id,name)"
+      "id,left_student_id,right_student_id,battle_mode,participant_ids,team_a_ids,team_b_ids,battle_meta,skill_id,repetitions_target,wager_amount,wager_pct,created_at,archived_at,settled_at,winner_id,created_source,left:students!battle_trackers_left_student_id_fkey(id,name,level,points_total),right:students!battle_trackers_right_student_id_fkey(id,name,level,points_total),tracker_skills(id,name)"
     )
     .is("archived_at", null)
     .order("created_at", { ascending: false });
@@ -59,17 +60,30 @@ export async function GET(req: Request) {
   const skillIds = Array.from(new Set(rows.map((r) => r.skill_id)));
   const { data: studentRows, error: sErr } = await supabase
     .from("students")
-    .select("id,name,level,points_total")
+    .select("id,name,level,points_total,lifetime_points")
     .in("id", allStudentIds);
   if (sErr) return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
+  const { data: levelRows } = await supabase
+    .from("avatar_level_thresholds")
+    .select("level,min_lifetime_points")
+    .order("level", { ascending: true });
+  const thresholds = (levelRows ?? [])
+    .map((row: any) => ({ level: Number(row.level), min: Number(row.min_lifetime_points ?? 0) }))
+    .filter((row: any) => Number.isFinite(row.level))
+    .sort((a: any, b: any) => a.level - b.level);
   const studentById = new Map<string, { name: string; level: number; points_total: number }>();
-  (studentRows ?? []).forEach((s: any) =>
+  (studentRows ?? []).forEach((s: any) => {
+    const lifetime = Number(s.lifetime_points ?? 0);
+    let nextLevel = Number(s.level ?? 1);
+    thresholds.forEach((lvl) => {
+      if (lifetime >= lvl.min) nextLevel = lvl.level;
+    });
     studentById.set(String(s.id), {
       name: String(s.name ?? "Student"),
-      level: Number(s.level ?? 1),
+      level: nextLevel,
       points_total: Number(s.points_total ?? 0),
-    })
-  );
+    });
+  });
 
   const { data: trackersForStats, error: tsErr } = await supabase
     .from("skill_trackers")
@@ -190,7 +204,7 @@ export async function GET(req: Request) {
   const plateKeys = Array.from(
     new Set((settings ?? []).map((s: any) => String(s.card_plate_key ?? "").trim()).filter(Boolean))
   );
-  let avatarMap = new Map<string, { storage_path: string | null }>();
+  const avatarMap = new Map<string, { storage_path: string | null }>();
   if (avatarIds.length) {
     const { data: avatars, error: avErr } = await supabase
       .from("avatars")
@@ -432,26 +446,39 @@ export async function GET(req: Request) {
     const rightStudent = studentById.get(rightId) ?? { name: "Student", level: 0, points_total: 0 };
     const left_avatar = avatarByStudent.get(leftId) ?? { storage_path: null, bg_color: null, particle_style: null, corner_border_url: null, card_plate_url: null };
     const right_avatar = avatarByStudent.get(rightId) ?? { storage_path: null, bg_color: null, particle_style: null, corner_border_url: null, card_plate_url: null };
-    let mvpIds = (r.battle_mode ?? "duel") === "teams" ? mvpByBattle.get(r.id) ?? [] : [];
-    const teamAIds = Array.isArray(r.team_a_ids) && r.team_a_ids.length ? r.team_a_ids.map(String) : participants.slice(0, Math.max(1, Math.ceil(participants.length / 2)));
-    const teamBIds = Array.isArray(r.team_b_ids) && r.team_b_ids.length ? r.team_b_ids.map(String) : participants.filter((id) => !teamAIds.includes(id));
+    let mvpIds =
+      (r.battle_mode ?? "duel") === "teams" || (r.battle_mode ?? "duel") === "lanes" ? mvpByBattle.get(r.id) ?? [] : [];
+    const fallbackTeamA = Array.isArray(r.team_a_ids) && r.team_a_ids.length ? r.team_a_ids.map(String) : participants.slice(0, Math.max(1, Math.ceil(participants.length / 2)));
+    const fallbackTeamB = Array.isArray(r.team_b_ids) && r.team_b_ids.length ? r.team_b_ids.map(String) : participants.filter((id) => !fallbackTeamA.includes(id));
+    const teamMetaRaw = Array.isArray((r as any)?.battle_meta?.team_ids) ? (r as any).battle_meta.team_ids : [];
+    const teamMeta = teamMetaRaw
+      .map((team: any) => (Array.isArray(team) ? team.map((id: any) => String(id ?? "").trim()).filter(Boolean) : []))
+      .filter((team: string[]) => team.length);
+    const teamGroups =
+      (r.battle_mode ?? "duel") === "teams"
+        ? (teamMeta.length ? teamMeta : [fallbackTeamA, fallbackTeamB].filter((t) => t.length))
+        : (r.battle_mode ?? "duel") === "lanes"
+          ? [fallbackTeamA, fallbackTeamB]
+          : [];
 
-    if ((r.battle_mode ?? "duel") === "teams") {
-      const pickTeamMvp = (ids: string[]) => {
-        const eligible = participantDetails
-          .filter((p) => ids.includes(p.id))
-          .map((p) => {
-            const attempts = Number(p.attempts ?? 0);
-            const successes = Number(p.successes ?? 0);
-            const rate = attempts > 0 ? successes / attempts : 0;
-            return { id: p.id, successes, rate };
-          })
-          .filter((row) => row.rate >= 0.6 && row.successes > 0);
-        if (!eligible.length) return [];
-        const top = Math.max(...eligible.map((row) => row.successes));
-        return eligible.filter((row) => row.successes === top).map((row) => row.id);
-      };
-      mvpIds = [...pickTeamMvp(teamAIds), ...pickTeamMvp(teamBIds)];
+    if ((r.battle_mode ?? "duel") === "teams" || (r.battle_mode ?? "duel") === "lanes") {
+      if (!mvpIds.length) {
+        const pickTeamMvp = (ids: string[]) => {
+          const eligible = participantDetails
+            .filter((p) => ids.includes(p.id))
+            .map((p) => {
+              const attempts = Number(p.attempts ?? 0);
+              const successes = Number(p.successes ?? 0);
+              const rate = attempts > 0 ? successes / attempts : 0;
+              return { id: p.id, successes, rate };
+            })
+            .filter((row) => row.rate >= 0.6 && row.successes > 0);
+          if (!eligible.length) return [];
+          const top = Math.max(...eligible.map((row) => row.successes));
+          return eligible.filter((row) => row.successes === top).map((row) => row.id);
+        };
+        mvpIds = teamGroups.flatMap((team) => pickTeamMvp(team));
+      }
     }
 
     const computePointsDelta = () => {
@@ -461,17 +488,33 @@ export async function GET(req: Request) {
       const pointsPerRep = Math.max(3, Number(r.wager_pct ?? 5));
       const wagerAmount = Math.max(0, Number(r.wager_amount ?? 0));
       const attemptsById = new Map(participantDetails.map((p) => [p.id, { attempts: p.attempts, successes: p.successes }]));
-      const teamAIds = Array.isArray(r.team_a_ids) && r.team_a_ids.length ? r.team_a_ids.map(String) : participants.slice(0, Math.max(1, Math.ceil(participants.length / 2)));
-      const teamBIds = Array.isArray(r.team_b_ids) && r.team_b_ids.length ? r.team_b_ids.map(String) : participants.filter((id) => !teamAIds.includes(id));
+      const teamMetaRaw = Array.isArray((r as any)?.battle_meta?.team_ids) ? (r as any).battle_meta.team_ids : [];
+      const teamMeta = teamMetaRaw
+        .map((team: any) => (Array.isArray(team) ? team.map((id: any) => String(id ?? "").trim()).filter(Boolean) : []))
+        .filter((team: string[]) => team.length);
+      const fallbackTeamA = Array.isArray(r.team_a_ids) && r.team_a_ids.length ? r.team_a_ids.map(String) : participants.slice(0, Math.max(1, Math.ceil(participants.length / 2)));
+      const fallbackTeamB = Array.isArray(r.team_b_ids) && r.team_b_ids.length ? r.team_b_ids.map(String) : participants.filter((id) => !fallbackTeamA.includes(id));
+      const teamGroups =
+        battleMode === "teams"
+          ? (teamMeta.length ? teamMeta : [fallbackTeamA, fallbackTeamB].filter((t) => t.length))
+          : battleMode === "lanes"
+            ? [fallbackTeamA, fallbackTeamB]
+            : [];
       let winnerIds: string[] = [];
       let payoutTotal = 0;
-      if (battleMode === "teams") {
-        const teamASuccesses = teamAIds.reduce((sum, id) => sum + (attemptsById.get(id)?.successes ?? 0), 0);
-        const teamBSuccesses = teamBIds.reduce((sum, id) => sum + (attemptsById.get(id)?.successes ?? 0), 0);
-        if (teamASuccesses > teamBSuccesses) winnerIds = teamAIds;
-        if (teamBSuccesses > teamASuccesses) winnerIds = teamBIds;
-        const lead = Math.abs(teamASuccesses - teamBSuccesses);
-        payoutTotal = lead * pointsPerRep;
+      if (battleMode === "teams" || battleMode === "lanes") {
+        const teamScores = teamGroups.map((ids) => ({
+          ids,
+          successes: ids.reduce((sum, id) => sum + (attemptsById.get(id)?.successes ?? 0), 0),
+        }));
+        const topScore = Math.max(0, ...teamScores.map((t) => t.successes));
+        const topTeams = teamScores.filter((t) => t.successes === topScore);
+        if (topTeams.length === 1) winnerIds = topTeams[0].ids;
+        const sortedScores = teamScores.map((t) => t.successes).sort((a, b) => b - a);
+        const lead = sortedScores.length >= 2 ? Math.max(0, sortedScores[0] - sortedScores[1]) : 0;
+        const losers = participants.filter((id) => !winnerIds.includes(id));
+        const perPerson = lead * pointsPerRep;
+        payoutTotal = wagerAmount > 0 ? wagerAmount * participants.length : perPerson * losers.length;
       } else {
         const ranked = participants
           .map((id) => ({ id, successes: attemptsById.get(id)?.successes ?? 0 }))
@@ -485,20 +528,27 @@ export async function GET(req: Request) {
       }
       const pointsDeltaById = new Map<string, number>();
       participants.forEach((id) => pointsDeltaById.set(id, 0));
-      if (!winnerIds.length || payoutTotal <= 0) {
+      if (!winnerIds.length && payoutTotal <= 0 && !mvpIds.length) {
         return pointsDeltaById;
       }
 
       const baseWinById = new Map<string, number>();
+      const netWinById = new Map<string, number>();
+      const lossById = new Map<string, number>();
       if (wagerAmount > 0) {
-        const share = Math.floor(payoutTotal / Math.max(1, winnerIds.length));
-        participants.forEach((id) => {
-          pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) - wagerAmount);
-        });
-        winnerIds.forEach((id) => {
-          pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + share);
-          baseWinById.set(id, share);
-        });
+        if (winnerIds.length) {
+          const share = Math.floor(payoutTotal / Math.max(1, winnerIds.length));
+          const netShare = Math.max(0, share - wagerAmount);
+          participants.forEach((id) => {
+            pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) - wagerAmount);
+            lossById.set(id, wagerAmount);
+          });
+          winnerIds.forEach((id) => {
+            if (share > 0) pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + share);
+            baseWinById.set(id, share);
+            netWinById.set(id, netShare);
+          });
+        }
       } else {
         const losers = participants.filter((id) => !winnerIds.includes(id));
         const balances = losers.map((id) => ({
@@ -507,7 +557,7 @@ export async function GET(req: Request) {
         }));
         const loserDebits = new Map<string, number>();
         if (losers.length) {
-          if (battleMode === "teams") {
+          if (battleMode === "teams" || battleMode === "lanes") {
             const baseLoss = Math.floor(payoutTotal / Math.max(1, losers.length));
             const remainder = payoutTotal - baseLoss * losers.length;
             let maxLoser: { id: string; balance: number } | null = null;
@@ -547,6 +597,7 @@ export async function GET(req: Request) {
           });
           loserDebits.forEach((debit, id) => {
             pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) - debit);
+            lossById.set(id, debit);
           });
           winnerIds.forEach((id) => {
             const extra = remainderWin > 0 && maxWinner?.id === id ? remainderWin : 0;
@@ -554,12 +605,45 @@ export async function GET(req: Request) {
             if (payout <= 0) return;
             pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + payout);
             baseWinById.set(id, payout);
+            netWinById.set(id, payout);
           });
         }
       }
 
       mvpIds.forEach((id) => {
         const baseWin = baseWinById.get(id) ?? 0;
+        const netWin = netWinById.get(id) ?? baseWin;
+        if (battleMode === "teams") {
+          if (!winnerIds.length) return;
+          if (winnerIds.includes(id) && netWin > 0) {
+            pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + netWin);
+            return;
+          }
+          if (winnerIds.length && !winnerIds.includes(id)) {
+            const refund = lossById.get(id) ?? 0;
+            if (refund > 0) pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + refund);
+            return;
+          }
+        }
+        if (battleMode === "lanes") {
+          if (!winnerIds.length) {
+            pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + 10);
+            return;
+          }
+          if (winnerIds.includes(id) && netWin > 0) {
+            pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + netWin);
+            return;
+          }
+          if (winnerIds.length && !winnerIds.includes(id)) {
+            const refund = lossById.get(id) ?? 0;
+            if (refund > 0) pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + refund);
+            return;
+          }
+        }
+        if (!winnerIds.length) {
+          pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + 10);
+          return;
+        }
         if (baseWin > 0) {
           pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + baseWin);
           return;
@@ -579,6 +663,7 @@ export async function GET(req: Request) {
       participant_ids: participants,
       team_a_ids: Array.isArray(r.team_a_ids) ? r.team_a_ids : [],
       team_b_ids: Array.isArray(r.team_b_ids) ? r.team_b_ids : [],
+      battle_meta: r.battle_meta ?? null,
       participants: participantDetails,
       left_student_id: leftId,
       right_student_id: rightId,

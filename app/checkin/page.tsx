@@ -53,6 +53,7 @@ function toLocalDateKey(value: Date) {
 }
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  if (blockedView) return blockedView;
   return (
     <div
       style={{
@@ -113,22 +114,17 @@ export default function CheckinPage() {
     })();
   }, []);
 
-  if (studentBlocked) {
-    return (
-      <main style={{ padding: 18, paddingTop: 28 }}>
-        <div style={{ fontSize: 22, fontWeight: 900 }}>Check-in is coach-only.</div>
-        <div style={{ opacity: 0.7, marginTop: 6 }}>Student accounts cannot access this page.</div>
-      </main>
-    );
-  }
-  if (adminBlocked) {
-    return (
-      <main style={{ padding: 18, paddingTop: 28 }}>
-        <div style={{ fontSize: 22, fontWeight: 900 }}>Check-in is admin-only.</div>
-        <div style={{ opacity: 0.7, marginTop: 6 }}>Admin or classroom accounts can access check-in.</div>
-      </main>
-    );
-  }
+  const blockedView = studentBlocked ? (
+    <main style={{ padding: 18, paddingTop: 28 }}>
+      <div style={{ fontSize: 22, fontWeight: 900 }}>Check-in is coach-only.</div>
+      <div style={{ opacity: 0.7, marginTop: 6 }}>Student accounts cannot access this page.</div>
+    </main>
+  ) : adminBlocked ? (
+    <main style={{ padding: 18, paddingTop: 28 }}>
+      <div style={{ fontSize: 22, fontWeight: 900 }}>Check-in is admin-only.</div>
+      <div style={{ opacity: 0.7, marginTop: 6 }}>Admin or classroom accounts can access check-in.</div>
+    </main>
+  ) : null;
 
   // Load classes
   useEffect(() => {
@@ -510,6 +506,8 @@ export default function CheckinPage() {
                   textAlign: "left",
                   borderRadius: 20,
                   padding: 14,
+                  userSelect: "text",
+                  WebkitUserSelect: "text",
                   border: isActive ? `1px solid ${withAlpha(classColor, 0.6)}` : "1px solid rgba(255,255,255,0.12)",
                   background: isActive
                     ? `linear-gradient(135deg, ${withAlpha(classColor, 0.35)}, rgba(15,23,42,0.92))`

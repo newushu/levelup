@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AuthGate from "@/components/AuthGate";
+import ParentImpersonationBar from "@/components/ParentImpersonationBar";
 
 type Announcement = {
   id: string;
@@ -33,6 +34,9 @@ function ParentAnnouncementsInner() {
   const [role, setRole] = useState("student");
   const [rows, setRows] = useState<Announcement[]>([]);
   const [msg, setMsg] = useState("");
+  const isParent = role === "parent";
+  const isAdmin = role === "admin";
+  const canView = isParent || isAdmin;
 
   useEffect(() => {
     (async () => {
@@ -43,16 +47,16 @@ function ParentAnnouncementsInner() {
   }, []);
 
   useEffect(() => {
-    if (role !== "parent") return;
+    if (!canView) return;
     (async () => {
       const res = await fetch("/api/announcements?type=banner", { cache: "no-store" });
       const sj = await safeJson(res);
       if (!sj.ok) return setMsg(sj.json?.error || "Failed to load announcements.");
       setRows((sj.json?.announcements ?? []) as Announcement[]);
     })();
-  }, [role]);
+  }, [canView]);
 
-  if (role !== "parent") {
+  if (!canView) {
     return (
       <main style={{ padding: 18 }}>
         <div style={{ fontSize: 22, fontWeight: 900 }}>Parent access only.</div>
@@ -61,7 +65,13 @@ function ParentAnnouncementsInner() {
   }
 
   return (
-    <main style={{ padding: 18, maxWidth: 1100, margin: "0 auto" }}>
+    <main style={{ padding: 18, maxWidth: "none", margin: 0, width: "100%" }}>
+      <ParentImpersonationBar enabled={isAdmin} />
+      {isAdmin ? (
+        <div style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 10, background: "rgba(251,191,36,0.16)", border: "1px solid rgba(251,191,36,0.45)" }}>
+          Admin preview: announcements are shared across roles.
+        </div>
+      ) : null}
       <div style={{ fontSize: 26, fontWeight: 1000 }}>Important Announcements</div>
       <div style={{ opacity: 0.7, marginTop: 6 }}>Closures, schedule changes, and urgent updates.</div>
       {msg ? <div style={{ marginTop: 10, opacity: 0.8 }}>{msg}</div> : null}

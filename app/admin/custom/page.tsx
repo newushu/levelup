@@ -62,6 +62,11 @@ const adminSections = [
         desc: "Create class templates with sections, timers, and video tools.",
         href: "/tools/lesson-forge/builder",
       },
+      {
+        title: "Class Time Plans",
+        desc: "Define class timeline sections and assign plans to classes.",
+        href: "/admin/custom/class-time-plans",
+      },
     ],
   },
   {
@@ -101,6 +106,11 @@ const adminSections = [
         title: "Roulette Wheel",
         desc: "Create prize/task wheels and configure spin outcomes.",
         href: "/admin/custom/roulette",
+      },
+      {
+        title: "Skill Strike",
+        desc: "Configure the card-based Battle Pulse game mode.",
+        href: "/admin/custom/skill-strike",
       },
       {
         title: "Wushu Adventure Quest",
@@ -148,8 +158,8 @@ const adminSections = [
         href: "/admin/custom/marketing",
       },
       {
-        title: "Email & Flyer Builder",
-        desc: "Design winter promo emails and export HTML.",
+        title: "Email, Marketing & Avatar Builder",
+        desc: "Design marketing templates, emails, and avatar visuals.",
         href: "/admin/custom/email-builder",
       },
     ],

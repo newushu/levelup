@@ -127,7 +127,7 @@ export default function TimerTool({
           }
           return;
         }
-        if (event.code === "Tab") {
+        if (event.code === "KeyR") {
           event.preventDefault();
           reset();
           return;
@@ -362,7 +362,7 @@ export default function TimerTool({
               </button>
             </div>
             <div style={{ textAlign: "center", fontSize: 12, opacity: 0.6 }}>
-              Space starts or pauses • Tab resets when the timer is open.
+              Space starts or pauses • R resets when the timer is open.
             </div>
             {timerType === "ctf" ? (
               <div style={legend()}>

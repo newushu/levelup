@@ -34,7 +34,6 @@ async function safeJson(res: Response) {
 
 export default function ChatWidget() {
   const path = usePathname();
-  if (path.startsWith("/classroom") || path.startsWith("/coach/classroom")) return null;
   const ADMIN_STUDENT_ID =
     process.env.NEXT_PUBLIC_ADMIN_STUDENT_ID || "1336212a-96da-4f03-b06d-d7527602d643";
   const [open, setOpen] = useState(false);
@@ -50,6 +49,7 @@ export default function ChatWidget() {
   const [viewerStudentId, setViewerStudentId] = useState("");
   const [input, setInput] = useState("");
   const [msg, setMsg] = useState("");
+  const hideWidget = path.startsWith("/classroom") || path.startsWith("/coach/classroom");
 
   const effectiveStudentId = viewerRole === "student" ? viewerStudentId : ADMIN_STUDENT_ID;
 
@@ -199,6 +199,7 @@ export default function ChatWidget() {
   );
   const publicThread = threads.find((t) => t.is_public);
   const isAdminView = viewerRole !== "student";
+  if (hideWidget) return null;
 
   return (
     <div style={wrap()}>

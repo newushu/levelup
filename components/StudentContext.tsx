@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 export type SelectedStudent = {
   id: string;
@@ -30,20 +30,20 @@ export function StudentProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const setSelected = (s: SelectedStudent | null) => {
+  const setSelected = useCallback((s: SelectedStudent | null) => {
     setSelectedState(s);
     if (!s) localStorage.removeItem("selected_student");
     else localStorage.setItem("selected_student", JSON.stringify(s));
-  };
+  }, []);
 
-  const refreshSelected = async () => {
+  const refreshSelected = useCallback(async () => {
     if (!selected?.id) return;
     const res = await fetch(`/api/students/get?id=${encodeURIComponent(selected.id)}`, { cache: "no-store" });
     const data = await res.json();
     if (res.ok && data.student) setSelected(data.student);
-  };
+  }, [selected, setSelected]);
 
-  const value = useMemo(() => ({ selected, setSelected, refreshSelected }), [selected]);
+  const value = useMemo(() => ({ selected, setSelected, refreshSelected }), [selected, setSelected, refreshSelected]);
 
   return <StudentCtx.Provider value={value}>{children}</StudentCtx.Provider>;
 }

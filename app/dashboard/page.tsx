@@ -45,9 +45,15 @@ type Challenge = {
   description: string;
   category: string;
   comp_team_only: boolean;
+  tier?: string | null;
+  points_awarded?: number | null;
+  limit_mode?: string | null;
+  limit_count?: number | null;
+  limit_window_days?: number | null;
+  enabled?: boolean | null;
 };
 
-type StudentChallenge = { challenge_id: string; tier: Tier };
+type StudentChallenge = { challenge_id: string; tier?: Tier; completed?: boolean | null; completed_at?: string | null };
 type EarnedBadge = {
   badge_id: string;
   earned_at: string;
@@ -309,6 +315,7 @@ export function DashboardInner() {
 
   const [challenges, setChallenges] = useState<Challenge[]>([]);
   const [earnedChallenges, setEarnedChallenges] = useState<StudentChallenge[]>([]);
+  const [challengeCompletions, setChallengeCompletions] = useState<Record<string, string[]>>({});
   const [earnedBadges, setEarnedBadges] = useState<EarnedBadge[]>([]);
   const [prestigeCatalog, setPrestigeCatalog] = useState<BadgeCatalog[]>([]);
   const [prestigeProgress, setPrestigeProgress] = useState<Record<string, { progress: number; current: number; target: number; detail?: string }>>({});
@@ -546,7 +553,7 @@ export function DashboardInner() {
         }
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   useEffect(() => {
@@ -638,7 +645,20 @@ export function DashboardInner() {
       body: JSON.stringify({ student_id: sid }),
     });
     const j1 = await safeJson(r1);
-    if (j1.ok) setEarnedChallenges((j1.json?.earned ?? []) as StudentChallenge[]);
+    if (j1.ok) {
+      const rows = (j1.json?.earned ?? j1.json?.rows ?? []) as StudentChallenge[];
+      setEarnedChallenges(rows);
+      const completionRows = (j1.json?.completions ?? []) as Array<{ challenge_id: string; completed_at: string | null }>;
+      const map: Record<string, string[]> = {};
+      completionRows.forEach((row: any) => {
+        const key = String(row.challenge_id ?? "");
+        const ts = row.completed_at ? String(row.completed_at) : "";
+        if (!key || !ts) return;
+        if (!map[key]) map[key] = [];
+        map[key].push(ts);
+      });
+      setChallengeCompletions(map);
+    }
     else setMsg(j1.json?.error || "Failed to load student challenges");
 
     const r2 = await fetch("/api/students/badges", {
@@ -681,6 +701,25 @@ export function DashboardInner() {
     });
     const sj = await safeJson(r);
     if (sj.ok) setSkillHistory((sj.json?.history ?? []) as SkillHistoryRow[]);
+  }
+
+  async function completeChallenge(challengeId: string) {
+    if (!studentId) return;
+    const res = await fetch("/api/challenges/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ studentId, challengeId, completed: true }),
+    });
+    const sj = await safeJson(res);
+    if (!sj.ok) return setMsg(sj.json?.error || "Failed to complete challenge");
+    const row = sj.json?.row as StudentChallenge | undefined;
+    if (!row) return;
+    setEarnedChallenges((prev) => {
+      const next = prev.filter((r) => String(r.challenge_id) !== String(row.challenge_id));
+      return [...next, row];
+    });
+    await refreshStudents(true);
+    if (studentId) await refreshStudentExtras(studentId);
   }
 
   async function refreshActivity(sid: string) {
@@ -1336,6 +1375,125 @@ export function DashboardInner() {
   }
 
   function renderTabContent(activeTab: Tab) {
+    if (activeTab === "Challenges") {
+      const grouped = challenges.reduce((acc: Record<string, Challenge[]>, c) => {
+        const key = String(c.category ?? "Uncategorized");
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(c);
+        return acc;
+      }, {});
+      const groups = Object.keys(grouped).sort((a, b) => a.localeCompare(b)).map((key) => ({
+        key,
+        rows: grouped[key],
+      }));
+      const completedChrono = Array.from(completedChallengeById.entries())
+        .map(([challenge_id, completed_at]) => ({
+          challenge: challenges.find((c) => c.id === challenge_id) ?? null,
+          completed_at,
+        }))
+        .filter((row) => row.challenge && row.completed_at)
+        .sort((a, b) => String(b.completed_at).localeCompare(String(a.completed_at)));
+      return (
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 16 }}>
+          <div style={{ display: "grid", gap: 16 }}>
+            {groups.map((group) => (
+              <div key={group.key} style={{ display: "grid", gap: 10 }}>
+                <div style={{ fontWeight: 1000, textTransform: "uppercase", letterSpacing: 0.6, opacity: 0.8 }}>{group.key}</div>
+                {group.rows.map((c) => {
+                  const medalUrl = medalIcons[String(c.tier ?? "").toLowerCase()] ?? null;
+                  const completedAt = completedChallengeById.get(String(c.id)) || "";
+                  const repeatable = String(c.limit_mode ?? "once") !== "once";
+                  const completions = challengeCompletions[String(c.id)] ?? [];
+                  const countWindow = countInWindow(c, completions, Date.now());
+                  const limitCount = Math.max(1, Number(c.limit_count ?? 1));
+                  const blocked = countWindow >= limitCount;
+                  const remaining = Math.max(0, limitCount - countWindow);
+                  return (
+                    <div
+                      key={c.id}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "56px 1fr auto",
+                        gap: 10,
+                        padding: 12,
+                        borderRadius: 14,
+                        border: "1px solid rgba(148,163,184,0.18)",
+                        background: "rgba(15,23,42,0.9)",
+                        opacity: blocked ? 0.55 : 1,
+                        filter: blocked ? "grayscale(0.4)" : "none",
+                        outline: completedAt ? "2px solid rgba(34,197,94,0.65)" : "none",
+                        boxShadow: completedAt ? "0 0 0 3px rgba(34,197,94,0.08)" : "none",
+                      }}
+                    >
+                      <div style={{ width: 52, height: 52, borderRadius: 12, border: "1px solid rgba(148,163,184,0.2)", background: "rgba(30,41,59,0.7)", display: "grid", placeItems: "center" }}>
+                        {medalUrl ? <img src={medalUrl} alt={String(c.tier ?? "tier")} style={{ width: 36, height: 36, objectFit: "contain" }} /> : <span>—</span>}
+                      </div>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <div style={{ fontWeight: 1000, fontSize: 18, textDecoration: blocked ? "line-through" : "none" }}>{c.name}</div>
+                        {c.description ? <div style={{ fontSize: 13, opacity: 0.82 }}>{c.description}</div> : null}
+                        {completedAt ? (
+                          <div style={{ justifySelf: "start", padding: "4px 10px", borderRadius: 999, fontSize: 11, fontWeight: 900, letterSpacing: 0.6, textTransform: "uppercase", color: "#052e16", background: "rgba(34,197,94,0.8)", border: "1px solid rgba(34,197,94,0.85)" }}>
+                            Completed
+                          </div>
+                        ) : null}
+                        <div style={{ fontSize: 15, fontWeight: 900, opacity: 0.85 }}>{formatChallengeLimit(c)}</div>
+                        <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.8, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                          Remaining: {remaining} / {Math.max(1, Number(c.limit_count ?? 1))}
+                        </div>
+                        {repeatable && completedAt ? (
+                          <div style={{ fontSize: 11, opacity: 0.7 }}>Last completed: {new Date(completedAt).toLocaleDateString()}</div>
+                        ) : null}
+                        {blocked ? <div style={{ fontSize: 11, fontWeight: 900, color: "#fca5a5", letterSpacing: 0.4, textTransform: "uppercase" }}>Limit reached</div> : null}
+                      </div>
+                      <div style={{ display: "grid", alignContent: "center", justifyItems: "end", gap: 8 }}>
+                        <div style={{ padding: "6px 12px", borderRadius: 12, fontWeight: 1000, fontSize: 16, background: "rgba(15,118,110,0.35)", border: "1px solid rgba(45,212,191,0.55)", color: "#e6fffb", letterSpacing: 0.4 }}>
+                          {c.points_awarded ? `${c.points_awarded} pts` : "0 pts"}
+                        </div>
+                        <button
+                          onClick={() => completeChallenge(c.id)}
+                          disabled={blocked}
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: 12,
+                            border: "1px solid rgba(56,189,248,0.4)",
+                            background: blocked ? "rgba(148,163,184,0.15)" : "rgba(56,189,248,0.18)",
+                            color: "white",
+                            fontWeight: 900,
+                            cursor: blocked ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          Complete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 10 }}>
+            <div style={{ fontWeight: 1000, textTransform: "uppercase", letterSpacing: 0.6, opacity: 0.8 }}>Completed (Most Recent)</div>
+            {completedChrono.map((row) => {
+              if (!row.challenge) return null;
+              const medalUrl = medalIcons[String(row.challenge.tier ?? "").toLowerCase()] ?? null;
+              return (
+                <div key={`${row.challenge.id}-${row.completed_at}`} style={{ display: "grid", gridTemplateColumns: "56px 1fr", gap: 10, padding: 12, borderRadius: 14, border: "1px solid rgba(148,163,184,0.18)", background: "rgba(15,23,42,0.9)" }}>
+                  <div style={{ width: 52, height: 52, borderRadius: 12, border: "1px solid rgba(148,163,184,0.2)", background: "rgba(30,41,59,0.7)", display: "grid", placeItems: "center" }}>
+                    {medalUrl ? <img src={medalUrl} alt={String(row.challenge.tier ?? "tier")} style={{ width: 36, height: 36, objectFit: "contain" }} /> : <span>—</span>}
+                  </div>
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <div style={{ fontWeight: 1000 }}>{row.challenge.name}</div>
+                    <div style={{ fontSize: 12, opacity: 0.75 }}>{row.challenge.points_awarded ? `${row.challenge.points_awarded} pts` : "0 pts"} • {formatChallengeLimit(row.challenge)}</div>
+                    <div style={{ fontSize: 11, opacity: 0.7 }}>Completed: {new Date(row.completed_at).toLocaleDateString()}</div>
+                  </div>
+                </div>
+              );
+            })}
+            {!completedChrono.length ? <div style={{ opacity: 0.7 }}>No completed challenges yet.</div> : null}
+          </div>
+        </div>
+      );
+    }
     if (activeTab === "Badges") {
       const hiddenTerms = ["first check", "horse stance", "attendance", "strength"];
       const visibleBadges = earnedBadges.filter((b) => {
@@ -2894,6 +3052,7 @@ export function DashboardInner() {
     if (!sj.ok) return setMsg(sj.json?.error || "Failed");
 
     pushAnnouncement(`${student.name} earned a ${tier.toUpperCase()} medal`);
+    await refreshStudents(true);
     await refreshStudentExtras(student.id);
   }
 
@@ -3280,6 +3439,53 @@ function flashCardPlateUnlock(key: string, points: number) {
   // bg_color applies ONLY to avatar box
   const avatarBoxBg = String(avatarSettings?.bg_color ?? "").trim() || "rgba(0,0,0,0.55)";
   const showRecentBadgeSparkles = (earnedBadges ?? []).length > 0;
+
+  const completedChallengeById = useMemo(() => {
+    const map = new Map<string, string>();
+    earnedChallenges.forEach((row) => {
+      if (!row.completed) return;
+      const key = String(row.challenge_id);
+      const next = String(row.completed_at ?? "");
+      const prev = map.get(key);
+      if (!prev || (next && next > prev)) map.set(key, next);
+    });
+    return map;
+  }, [earnedChallenges]);
+
+  const formatChallengeLimit = (row: Challenge) => {
+    const mode = String(row.limit_mode ?? "once");
+    const count = Number(row.limit_count ?? 1);
+    if (mode === "once") return "Limit: 1 time";
+    if (mode === "daily") return `Limit: ${count} / day`;
+    if (mode === "weekly") return `Limit: ${count} / week`;
+    if (mode === "monthly") return `Limit: ${count} / month`;
+    if (mode === "yearly") return `Limit: ${count} / year`;
+    if (mode === "lifetime") return `Limit: ${count} lifetime`;
+    if (mode === "custom") {
+      const days = Number(row.limit_window_days ?? 0);
+      return days ? `Limit: ${count} / ${days} days` : `Limit: ${count} / custom window`;
+    }
+    return `Limit: ${count}`;
+  };
+
+  const windowDaysFor = (row: Challenge) => {
+    const mode = String(row.limit_mode ?? "once").toLowerCase();
+    if (mode === "daily") return 1;
+    if (mode === "weekly") return 7;
+    if (mode === "monthly") return 30;
+    if (mode === "yearly") return 365;
+    if (mode === "custom") return Math.max(0, Number(row.limit_window_days ?? 0));
+    return null;
+  };
+
+  const countInWindow = (row: Challenge, completions: string[], nowMs: number) => {
+    const mode = String(row.limit_mode ?? "once").toLowerCase();
+    if (mode === "once" || mode === "lifetime") return completions.length;
+    const days = windowDaysFor(row);
+    if (!days) return completions.length;
+    const windowStart = nowMs - days * 24 * 60 * 60 * 1000;
+    return completions.filter((ts) => new Date(ts).getTime() >= windowStart).length;
+  };
 
   const tabItems = useMemo(() => {
     const base = [
@@ -4014,11 +4220,7 @@ function flashCardPlateUnlock(key: string, points: number) {
                 ))}
               </div>
             </div>
-            {tab === "Challenges" ? (
-              <div style={{ opacity: 0.8 }}>Challenge Vault entries will return here soon.</div>
-            ) : (
-              renderTabContent(tab)
-            )}
+            {renderTabContent(tab)}
           </div>
         </Overlay>
       )}

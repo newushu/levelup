@@ -29,11 +29,21 @@ export async function GET() {
   const { data: u } = await supabase.auth.getUser();
   if (!u.user) return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("avatar_effects")
-    .select("id,key,name,unlock_level,unlock_points,config,render_mode,html,css,js,enabled")
+    .select("id,key,name,unlock_level,unlock_points,config,render_mode,z_layer,html,css,js,enabled")
     .order("unlock_level", { ascending: true })
     .order("name", { ascending: true });
+
+  if (error && /z_layer/i.test(error.message ?? "")) {
+    const fallback = await supabase
+      .from("avatar_effects")
+      .select("id,key,name,unlock_level,unlock_points,config,render_mode,html,css,js,enabled")
+      .order("unlock_level", { ascending: true })
+      .order("name", { ascending: true });
+    data = (fallback.data ?? []).map((row: any) => ({ ...row, z_layer: "behind_avatar" }));
+    error = fallback.error;
+  }
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
@@ -45,6 +55,7 @@ export async function GET() {
     unlock_points?: number | null;
     config?: any;
     render_mode?: string | null;
+    z_layer?: string | null;
     html?: string | null;
     css?: string | null;
     js?: string | null;
@@ -61,6 +72,7 @@ export async function GET() {
       unlock_points: row?.unlock_points ?? 0,
       config: row?.config ?? preset.config,
       render_mode: row?.render_mode ?? "particles",
+      z_layer: row?.z_layer ?? "behind_avatar",
       html: row?.html ?? "",
       css: row?.css ?? "",
       js: row?.js ?? "",
@@ -77,6 +89,7 @@ export async function GET() {
       unlock_points: row.unlock_points ?? 0,
       config: row.config ?? {},
       render_mode: row.render_mode ?? "particles",
+      z_layer: row?.z_layer ?? "behind_avatar",
       html: row.html ?? "",
       css: row.css ?? "",
       js: row.js ?? "",

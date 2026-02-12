@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/authz";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { resolveParentContext } from "../_parentContext";
 
 function mondayOfWeek(d: Date) {
   const x = new Date(d);
@@ -11,19 +11,12 @@ function mondayOfWeek(d: Date) {
   return x;
 }
 
-export async function GET() {
-  const gate = await requireUser();
-  if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 401 });
+export async function GET(req: Request) {
+  const ctx = await resolveParentContext(req);
+  if (!ctx.ok) return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
+  const parent = ctx.parent;
 
   const admin = supabaseAdmin();
-  const { data: parent, error: pErr } = await admin
-    .from("parents")
-    .select("id")
-    .eq("auth_user_id", gate.user.id)
-    .maybeSingle();
-  if (pErr) return NextResponse.json({ ok: false, error: pErr.message }, { status: 500 });
-  if (!parent?.id) return NextResponse.json({ ok: false, error: "Not a parent account" }, { status: 403 });
-
   const { data: settings } = await admin.from("app_settings").select("parent_weekly_points_limit").eq("id", 1).single();
   const limit = Number(settings?.parent_weekly_points_limit ?? 30);
   const weekStart = mondayOfWeek(new Date()).toISOString().slice(0, 10);

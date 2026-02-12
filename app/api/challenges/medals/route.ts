@@ -6,7 +6,7 @@ export async function GET() {
   const { data: u } = await supabase.auth.getUser();
   if (!u.user) return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
 
-  let { data, error } = await supabase
+  const { data, error } = await supabase
     .from("challenge_medal_assets")
     .select("tier,badge_library:badge_library_id(image_url)")
     .order("tier", { ascending: true });

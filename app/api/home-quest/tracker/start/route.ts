@@ -32,6 +32,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Home Tracker disabled" }, { status: 403 });
   }
 
+  const now = new Date();
+  const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const { data: todayRows, error: tErr } = await supabase
+    .from("home_quest_trackers")
+    .select("id,created_at")
+    .eq("student_id", student_id)
+    .gte("created_at", startOfDay.toISOString())
+    .limit(1);
+  if (tErr) return NextResponse.json({ ok: false, error: tErr.message }, { status: 500 });
+  if (todayRows?.length) {
+    return NextResponse.json({ ok: false, error: "Daily tracker already used for today." }, { status: 400 });
+  }
+
   const { data: existing } = await supabase
     .from("home_quest_trackers")
     .select("id")

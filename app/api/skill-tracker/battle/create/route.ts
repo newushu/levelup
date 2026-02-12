@@ -13,7 +13,10 @@ export async function POST(req: Request) {
   const rawParticipants = Array.isArray(body?.participant_ids) ? body.participant_ids : [];
   const rawTeamA = Array.isArray(body?.team_a_ids) ? body.team_a_ids : [];
   const rawTeamB = Array.isArray(body?.team_b_ids) ? body.team_b_ids : [];
+  const rawTeamC = Array.isArray(body?.team_c_ids) ? body.team_c_ids : [];
+  const rawTeamD = Array.isArray(body?.team_d_ids) ? body.team_d_ids : [];
   const skill_id = String(body?.skill_id ?? "").trim();
+  const battle_meta = body?.battle_meta ?? {};
   const repetitions_target = Math.max(1, Math.min(20, Number(body?.repetitions_target ?? 5)));
   const requested_wager = Math.max(0, Number(body?.wager_amount ?? 0));
   const requested_points_per_rep = Math.max(3, Number(body?.points_per_rep ?? 5));
@@ -32,17 +35,78 @@ export async function POST(req: Request) {
   let participant_ids: string[] = [];
   let team_a_ids: string[] = [];
   let team_b_ids: string[] = [];
+  let team_c_ids: string[] = [];
+  let team_d_ids: string[] = [];
 
-  if (battle_mode === "teams") {
+  if (battle_mode === "teams" || battle_mode === "lanes") {
     team_a_ids = normalizeIds(rawTeamA);
     team_b_ids = normalizeIds(rawTeamB);
-    const overlap = team_a_ids.filter((id) => team_b_ids.includes(id));
+    team_c_ids = normalizeIds(rawTeamC);
+    team_d_ids = normalizeIds(rawTeamD);
+    const overlap = [...team_a_ids, ...team_b_ids, ...team_c_ids, ...team_d_ids].filter(
+      (id, idx, all) => all.indexOf(id) !== idx
+    );
     if (overlap.length) {
       return NextResponse.json({ ok: false, error: "Students cannot be on both teams." }, { status: 400 });
     }
-    participant_ids = normalizeIds([...team_a_ids, ...team_b_ids]);
+    participant_ids = normalizeIds([...team_a_ids, ...team_b_ids, ...team_c_ids, ...team_d_ids]);
     if (team_a_ids.length < 1 || team_b_ids.length < 1) {
       return NextResponse.json({ ok: false, error: "Both teams need at least one student." }, { status: 400 });
+    }
+    if (battle_mode === "lanes") {
+      if (team_a_ids.length < 2 || team_b_ids.length < 2) {
+        return NextResponse.json({ ok: false, error: "Skill Lanes needs at least 2 players per team." }, { status: 400 });
+      }
+      if (team_a_ids.length !== team_b_ids.length) {
+        return NextResponse.json({ ok: false, error: "Skill Lanes teams must be the same size." }, { status: 400 });
+      }
+      const categories = Array.isArray(battle_meta?.categories) ? battle_meta.categories : [];
+      if (categories.length < 1) {
+        return NextResponse.json({ ok: false, error: "Skill Lanes needs at least 1 category." }, { status: 400 });
+      }
+      const categorySkills = battle_meta?.category_skills ?? {};
+      const skillMin = Math.max(1, Math.max(team_a_ids.length, team_b_ids.length) > 3 ? 3 : 1);
+      const allCatsHaveSkills = categories.every(
+        (cat: string) => Array.isArray(categorySkills[cat]) && categorySkills[cat].length >= skillMin
+      );
+      if (!allCatsHaveSkills) {
+        return NextResponse.json(
+          { ok: false, error: `Each category needs at least ${skillMin} skills selected.` },
+          { status: 400 }
+        );
+      }
+      const assignments = battle_meta?.assignments ?? {};
+      const normalizeCategories = (value: any) => {
+        if (Array.isArray(value)) {
+          const seen = new Set<string>();
+          return value
+            .map((entry) => String(entry ?? "").trim())
+            .filter((entry) => entry)
+            .filter((entry) => {
+              if (seen.has(entry)) return false;
+              seen.add(entry);
+              return true;
+            });
+        }
+        const single = String(value ?? "").trim();
+        return single ? [single] : [];
+      };
+      const allowed = new Set(categories.map((cat: string) => String(cat)));
+      for (const id of participant_ids) {
+        const cats = normalizeCategories(assignments[id]);
+        if (!cats.length) {
+          return NextResponse.json({ ok: false, error: "All players must have at least one category." }, { status: 400 });
+        }
+        if (cats.some((cat) => !allowed.has(cat))) {
+          return NextResponse.json({ ok: false, error: "Invalid category assignment." }, { status: 400 });
+        }
+      }
+    }
+    if (battle_mode === "teams") {
+      const teams = [team_a_ids, team_b_ids, team_c_ids, team_d_ids].filter((t) => t.length);
+      if (teams.length < 2) {
+        return NextResponse.json({ ok: false, error: "Battle Pulse teams need at least two teams." }, { status: 400 });
+      }
     }
   } else if (battle_mode === "ffa") {
     participant_ids = normalizeIds(rawParticipants);
@@ -99,6 +163,14 @@ export async function POST(req: Request) {
   const battleLeftId = participant_ids[0] ?? left_student_id;
   const battleRightId = participant_ids[1] ?? right_student_id;
 
+  const normalizedBattleMeta =
+    battle_mode === "teams"
+      ? {
+          ...(battle_meta ?? {}),
+          team_ids: [team_a_ids, team_b_ids, team_c_ids, team_d_ids].filter((t) => t.length),
+        }
+      : battle_meta ?? {};
+
   const { data, error } = await supabase
     .from("battle_trackers")
     .insert({
@@ -112,10 +184,11 @@ export async function POST(req: Request) {
       participant_ids,
       team_a_ids,
       team_b_ids,
+      battle_meta: normalizedBattleMeta,
       created_by: u.user.id,
       created_source,
     })
-    .select("id,left_student_id,right_student_id,skill_id,repetitions_target,wager_amount,wager_pct,battle_mode,participant_ids,team_a_ids,team_b_ids,created_at")
+    .select("id,left_student_id,right_student_id,skill_id,repetitions_target,wager_amount,wager_pct,battle_mode,participant_ids,team_a_ids,team_b_ids,battle_meta,created_at")
     .single();
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

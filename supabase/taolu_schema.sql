@@ -72,6 +72,47 @@ create table if not exists taolu_remediations (
   created_by uuid
 );
 
+create table if not exists taolu_refinement_rounds (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references students(id) on delete cascade,
+  window_days int not null default 7,
+  window_start timestamptz not null,
+  window_end timestamptz not null,
+  points_fixed int not null default 0,
+  points_missed int not null default 0,
+  points_new int not null default 0,
+  points_net int not null default 0,
+  created_by uuid,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists taolu_refinement_items (
+  id uuid primary key default gen_random_uuid(),
+  round_id uuid not null references taolu_refinement_rounds(id) on delete cascade,
+  student_id uuid not null references students(id) on delete cascade,
+  taolu_form_id uuid not null references iwuf_taolu_forms(id) on delete cascade,
+  section_number int not null,
+  code_id uuid references iwuf_codes(id) on delete set null,
+  code_number text,
+  code_name text,
+  status text not null default 'missed',
+  deduction_ids jsonb not null default '[]',
+  note_samples jsonb not null default '[]',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists taolu_refinement_deductions (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid not null references students(id) on delete cascade,
+  taolu_form_id uuid not null references iwuf_taolu_forms(id) on delete cascade,
+  section_number int not null,
+  code_id uuid references iwuf_codes(id) on delete set null,
+  note text,
+  occurred_at timestamptz not null default now(),
+  kind text not null default 'missed',
+  source_round_id uuid references taolu_refinement_rounds(id) on delete set null
+);
+
 create table if not exists preps_sessions (
   id uuid primary key default gen_random_uuid(),
   student_id uuid not null references students(id) on delete cascade,
@@ -140,6 +181,9 @@ create index if not exists taolu_sessions_form_idx on taolu_sessions(taolu_form_
 create index if not exists taolu_sessions_active_idx on taolu_sessions(ended_at);
 create index if not exists taolu_deductions_session_idx on taolu_deductions(session_id, occurred_at desc);
 create unique index if not exists taolu_remediations_session_idx on taolu_remediations(session_id);
+create index if not exists taolu_refinement_rounds_student_idx on taolu_refinement_rounds(student_id, created_at desc);
+create index if not exists taolu_refinement_items_round_idx on taolu_refinement_items(round_id);
+create index if not exists taolu_refinement_deductions_student_idx on taolu_refinement_deductions(student_id, occurred_at desc);
 create index if not exists preps_sessions_student_idx on preps_sessions(student_id, created_at desc);
 create index if not exists preps_sessions_form_idx on preps_sessions(taolu_form_id, created_at desc);
 create index if not exists preps_sessions_active_idx on preps_sessions(ended_at);
@@ -156,6 +200,9 @@ alter table iwuf_report_windows enable row level security;
 alter table taolu_sessions enable row level security;
 alter table taolu_deductions enable row level security;
 alter table taolu_remediations enable row level security;
+alter table taolu_refinement_rounds enable row level security;
+alter table taolu_refinement_items enable row level security;
+alter table taolu_refinement_deductions enable row level security;
 alter table preps_sessions enable row level security;
 alter table preps_notes enable row level security;
 alter table preps_remediations enable row level security;
@@ -179,6 +226,12 @@ drop policy if exists "taolu_deductions_select" on taolu_deductions;
 drop policy if exists "taolu_deductions_write" on taolu_deductions;
 drop policy if exists "taolu_remediations_select" on taolu_remediations;
 drop policy if exists "taolu_remediations_write" on taolu_remediations;
+drop policy if exists "taolu_refinement_rounds_select" on taolu_refinement_rounds;
+drop policy if exists "taolu_refinement_rounds_write" on taolu_refinement_rounds;
+drop policy if exists "taolu_refinement_items_select" on taolu_refinement_items;
+drop policy if exists "taolu_refinement_items_write" on taolu_refinement_items;
+drop policy if exists "taolu_refinement_deductions_select" on taolu_refinement_deductions;
+drop policy if exists "taolu_refinement_deductions_write" on taolu_refinement_deductions;
 drop policy if exists "preps_sessions_select" on preps_sessions;
 drop policy if exists "preps_sessions_write" on preps_sessions;
 drop policy if exists "preps_notes_select" on preps_notes;
@@ -388,6 +441,96 @@ create policy "taolu_remediations_select"
 
 create policy "taolu_remediations_write"
   on taolu_remediations for all
+  using (
+    exists (
+      select 1
+      from user_roles ur
+      where ur.user_id = auth.uid()
+        and ur.role in ('admin','coach')
+    )
+  )
+  with check (
+    exists (
+      select 1
+      from user_roles ur
+      where ur.user_id = auth.uid()
+        and ur.role in ('admin','coach')
+    )
+  );
+
+create policy "taolu_refinement_rounds_select"
+  on taolu_refinement_rounds for select
+  using (
+    exists (
+      select 1
+      from user_roles ur
+      where ur.user_id = auth.uid()
+        and ur.role in ('admin','coach')
+    )
+  );
+
+create policy "taolu_refinement_rounds_write"
+  on taolu_refinement_rounds for all
+  using (
+    exists (
+      select 1
+      from user_roles ur
+      where ur.user_id = auth.uid()
+        and ur.role in ('admin','coach')
+    )
+  )
+  with check (
+    exists (
+      select 1
+      from user_roles ur
+      where ur.user_id = auth.uid()
+        and ur.role in ('admin','coach')
+    )
+  );
+
+create policy "taolu_refinement_items_select"
+  on taolu_refinement_items for select
+  using (
+    exists (
+      select 1
+      from user_roles ur
+      where ur.user_id = auth.uid()
+        and ur.role in ('admin','coach')
+    )
+  );
+
+create policy "taolu_refinement_items_write"
+  on taolu_refinement_items for all
+  using (
+    exists (
+      select 1
+      from user_roles ur
+      where ur.user_id = auth.uid()
+        and ur.role in ('admin','coach')
+    )
+  )
+  with check (
+    exists (
+      select 1
+      from user_roles ur
+      where ur.user_id = auth.uid()
+        and ur.role in ('admin','coach')
+    )
+  );
+
+create policy "taolu_refinement_deductions_select"
+  on taolu_refinement_deductions for select
+  using (
+    exists (
+      select 1
+      from user_roles ur
+      where ur.user_id = auth.uid()
+        and ur.role in ('admin','coach')
+    )
+  );
+
+create policy "taolu_refinement_deductions_write"
+  on taolu_refinement_deductions for all
   using (
     exists (
       select 1

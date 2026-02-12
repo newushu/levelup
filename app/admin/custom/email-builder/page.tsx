@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import AuthGate from "@/components/AuthGate";
-import AvatarEffectParticles from "@/components/AvatarEffectParticles";
 import AvatarRender from "@/components/AvatarRender";
 
 type ContactInfo = {
@@ -12,7 +11,15 @@ type ContactInfo = {
   website: string;
 };
 
-type BuilderKind = "email" | "flyer" | "code" | "avatar-border" | "avatar-effect" | "battle-pulse-effect";
+type BuilderKind =
+  | "email"
+  | "flyer"
+  | "code"
+  | "avatar"
+  | "avatar-border"
+  | "avatar-effect"
+  | "edge-plate"
+  | "battle-pulse-effect";
 
 type SavedProject = {
   id: string;
@@ -58,9 +65,11 @@ type AvatarBorderRow = {
   name: string;
   image_url?: string | null;
   render_mode?: string | null;
+  z_layer?: string | null;
+  z_index?: number | null;
   offset_x?: number | null;
   offset_y?: number | null;
-  offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null }> | null;
+  offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null; rotate?: number | null }> | null;
   html?: string | null;
   css?: string | null;
   js?: string | null;
@@ -81,9 +90,11 @@ type AvatarEffectRow = {
     speed?: number;
     opacity?: number;
     scale?: number;
-    scale_by_context?: Record<string, { scale?: number | null }>;
+    scale_by_context?: Record<string, { scale?: number | null; rotate?: number | null }>;
   };
   render_mode?: string | null;
+  z_layer?: string | null;
+  z_index?: number | null;
   html?: string | null;
   css?: string | null;
   js?: string | null;
@@ -103,6 +114,100 @@ type BattlePulseEffectRow = {
   js?: string | null;
   enabled?: boolean;
 };
+
+type AvatarAssetRow = {
+  id?: string;
+  name: string;
+  storage_path?: string | null;
+  unlock_level?: number | null;
+  unlock_points?: number | null;
+  zoom_pct?: number | null;
+  enabled?: boolean;
+};
+
+type EdgePlateRow = {
+  id?: string;
+  key: string;
+  name: string;
+  image_url?: string | null;
+  offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null; rotate?: number | null }> | null;
+  unlock_level?: number | null;
+  unlock_points?: number | null;
+  enabled?: boolean;
+};
+
+type LayerId = "bg_color" | "bg_particles" | "avatar" | "avatar_box" | "border" | "edge_plate";
+const LAYER_ORDER_DEFAULT: LayerId[] = ["bg_color", "bg_particles", "avatar", "avatar_box", "border", "edge_plate"];
+const LAYER_LABELS: Record<LayerId, string> = {
+  bg_color: "BG Color",
+  bg_particles: "BG Particles",
+  avatar: "Avatar",
+  avatar_box: "Avatar Box",
+  border: "Border",
+  edge_plate: "Edge Plate",
+};
+
+function rowToken(row: { id?: string; key?: string }) {
+  return String(row.id ?? row.key ?? "");
+}
+
+function clampLayerIndex(value: number) {
+  return Math.max(0, Math.min(LAYER_ORDER_DEFAULT.length - 1, Math.round(value)));
+}
+
+function moveLayer(list: LayerId[], from: number, to: number) {
+  const next = [...list];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
+function stackFromSubject(subject: LayerId, zIndex: number) {
+  const base = [...LAYER_ORDER_DEFAULT];
+  const from = base.indexOf(subject);
+  if (from < 0) return base;
+  return moveLayer(base, from, clampLayerIndex(zIndex));
+}
+
+function stackZIndex(stack: LayerId[], subject: LayerId) {
+  const idx = stack.indexOf(subject);
+  return idx >= 0 ? idx : LAYER_ORDER_DEFAULT.indexOf(subject);
+}
+
+function layerFromPreset(value: string | null | undefined, fallback: number) {
+  if (value === "behind_all") return 0;
+  if (value === "behind_avatar") return 1;
+  if (value === "above_avatar") return 4;
+  return fallback;
+}
+
+function getBorderLayerZ(row: AvatarBorderRow) {
+  const rowAny = row as any;
+  const meta = Number(rowAny?.offsets_by_context?.__layer?.z_index);
+  const raw = Number(row.z_index);
+  if (Number.isFinite(raw)) return clampLayerIndex(raw);
+  if (Number.isFinite(meta)) return clampLayerIndex(meta);
+  return clampLayerIndex(layerFromPreset(row.z_layer, 4));
+}
+
+function setBorderLayerZ(row: AvatarBorderRow, zIndex: number): AvatarBorderRow {
+  const current = typeof row.offsets_by_context === "object" && row.offsets_by_context ? (row.offsets_by_context as any) : {};
+  const nextOffsets = { ...current, __layer: { ...(current.__layer ?? {}), z_index: clampLayerIndex(zIndex) } };
+  return { ...row, offsets_by_context: nextOffsets };
+}
+
+function getEffectLayerZ(row: AvatarEffectRow) {
+  const raw = Number(row.z_index);
+  const meta = Number((row.config as any)?.__layer?.z_index);
+  if (Number.isFinite(raw)) return clampLayerIndex(raw);
+  if (Number.isFinite(meta)) return clampLayerIndex(meta);
+  return clampLayerIndex(layerFromPreset(row.z_layer, 1));
+}
+
+function setEffectLayerZ(row: AvatarEffectRow, zIndex: number): AvatarEffectRow {
+  const cfg = typeof row.config === "object" && row.config ? row.config : {};
+  return { ...row, config: { ...cfg, __layer: { ...((cfg as any).__layer ?? {}), z_index: clampLayerIndex(zIndex) } } as any };
+}
 
 function emptyCodeOverrides(): CodeOverrides {
   return {
@@ -668,11 +773,15 @@ function EmailBuilderInner() {
   const [themes, setThemes] = useState<SavedTheme[]>([]);
   const [codeProjects, setCodeProjects] = useState<SavedProject[]>([]);
   const [codeThemes, setCodeThemes] = useState<SavedTheme[]>([]);
+  const [avatars, setAvatars] = useState<AvatarAssetRow[]>([]);
   const [avatarBorders, setAvatarBorders] = useState<AvatarBorderRow[]>([]);
   const [avatarEffects, setAvatarEffects] = useState<AvatarEffectRow[]>([]);
+  const [edgePlates, setEdgePlates] = useState<EdgePlateRow[]>([]);
   const [battlePulseEffects, setBattlePulseEffects] = useState<BattlePulseEffectRow[]>([]);
+  const [activeAvatarId, setActiveAvatarId] = useState("");
   const [activeBorderId, setActiveBorderId] = useState("");
   const [activeEffectId, setActiveEffectId] = useState("");
+  const [activeEdgePlateId, setActiveEdgePlateId] = useState("");
   const [activeBattleEffectId, setActiveBattleEffectId] = useState("");
   const [projectUsage, setProjectUsage] = useState<ProjectUsage>(() => defaultUsage("email"));
   const [flyerUploading, setFlyerUploading] = useState(false);
@@ -687,20 +796,33 @@ function EmailBuilderInner() {
   const [copied, setCopied] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [previewAvatarId, setPreviewAvatarId] = useState("");
+  const [previewBgColor, setPreviewBgColor] = useState("#1f2937");
+  const [previewEffectRef, setPreviewEffectRef] = useState("__draft__");
+  const [previewBorderRef, setPreviewBorderRef] = useState("__draft__");
+  const [previewEdgePlateRef, setPreviewEdgePlateRef] = useState("__none__");
   const previewRef = useRef<HTMLDivElement | null>(null);
-  const borderPreviewRef = useRef<HTMLDivElement | null>(null);
-  const effectPreviewRef = useRef<HTMLDivElement | null>(null);
   const battleEffectPreviewRef = useRef<HTMLDivElement | null>(null);
   const borderDragRef = useRef<{ startX: number; startY: number; offsetX: number; offsetY: number } | null>(null);
   const borderDragContextRef = useRef<string>("builder");
   const [borderDragging, setBorderDragging] = useState(false);
+  const [borderLayerStack, setBorderLayerStack] = useState<LayerId[]>(() => stackFromSubject("border", 4));
+  const [effectLayerStack, setEffectLayerStack] = useState<LayerId[]>(() => stackFromSubject("bg_particles", 1));
+  const borderLayerDragRef = useRef<LayerId | null>(null);
+  const effectLayerDragRef = useRef<LayerId | null>(null);
+  const [borderLayerDropDisplayIdx, setBorderLayerDropDisplayIdx] = useState<number | null>(null);
+  const [effectLayerDropDisplayIdx, setEffectLayerDropDisplayIdx] = useState<number | null>(null);
   const battleEffectDragRef = useRef<{ startX: number; startY: number; offsetX: number; offsetY: number } | null>(null);
   const [battleEffectDragging, setBattleEffectDragging] = useState(false);
+  const edgePlateDragRef = useRef<{ startX: number; startY: number; offsetX: number; offsetY: number } | null>(null);
+  const edgePlateDragContextRef = useRef<string>("builder");
+  const [edgePlateDragging, setEdgePlateDragging] = useState(false);
 
   const [borderDraft, setBorderDraft] = useState<AvatarBorderRow>({
     key: "",
     name: "",
     render_mode: "code",
+    z_layer: "above_avatar",
     offset_x: 0,
     offset_y: 0,
     offsets_by_context: { builder: { x: 0, y: 0, scale: 1 } },
@@ -715,10 +837,28 @@ function EmailBuilderInner() {
     key: "",
     name: "",
     render_mode: "particles",
+    z_layer: "behind_avatar",
     config: { density: 40, size: 6, speed: 6, opacity: 70, scale: 1, scale_by_context: { builder: { scale: 1 } } },
     html: "<div class=\"avatar-bg\"></div>",
     css: ".avatar-bg{width:100%;height:100%;background:radial-gradient(circle at 20% 20%, rgba(59,130,246,0.4), transparent 60%), radial-gradient(circle at 80% 70%, rgba(34,197,94,0.35), transparent 55%);}",
     js: "",
+    unlock_level: 1,
+    unlock_points: 0,
+    enabled: true,
+  });
+  const [avatarDraft, setAvatarDraft] = useState<AvatarAssetRow>({
+    name: "",
+    storage_path: "",
+    unlock_level: 1,
+    unlock_points: 0,
+    zoom_pct: 100,
+    enabled: true,
+  });
+  const [edgePlateDraft, setEdgePlateDraft] = useState<EdgePlateRow>({
+    key: "",
+    name: "",
+    image_url: "",
+    offsets_by_context: { builder: { x: 0, y: 0, scale: 1, rotate: 0 } },
     unlock_level: 1,
     unlock_points: 0,
     enabled: true,
@@ -1054,10 +1194,31 @@ function EmailBuilderInner() {
   }, [flyerState.useCodeTemplate]);
 
   useEffect(() => {
-    if (!activeBorderId) return;
-    const row = avatarBorders.find((border) => String(border.id ?? "") === activeBorderId);
+    if (!activeAvatarId) return;
+    const row = avatars.find((avatar) => rowToken(avatar) === activeAvatarId);
     if (row) {
-      setBorderDraft({
+      setAvatarDraft({
+        id: row.id,
+        name: row.name ?? "",
+        storage_path: row.storage_path ?? "",
+        unlock_level: row.unlock_level ?? 1,
+        unlock_points: row.unlock_points ?? 0,
+        zoom_pct: row.zoom_pct ?? 100,
+        enabled: row.enabled !== false,
+      });
+    }
+  }, [activeAvatarId, avatars]);
+
+  useEffect(() => {
+    if (previewAvatarId || !avatars.length) return;
+    setPreviewAvatarId(rowToken(avatars[0]));
+  }, [previewAvatarId, avatars]);
+
+  useEffect(() => {
+    if (!activeBorderId) return;
+    const row = avatarBorders.find((border) => rowToken(border) === activeBorderId || border.key === activeBorderId);
+    if (row) {
+      const nextBorder = {
         key: row.key ?? "",
         name: row.name ?? "",
         image_url: row.image_url ?? "",
@@ -1072,15 +1233,17 @@ function EmailBuilderInner() {
         unlock_points: row.unlock_points ?? 0,
         enabled: row.enabled !== false,
         id: row.id,
-      });
+      };
+      setBorderDraft(nextBorder);
+      setBorderLayerStack(stackFromSubject("border", getBorderLayerZ(nextBorder)));
     }
   }, [activeBorderId, avatarBorders]);
 
   useEffect(() => {
     if (!activeEffectId) return;
-    const row = avatarEffects.find((effect) => String(effect.id ?? "") === activeEffectId);
+    const row = avatarEffects.find((effect) => rowToken(effect) === activeEffectId || effect.key === activeEffectId);
     if (row) {
-      setEffectDraft({
+      const nextEffect = {
         key: row.key ?? "",
         name: row.name ?? "",
         render_mode: row.render_mode ?? "particles",
@@ -1092,9 +1255,28 @@ function EmailBuilderInner() {
         unlock_points: row.unlock_points ?? 0,
         enabled: row.enabled !== false,
         id: row.id,
-      });
+      };
+      setEffectDraft(nextEffect);
+      setEffectLayerStack(stackFromSubject("bg_particles", getEffectLayerZ(nextEffect)));
     }
   }, [activeEffectId, avatarEffects]);
+
+  useEffect(() => {
+    if (!activeEdgePlateId) return;
+    const row = edgePlates.find((plate) => rowToken(plate) === activeEdgePlateId || plate.key === activeEdgePlateId);
+    if (row) {
+      setEdgePlateDraft({
+        id: row.id,
+        key: row.key ?? "",
+        name: row.name ?? "",
+        image_url: row.image_url ?? "",
+        offsets_by_context: row.offsets_by_context ?? { builder: { x: 0, y: 0, scale: 1, rotate: 0 } },
+        unlock_level: row.unlock_level ?? 1,
+        unlock_points: row.unlock_points ?? 0,
+        enabled: row.enabled !== false,
+      });
+    }
+  }, [activeEdgePlateId, edgePlates]);
 
   useEffect(() => {
     if (!activeBattleEffectId) return;
@@ -1153,16 +1335,29 @@ function EmailBuilderInner() {
   useEffect(() => {
     const tab = String(searchParams.get("tab") ?? "").trim();
     if (!tab) return;
-    if (tab === "email" || tab === "flyer" || tab === "code" || tab === "avatar-border" || tab === "avatar-effect" || tab === "battle-pulse-effect") {
+    if (
+      tab === "email" ||
+      tab === "flyer" ||
+      tab === "code" ||
+      tab === "avatar" ||
+      tab === "avatar-border" ||
+      tab === "avatar-effect" ||
+      tab === "edge-plate" ||
+      tab === "battle-pulse-effect"
+    ) {
       setBuilderTab(tab);
     }
   }, [searchParams]);
 
   useEffect(() => {
+    const avatarId = String(searchParams.get("avatar") ?? "").trim();
+    if (avatarId) setActiveAvatarId(avatarId);
     const borderId = String(searchParams.get("border") ?? "").trim();
     if (borderId) setActiveBorderId(borderId);
     const effectId = String(searchParams.get("effect") ?? "").trim();
     if (effectId) setActiveEffectId(effectId);
+    const edgePlateId = String(searchParams.get("edgePlate") ?? "").trim();
+    if (edgePlateId) setActiveEdgePlateId(edgePlateId);
     const battleEffectId = String(searchParams.get("battleEffect") ?? "").trim();
     if (battleEffectId) setActiveBattleEffectId(battleEffectId);
   }, [searchParams]);
@@ -1238,42 +1433,29 @@ function EmailBuilderInner() {
       : flyerPreviewHtml;
   const state = emailState;
   const isEmail = builderTab === "email";
-  useEffect(() => {
-    const target = borderPreviewRef.current;
-    if (!target) return;
-    if (borderDraft.render_mode !== "code") {
-      target.innerHTML = "";
-      return;
-    }
-    target.innerHTML = `<style>${borderDraft.css ?? ""}</style>${borderDraft.html ?? ""}`;
-    if (borderDraft.js?.trim()) {
-      const script = document.createElement("script");
-      script.text = `try{\n${borderDraft.js}\n}catch(e){console.error("Avatar border code error", e);}`;
-      target.appendChild(script);
-    }
-    return () => {
-      target.innerHTML = "";
-    };
-  }, [borderDraft.render_mode, borderDraft.html, borderDraft.css, borderDraft.js]);
-
-  useEffect(() => {
-    const target = effectPreviewRef.current;
-    if (!target) return;
-    if (effectDraft.render_mode !== "code") {
-      target.innerHTML = "";
-      return;
-    }
-    target.innerHTML = `<style>${effectDraft.css ?? ""}</style>${effectDraft.html ?? ""}`;
-    if (effectDraft.js?.trim()) {
-      const script = document.createElement("script");
-      script.text = `try{\n${effectDraft.js}\n}catch(e){console.error("Avatar background code error", e);}`;
-      target.appendChild(script);
-    }
-    return () => {
-      target.innerHTML = "";
-    };
-  }, [effectDraft.render_mode, effectDraft.html, effectDraft.css, effectDraft.js]);
-
+  const previewAvatar = avatars.find((row) => rowToken(row) === previewAvatarId) ?? null;
+  const previewAvatarSrc =
+    previewAvatar?.storage_path
+      ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/avatars/${previewAvatar.storage_path}`
+      : "";
+  const previewEffectAsset =
+    previewEffectRef === "__none__"
+      ? null
+      : previewEffectRef === "__draft__"
+        ? effectDraft
+        : avatarEffects.find((row) => rowToken(row) === previewEffectRef) ?? null;
+  const previewBorderAsset =
+    previewBorderRef === "__none__"
+      ? null
+      : previewBorderRef === "__draft__"
+        ? borderDraft
+        : avatarBorders.find((row) => rowToken(row) === previewBorderRef) ?? null;
+  const previewEdgePlateAsset =
+    previewEdgePlateRef === "__none__"
+      ? null
+      : previewEdgePlateRef === "__draft__"
+        ? edgePlateDraft
+        : edgePlates.find((row) => rowToken(row) === previewEdgePlateRef) ?? null;
   useEffect(() => {
     const target = battleEffectPreviewRef.current;
     if (!target) return;
@@ -1309,6 +1491,7 @@ function EmailBuilderInner() {
             x: Math.round((borderDragRef.current?.offsetX ?? 0) + dx),
             y: Math.round((borderDragRef.current?.offsetY ?? 0) + dy),
             scale: prev.offsets_by_context?.[contextKey]?.scale ?? 1,
+            rotate: (prev.offsets_by_context as any)?.[contextKey]?.rotate ?? 0,
           },
         },
       }));
@@ -1349,6 +1532,37 @@ function EmailBuilderInner() {
     };
   }, [battleEffectDragging]);
 
+  useEffect(() => {
+    if (!edgePlateDragging) return;
+    const handleMove = (event: MouseEvent) => {
+      if (!edgePlateDragRef.current) return;
+      const dx = event.clientX - edgePlateDragRef.current.startX;
+      const dy = event.clientY - edgePlateDragRef.current.startY;
+      const contextKey = edgePlateDragContextRef.current;
+      setEdgePlateDraft((prev) => ({
+        ...prev,
+        offsets_by_context: {
+          ...(prev.offsets_by_context ?? {}),
+          [contextKey]: {
+            ...(prev.offsets_by_context?.[contextKey] ?? {}),
+            x: Math.round((edgePlateDragRef.current?.offsetX ?? 0) + dx),
+            y: Math.round((edgePlateDragRef.current?.offsetY ?? 0) + dy),
+          },
+        },
+      }));
+    };
+    const handleUp = () => {
+      setEdgePlateDragging(false);
+      edgePlateDragRef.current = null;
+    };
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, [edgePlateDragging]);
+
   const getBorderOffset = (contextKey: string) => {
     const ctx = borderDraft.offsets_by_context?.[contextKey];
     return {
@@ -1361,6 +1575,10 @@ function EmailBuilderInner() {
     const ctx = borderDraft.offsets_by_context?.[contextKey];
     return Number(ctx?.scale ?? 1);
   };
+  const getBorderRotate = (contextKey: string) => {
+    const ctx = borderDraft.offsets_by_context?.[contextKey];
+    return Number(ctx?.rotate ?? 0);
+  };
 
   const setBorderScale = (contextKey: string, scale: number) => {
     setBorderDraft((prev) => ({
@@ -1370,6 +1588,18 @@ function EmailBuilderInner() {
         [contextKey]: {
           ...(prev.offsets_by_context?.[contextKey] ?? {}),
           scale,
+        },
+      },
+    }));
+  };
+  const setBorderRotate = (contextKey: string, rotate: number) => {
+    setBorderDraft((prev) => ({
+      ...prev,
+      offsets_by_context: {
+        ...(prev.offsets_by_context ?? {}),
+        [contextKey]: {
+          ...(prev.offsets_by_context?.[contextKey] ?? {}),
+          rotate,
         },
       },
     }));
@@ -1392,6 +1622,10 @@ function EmailBuilderInner() {
     const ctx = effectDraft.config?.scale_by_context?.[contextKey];
     return Number(ctx?.scale ?? effectDraft.config?.scale ?? 1);
   };
+  const getEffectRotate = (contextKey: string) => {
+    const ctx = effectDraft.config?.scale_by_context?.[contextKey];
+    return Number(ctx?.rotate ?? 0);
+  };
 
   const setEffectScale = (contextKey: string, scale: number) => {
     setEffectDraft((prev) => ({
@@ -1400,10 +1634,64 @@ function EmailBuilderInner() {
         ...(prev.config ?? {}),
         scale_by_context: {
           ...(prev.config?.scale_by_context ?? {}),
-          [contextKey]: { scale },
+          [contextKey]: { ...(prev.config?.scale_by_context?.[contextKey] ?? {}), scale },
         },
       },
     }));
+  };
+  const setEffectRotate = (contextKey: string, rotate: number) => {
+    setEffectDraft((prev) => ({
+      ...prev,
+      config: {
+        ...(prev.config ?? {}),
+        scale_by_context: {
+          ...(prev.config?.scale_by_context ?? {}),
+          [contextKey]: { ...(prev.config?.scale_by_context?.[contextKey] ?? {}), rotate },
+        },
+      },
+    }));
+  };
+  const getEdgePlateOffset = (contextKey: string) => {
+    const ctx = edgePlateDraft.offsets_by_context?.[contextKey];
+    return { x: Number(ctx?.x ?? 0), y: Number(ctx?.y ?? 0) };
+  };
+  const getEdgePlateScale = (contextKey: string) => {
+    const ctx = edgePlateDraft.offsets_by_context?.[contextKey];
+    return Number(ctx?.scale ?? 1);
+  };
+  const getEdgePlateRotate = (contextKey: string) => {
+    const ctx = edgePlateDraft.offsets_by_context?.[contextKey];
+    return Number(ctx?.rotate ?? 0);
+  };
+  const setEdgePlateScale = (contextKey: string, scale: number) => {
+    setEdgePlateDraft((prev) => ({
+      ...prev,
+      offsets_by_context: {
+        ...(prev.offsets_by_context ?? {}),
+        [contextKey]: { ...(prev.offsets_by_context?.[contextKey] ?? {}), scale },
+      },
+    }));
+  };
+  const setEdgePlateRotate = (contextKey: string, rotate: number) => {
+    setEdgePlateDraft((prev) => ({
+      ...prev,
+      offsets_by_context: {
+        ...(prev.offsets_by_context ?? {}),
+        [contextKey]: { ...(prev.offsets_by_context?.[contextKey] ?? {}), rotate },
+      },
+    }));
+  };
+  const startEdgePlateDrag = (event: React.MouseEvent, contextKey: string) => {
+    event.preventDefault();
+    const current = getEdgePlateOffset(contextKey);
+    edgePlateDragContextRef.current = contextKey;
+    edgePlateDragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      offsetX: current.x,
+      offsetY: current.y,
+    };
+    setEdgePlateDragging(true);
   };
   const filteredProjects = useMemo(() => {
     const term = projectSearch.trim().toLowerCase();
@@ -1425,8 +1713,12 @@ function EmailBuilderInner() {
     refreshThemes(builderTab);
     refreshCodeProjects();
     refreshCodeThemes();
-    if (builderTab === "avatar-border") refreshAvatarBorders();
-    if (builderTab === "avatar-effect") refreshAvatarEffects();
+    if (builderTab === "avatar" || builderTab === "avatar-border" || builderTab === "avatar-effect" || builderTab === "edge-plate") {
+      refreshAvatars();
+      refreshAvatarBorders();
+      refreshAvatarEffects();
+      refreshEdgePlates();
+    }
     if (builderTab === "battle-pulse-effect") refreshBattlePulseEffects();
   }, [builderTab, showArchived]);
 
@@ -1680,16 +1972,44 @@ function EmailBuilderInner() {
     }
   }
 
+  async function refreshAvatars() {
+    const res = await fetch("/api/admin/avatars", { cache: "no-store" });
+    const sj = await safeJson(res);
+    if (sj.ok) {
+      setAvatars((sj.json?.avatars ?? []) as AvatarAssetRow[]);
+      return;
+    }
+    setMsg(sj.json?.error || "Failed to load avatars.");
+  }
+
   async function refreshAvatarBorders() {
     const res = await fetch("/api/admin/corner-borders", { cache: "no-store" });
     const sj = await safeJson(res);
-    if (sj.ok) setAvatarBorders((sj.json?.borders ?? []) as AvatarBorderRow[]);
+    if (sj.ok) {
+      setAvatarBorders((sj.json?.borders ?? []) as AvatarBorderRow[]);
+      return;
+    }
+    setMsg(sj.json?.error || "Failed to load avatar borders.");
   }
 
   async function refreshAvatarEffects() {
     const res = await fetch("/api/admin/avatar-effects", { cache: "no-store" });
     const sj = await safeJson(res);
-    if (sj.ok) setAvatarEffects((sj.json?.effects ?? []) as AvatarEffectRow[]);
+    if (sj.ok) {
+      setAvatarEffects((sj.json?.effects ?? []) as AvatarEffectRow[]);
+      return;
+    }
+    setMsg(sj.json?.error || "Failed to load avatar backgrounds.");
+  }
+
+  async function refreshEdgePlates() {
+    const res = await fetch("/api/admin/card-plates", { cache: "no-store" });
+    const sj = await safeJson(res);
+    if (sj.ok) {
+      setEdgePlates((sj.json?.plates ?? []) as EdgePlateRow[]);
+      return;
+    }
+    setMsg(sj.json?.error || "Failed to load edge plates.");
   }
 
   async function refreshBattlePulseEffects() {
@@ -1884,6 +2204,23 @@ function EmailBuilderInner() {
     refreshProjects(builderTab);
   }
 
+  async function saveAvatar(row: AvatarAssetRow) {
+    setMsg("");
+    setBusy(true);
+    const res = await fetch("/api/admin/avatars", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(row),
+    });
+    const sj = await safeJson(res);
+    setBusy(false);
+    if (!sj.ok) {
+      setMsg(sj.json?.error || "Failed to save avatar.");
+      return;
+    }
+    await refreshAvatars();
+  }
+
   async function saveAvatarBorder(row: AvatarBorderRow) {
     setMsg("");
     setBusy(true);
@@ -1916,6 +2253,23 @@ function EmailBuilderInner() {
       return;
     }
     await refreshAvatarEffects();
+  }
+
+  async function saveEdgePlate(row: EdgePlateRow) {
+    setMsg("");
+    setBusy(true);
+    const res = await fetch("/api/admin/card-plates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(row),
+    });
+    const sj = await safeJson(res);
+    setBusy(false);
+    if (!sj.ok) {
+      setMsg(sj.json?.error || "Failed to save edge plate.");
+      return;
+    }
+    await refreshEdgePlates();
   }
 
   async function saveBattlePulseEffect(row: BattlePulseEffectRow) {
@@ -2078,7 +2432,7 @@ function EmailBuilderInner() {
       }}
     >
       <div>
-        <div style={{ fontSize: 26, fontWeight: 1000 }}>Email + Marketing Builder</div>
+        <div style={{ fontSize: 26, fontWeight: 1000 }}>Email, Marketing & Avatar Builder</div>
         <div style={{ opacity: 0.7, fontSize: 13 }}>
           Winter themed template with full customization and a live preview.
         </div>
@@ -2089,19 +2443,25 @@ function EmailBuilderInner() {
       <div style={toolbar()}>
         <div style={tabRow()}>
           <button onClick={() => setBuilderTab("email")} style={tabChip(isEmail)}>
-            Email Builder
+            Email
           </button>
           <button onClick={() => setBuilderTab("flyer")} style={tabChip(builderTab === "flyer")}>
-            Flyer Builder
+            Marketing
           </button>
           <button onClick={() => setBuilderTab("code")} style={tabChip(builderTab === "code")}>
             Code Mode
+          </button>
+          <button onClick={() => setBuilderTab("avatar")} style={tabChip(builderTab === "avatar")}>
+            Avatars
           </button>
           <button onClick={() => setBuilderTab("avatar-border")} style={tabChip(builderTab === "avatar-border")}>
             Avatar Borders
           </button>
           <button onClick={() => setBuilderTab("avatar-effect")} style={tabChip(builderTab === "avatar-effect")}>
             Avatar Backgrounds
+          </button>
+          <button onClick={() => setBuilderTab("edge-plate")} style={tabChip(builderTab === "edge-plate")}>
+            Edge Plates
           </button>
           <button onClick={() => setBuilderTab("battle-pulse-effect")} style={tabChip(builderTab === "battle-pulse-effect")}>
             Battle Pulse FX
@@ -4719,6 +5079,291 @@ function EmailBuilderInner() {
             </div>
           </>
         ) : null}
+        {builderTab === "avatar" ? (
+          <>
+            <div style={column()}>
+              <section style={sidePanel()}>
+                <div style={panelTitle()}>Avatar Builder</div>
+                <div style={grid()}>
+                  <div style={helperText()}>
+                    Set avatar image path, zoom, and unlock requirements.
+                  </div>
+                  <a href="/admin/custom/media?view=avatars" style={linkBtn()} target="_blank" rel="noreferrer">
+                    Open Avatar Design
+                  </a>
+                  <label style={label()}>Saved avatars</label>
+                  <select
+                    value={activeAvatarId}
+                    onChange={(e) => setActiveAvatarId(e.target.value)}
+                    style={input()}
+                  >
+                    <option value="">New avatar...</option>
+                    {avatars.map((avatar) => (
+                      <option key={rowToken(avatar)} value={rowToken(avatar)}>
+                        {avatar.name}
+                      </option>
+                    ))}
+                  </select>
+                  <label style={label()}>Name</label>
+                  <input
+                    value={avatarDraft.name ?? ""}
+                    onChange={(e) => setAvatarDraft((prev) => ({ ...prev, name: e.target.value }))}
+                    style={input()}
+                  />
+                  <label style={label()}>Storage path</label>
+                  <input
+                    value={avatarDraft.storage_path ?? ""}
+                    onChange={(e) => setAvatarDraft((prev) => ({ ...prev, storage_path: e.target.value }))}
+                    style={input()}
+                    placeholder="e.g. heroes/dragon.png"
+                  />
+                  <label style={label()}>Zoom %</label>
+                  <input
+                    type="number"
+                    value={avatarDraft.zoom_pct ?? 100}
+                    onChange={(e) => setAvatarDraft((prev) => ({ ...prev, zoom_pct: Number(e.target.value) || 100 }))}
+                    style={input()}
+                  />
+                  <label style={label()}>Unlock level</label>
+                  <input
+                    type="number"
+                    value={avatarDraft.unlock_level ?? ""}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setAvatarDraft((prev) => ({ ...prev, unlock_level: next === "" ? null : Number(next) }));
+                    }}
+                    style={input()}
+                  />
+                  <label style={label()}>Unlock points</label>
+                  <input
+                    type="number"
+                    value={avatarDraft.unlock_points ?? ""}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setAvatarDraft((prev) => ({ ...prev, unlock_points: next === "" ? null : Number(next) }));
+                    }}
+                    style={input()}
+                  />
+                  <label style={checkRow()}>
+                    <input
+                      type="checkbox"
+                      checked={avatarDraft.enabled !== false}
+                      onChange={(e) => setAvatarDraft((prev) => ({ ...prev, enabled: e.target.checked }))}
+                    />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+                <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+                  <button onClick={() => saveAvatar(avatarDraft)} style={button()} disabled={busy}>
+                    {busy ? "Saving..." : "Save Avatar"}
+                  </button>
+                  <button
+                    onClick={() =>
+                      setAvatarDraft({
+                        name: "",
+                        storage_path: "",
+                        unlock_level: 1,
+                        unlock_points: 0,
+                        zoom_pct: 100,
+                        enabled: true,
+                      })
+                    }
+                    style={ghost()}
+                  >
+                    New Avatar
+                  </button>
+                </div>
+              </section>
+            </div>
+
+            <section style={previewPanel()}>
+              <div style={panelTitle()}>Avatar Preview</div>
+              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>BG color</span>
+                  <input type="color" value={previewBgColor} onChange={(e) => setPreviewBgColor(e.target.value)} style={{ ...input(), padding: 4, height: 36 }} />
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>Particles</span>
+                  <select value={previewEffectRef} onChange={(e) => setPreviewEffectRef(e.target.value)} style={{ ...input(), padding: "6px 8px", fontSize: 12 }}>
+                    <option value="__none__">None</option>
+                    <option value="__draft__">Current Draft</option>
+                    {avatarEffects.map((row) => (
+                      <option key={rowToken(row)} value={rowToken(row)}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>Border</span>
+                  <select value={previewBorderRef} onChange={(e) => setPreviewBorderRef(e.target.value)} style={{ ...input(), padding: "6px 8px", fontSize: 12 }}>
+                    <option value="__none__">None</option>
+                    <option value="__draft__">Current Draft</option>
+                    {avatarBorders.map((row) => (
+                      <option key={rowToken(row)} value={rowToken(row)}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>Edge plate</span>
+                  <select value={previewEdgePlateRef} onChange={(e) => setPreviewEdgePlateRef(e.target.value)} style={{ ...input(), padding: "6px 8px", fontSize: 12 }}>
+                    <option value="__none__">None</option>
+                    <option value="__draft__">Current Draft</option>
+                    {edgePlates.map((row) => (
+                      <option key={rowToken(row)} value={rowToken(row)}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>Edge plate</span>
+                  <select value={previewEdgePlateRef} onChange={(e) => setPreviewEdgePlateRef(e.target.value)} style={{ ...input(), padding: "6px 8px", fontSize: 12 }}>
+                    <option value="__none__">None</option>
+                    <option value="__draft__">Current Draft</option>
+                    {edgePlates.map((row) => (
+                      <option key={rowToken(row)} value={rowToken(row)}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div style={avatarPreviewWrap()}>
+                <div style={avatarPreviewFrame()}>
+                  {previewEdgePlateAsset?.image_url ? (
+                    <img
+                      src={previewEdgePlateAsset.image_url}
+                      alt=""
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none", zIndex: 6 }}
+                    />
+                  ) : null}
+                  <AvatarRender
+                    size={200}
+                    bg={previewBgColor}
+                    avatarSrc={
+                      avatarDraft.storage_path
+                        ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/avatars/${avatarDraft.storage_path}`
+                        : null
+                    }
+                    avatarZoomPct={avatarDraft.zoom_pct ?? 100}
+                    border={previewBorderAsset}
+                    effect={previewEffectAsset}
+                    cornerOffsets={{ x: -8, y: -8, size: 64 }}
+                    bleed={24}
+                    contextKey="builder"
+                    style={{ borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)" }}
+                    fallback={<div style={{ width: "70%", height: "70%", borderRadius: 14, background: "rgba(255,255,255,0.08)" }} />}
+                  />
+                </div>
+              </div>
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontWeight: 800, fontSize: 12, opacity: 0.75 }}>Placement previews</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginTop: 10 }}>
+                  {AVATAR_CONTEXT_PREVIEWS.map((item) => (
+                    <div key={item.key} style={{ display: "grid", gap: 6, justifyItems: "center" }}>
+                      <div style={{ position: "relative" }}>
+                        {previewEdgePlateAsset?.image_url ? (
+                          <img
+                            src={previewEdgePlateAsset.image_url}
+                            alt=""
+                            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none", zIndex: stackZIndex(effectLayerStack, "edge_plate") }}
+                          />
+                        ) : null}
+                        <AvatarRender
+                          size={item.size}
+                          bg={previewBgColor}
+                          style={{ borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)" }}
+                          avatarSrc={previewAvatarSrc}
+                          avatarZoomPct={previewAvatar?.zoom_pct ?? 100}
+                          border={previewBorderAsset}
+                          effect={previewEffectAsset}
+                          cornerOffsets={{ x: -8, y: -8, size: 64 }}
+                          bleed={24}
+                          contextKey={item.key}
+                          fallback={<div style={{ width: "70%", height: "70%", borderRadius: 14, background: "rgba(255,255,255,0.08)" }} />}
+                        />
+                      </div>
+                      <div style={{ fontSize: 11, opacity: 0.7 }}>{item.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontWeight: 800, fontSize: 12, opacity: 0.75 }}>Placement previews</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginTop: 10 }}>
+                  {AVATAR_CONTEXT_PREVIEWS.map((item) => (
+                    <div key={item.key} style={{ display: "grid", gap: 6, justifyItems: "center" }}>
+                      <div style={{ position: "relative" }}>
+                        {previewEdgePlateAsset?.image_url ? (
+                          <img
+                            src={previewEdgePlateAsset.image_url}
+                            alt=""
+                            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none", zIndex: stackZIndex(effectLayerStack, "edge_plate") }}
+                          />
+                        ) : null}
+                        <AvatarRender
+                          size={item.size}
+                          bg={previewBgColor}
+                          style={{ borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)" }}
+                          avatarSrc={previewAvatarSrc}
+                          avatarZoomPct={previewAvatar?.zoom_pct ?? 100}
+                          border={previewBorderAsset}
+                          effect={effectDraft}
+                          cornerOffsets={{ x: -8, y: -8, size: 64 }}
+                          bleed={24}
+                          contextKey={item.key}
+                          fallback={<div style={{ width: "70%", height: "70%", borderRadius: 14, background: "rgba(255,255,255,0.08)" }} />}
+                        />
+                      </div>
+                      <div style={{ fontSize: 11, opacity: 0.7 }}>{item.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <div style={column()}>
+              <section style={sidePanel()}>
+                <div style={panelTitle()}>Avatar Library</div>
+                <div style={grid()}>
+                  {avatars.map((avatar) => {
+                    const src = avatar.storage_path
+                      ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/avatars/${avatar.storage_path}`
+                      : "";
+                    return (
+                      <button
+                        key={rowToken(avatar)}
+                        style={projectCard(rowToken(avatar) === activeAvatarId, false)}
+                        onClick={() => setActiveAvatarId(rowToken(avatar))}
+                      >
+                        <div style={{ marginBottom: 8, display: "grid", placeItems: "center" }}>
+                          <AvatarRender
+                            size={84}
+                            bg="rgba(0,0,0,0.35)"
+                            avatarSrc={src}
+                            avatarZoomPct={avatar.zoom_pct ?? 100}
+                            cornerOffsets={{ x: -6, y: -6, size: 42 }}
+                            bleed={14}
+                            contextKey="builder"
+                            style={{ borderRadius: 12, border: "1px solid rgba(255,255,255,0.10)" }}
+                            fallback={<div style={{ width: "65%", height: "65%", borderRadius: 10, background: "rgba(255,255,255,0.08)" }} />}
+                          />
+                        </div>
+                        <div style={cardTitle()}>{avatar.name}</div>
+                        <div style={cardMeta()}>Lv {avatar.unlock_level ?? 1} • {avatar.unlock_points ?? 0} pts</div>
+                      </button>
+                    );
+                  })}
+                  {avatars.length === 0 ? <div style={cardMeta()}>No avatars found.</div> : null}
+                </div>
+              </section>
+            </div>
+          </>
+        ) : null}
         {builderTab === "avatar-border" ? (
           <>
             <div style={column()}>
@@ -4739,7 +5384,7 @@ function EmailBuilderInner() {
                   >
                     <option value="">New border...</option>
                     {avatarBorders.map((border) => (
-                      <option key={border.id ?? border.key} value={String(border.id ?? "")}>
+                      <option key={rowToken(border)} value={rowToken(border)}>
                         {border.name}
                       </option>
                     ))}
@@ -4765,6 +5410,70 @@ function EmailBuilderInner() {
                     <option value="image">Image</option>
                     <option value="code">HTML/CSS/JS</option>
                   </select>
+                  <label style={label()}>Z layer</label>
+                  <select
+                    value={borderDraft.z_layer ?? "above_avatar"}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      const fromPreset = clampLayerIndex(layerFromPreset(next, getBorderLayerZ(borderDraft)));
+                      setBorderDraft((prev) => setBorderLayerZ({ ...prev, z_layer: next }, fromPreset));
+                      setBorderLayerStack(stackFromSubject("border", fromPreset));
+                    }}
+                    style={input()}
+                  >
+                    <option value="above_avatar">Above avatar</option>
+                    <option value="behind_avatar">Behind avatar</option>
+                    <option value="behind_all">Behind all</option>
+                  </select>
+                  <label style={label()}>Layer stack (drag chips)</label>
+                  <div
+                    style={layerStackBox()}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setBorderLayerDropDisplayIdx(borderLayerStack.length);
+                    }}
+                  >
+                    {[...borderLayerStack].reverse().map((layerId, displayIdx) => {
+                      const idx = borderLayerStack.length - 1 - displayIdx;
+                      return (
+                        <div key={layerId} style={{ display: "grid", gap: 6 }}>
+                          {borderLayerDropDisplayIdx === displayIdx ? <div style={layerDropLine()} /> : null}
+                          <span
+                            draggable
+                            onDragStart={() => {
+                              borderLayerDragRef.current = layerId;
+                            }}
+                            onDragEnd={() => {
+                              setBorderLayerDropDisplayIdx(null);
+                            }}
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              setBorderLayerDropDisplayIdx(displayIdx);
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              const fromId = borderLayerDragRef.current;
+                              if (!fromId) return;
+                              const fromIdx = borderLayerStack.indexOf(fromId);
+                              const toIdx = idx;
+                              setBorderLayerDropDisplayIdx(null);
+                              if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+                              const nextStack = moveLayer(borderLayerStack, fromIdx, toIdx);
+                              const nextZ = stackZIndex(nextStack, "border");
+                              setBorderLayerStack(nextStack);
+                              setBorderDraft((prev) => setBorderLayerZ(prev, nextZ));
+                            }}
+                            style={layerChip(layerId === "border")}
+                            title={displayIdx === 0 ? "Highest layer" : displayIdx === borderLayerStack.length - 1 ? "Lowest layer" : "Middle layer"}
+                          >
+                            {LAYER_LABELS[layerId]}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {borderLayerDropDisplayIdx === borderLayerStack.length ? <div style={layerDropLine()} /> : null}
+                  </div>
+                  <div style={helperText()}>Top chip is highest layer, bottom chip is lowest.</div>
                   {borderDraft.render_mode === "image" ? (
                     <>
                       <label style={label()}>Image URL</label>
@@ -4805,7 +5514,7 @@ function EmailBuilderInner() {
                             offset_x: next,
                             offsets_by_context: {
                               ...(prev.offsets_by_context ?? {}),
-                              builder: { x: next, y: getBorderOffset("builder").y, scale: getBorderScale("builder") },
+                              builder: { x: next, y: getBorderOffset("builder").y, scale: getBorderScale("builder"), rotate: getBorderRotate("builder") },
                             },
                           }));
                         }}
@@ -4822,7 +5531,7 @@ function EmailBuilderInner() {
                             offset_y: next,
                             offsets_by_context: {
                               ...(prev.offsets_by_context ?? {}),
-                              builder: { x: getBorderOffset("builder").x, y: next, scale: getBorderScale("builder") },
+                              builder: { x: getBorderOffset("builder").x, y: next, scale: getBorderScale("builder"), rotate: getBorderRotate("builder") },
                             },
                           }));
                         }}
@@ -4839,6 +5548,32 @@ function EmailBuilderInner() {
                         }}
                         style={input()}
                       />
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="3"
+                        step="0.05"
+                        value={getBorderScale("builder")}
+                        onChange={(e) => setBorderScale("builder", Number(e.target.value))}
+                        style={input()}
+                      />
+                      <label style={label()}>Rotate (builder, deg)</label>
+                      <input
+                        type="number"
+                        step="1"
+                        value={getBorderRotate("builder")}
+                        onChange={(e) => setBorderRotate("builder", Number(e.target.value) || 0)}
+                        style={input()}
+                      />
+                      <input
+                        type="range"
+                        min="-180"
+                        max="180"
+                        step="1"
+                        value={getBorderRotate("builder")}
+                        onChange={(e) => setBorderRotate("builder", Number(e.target.value))}
+                        style={input()}
+                      />
                       <div style={{ fontSize: 11, opacity: 0.7 }}>
                         Drag the preview to fine-tune position.
                       </div>
@@ -4848,7 +5583,7 @@ function EmailBuilderInner() {
                             ...prev,
                             offset_x: 0,
                             offset_y: 0,
-                            offsets_by_context: { ...(prev.offsets_by_context ?? {}), builder: { x: 0, y: 0, scale: 1 } },
+                            offsets_by_context: { ...(prev.offsets_by_context ?? {}), builder: { x: 0, y: 0, scale: 1, rotate: 0 } },
                           }))
                         }
                         style={ghost()}
@@ -4902,22 +5637,25 @@ function EmailBuilderInner() {
                     {busy ? "Saving..." : "Save Border"}
                   </button>
                   <button
-                    onClick={() =>
-                      setBorderDraft({
+                    onClick={() => {
+                      const nextBorder: AvatarBorderRow = {
                         key: "",
                         name: "",
                         render_mode: "code",
+                        z_layer: "above_avatar",
                         offset_x: 0,
                         offset_y: 0,
-                        offsets_by_context: { builder: { x: 0, y: 0, scale: 1 } },
+                        offsets_by_context: { builder: { x: 0, y: 0, scale: 1, rotate: 0 } },
                         html: "<div class=\"avatar-border\">Border</div>",
                         css: ".avatar-border{width:100%;height:100%;border:3px solid #7cf7d4;border-radius:18px;box-shadow:0 0 24px rgba(124,247,212,0.35);}",
                         js: "",
                         unlock_level: 1,
                         unlock_points: 0,
                         enabled: true,
-                      })
-                    }
+                      };
+                      setBorderDraft(nextBorder);
+                      setBorderLayerStack(stackFromSubject("border", getBorderLayerZ(nextBorder)));
+                    }}
                     style={ghost()}
                   >
                     New Border
@@ -4928,59 +5666,136 @@ function EmailBuilderInner() {
 
             <section style={previewPanel()}>
               <div style={panelTitle()}>Border Preview</div>
+              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>Avatar</span>
+                  <select value={previewAvatarId} onChange={(e) => setPreviewAvatarId(e.target.value)} style={{ ...input(), padding: "6px 8px", fontSize: 12 }}>
+                    <option value="">None</option>
+                    {avatars.map((row) => (
+                      <option key={rowToken(row)} value={rowToken(row)}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>BG color</span>
+                  <input type="color" value={previewBgColor} onChange={(e) => setPreviewBgColor(e.target.value)} style={{ ...input(), padding: 4, height: 36 }} />
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>Particles</span>
+                  <select value={previewEffectRef} onChange={(e) => setPreviewEffectRef(e.target.value)} style={{ ...input(), padding: "6px 8px", fontSize: 12 }}>
+                    <option value="__none__">None</option>
+                    <option value="__draft__">Current Draft</option>
+                    {avatarEffects.map((row) => (
+                      <option key={rowToken(row)} value={rowToken(row)}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>Edge plate</span>
+                  <select value={previewEdgePlateRef} onChange={(e) => setPreviewEdgePlateRef(e.target.value)} style={{ ...input(), padding: "6px 8px", fontSize: 12 }}>
+                    <option value="__none__">None</option>
+                    <option value="__draft__">Current Draft</option>
+                    {edgePlates.map((row) => (
+                      <option key={rowToken(row)} value={rowToken(row)}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <div style={avatarPreviewWrap()}>
-                <div style={avatarPreviewFrame()}>
-                  {borderDraft.render_mode === "image" && borderDraft.image_url ? (
+                <div
+                  style={{ ...avatarPreviewFrame(), cursor: borderDragging ? "grabbing" : "grab" }}
+                  onMouseDown={(event) => startBorderDrag(event, "builder")}
+                >
+                  {previewEdgePlateAsset?.image_url ? (
                     <img
-                      src={borderDraft.image_url}
-                      alt="Border"
-                      style={{
-                        ...avatarPreviewBorder(),
-                        transform: `translate(${getBorderOffset("builder").x}px, ${getBorderOffset("builder").y}px) scale(${getBorderScale("builder")})`,
-                        cursor: "grab",
-                      }}
-                      onMouseDown={(event) => startBorderDrag(event, "builder")}
+                      src={previewEdgePlateAsset.image_url}
+                      alt=""
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none", zIndex: stackZIndex(borderLayerStack, "edge_plate") }}
                     />
-                  ) : (
-                    <div
-                      style={{
-                        ...avatarPreviewBorder(),
-                        transform: `translate(${getBorderOffset("builder").x}px, ${getBorderOffset("builder").y}px) scale(${getBorderScale("builder")})`,
-                        cursor: "grab",
-                      }}
-                      ref={borderPreviewRef}
-                      onMouseDown={(event) => startBorderDrag(event, "builder")}
-                    />
-                  )}
-                  <div style={avatarPreviewAvatar()} />
+                  ) : null}
+                  <AvatarRender
+                    size={200}
+                    bg={previewBgColor}
+                    style={{ borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)" }}
+                    border={borderDraft}
+                    effect={previewEffectAsset}
+                    avatarSrc={previewAvatarSrc}
+                    avatarZoomPct={previewAvatar?.zoom_pct ?? 100}
+                    cornerOffsets={{ x: -8, y: -8, size: 64 }}
+                    bleed={24}
+                    contextKey="builder"
+                    fallback={<div style={{ width: "70%", height: "70%", borderRadius: 14, background: "rgba(255,255,255,0.08)" }} />}
+                  />
                 </div>
               </div>
               <div style={{ marginTop: 16 }}>
                 <div style={{ fontWeight: 800, fontSize: 12, opacity: 0.75 }}>Placement previews</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12, marginTop: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginTop: 10 }}>
                   {AVATAR_CONTEXT_PREVIEWS.map((item) => (
                     <div
                       key={item.label}
                       style={{ display: "grid", gap: 6, justifyItems: "center", cursor: "grab" }}
                       onMouseDown={(event) => startBorderDrag(event, item.key)}
                     >
-                      <AvatarRender
-                        size={item.size}
-                        bg="rgba(0,0,0,0.35)"
-                        style={{ borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)" }}
-                        border={borderDraft}
-                        effect={{ key: "none" }}
-                        cornerOffsets={{ x: -8, y: -8, size: 64 }}
-                        bleed={24}
-                        contextKey={item.key}
-                        fallback={<div style={{ width: "70%", height: "70%", borderRadius: 14, background: "rgba(255,255,255,0.08)" }} />}
-                      />
+                      <div style={{ position: "relative" }}>
+                        {previewEdgePlateAsset?.image_url ? (
+                          <img
+                            src={previewEdgePlateAsset.image_url}
+                            alt=""
+                            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none", zIndex: stackZIndex(borderLayerStack, "edge_plate") }}
+                          />
+                        ) : null}
+                        <AvatarRender
+                          size={item.size}
+                          bg={previewBgColor}
+                          style={{ borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)" }}
+                          border={borderDraft}
+                          effect={previewEffectAsset}
+                          avatarSrc={previewAvatarSrc}
+                          avatarZoomPct={previewAvatar?.zoom_pct ?? 100}
+                          cornerOffsets={{ x: -8, y: -8, size: 64 }}
+                          bleed={24}
+                          contextKey={item.key}
+                          fallback={<div style={{ width: "70%", height: "70%", borderRadius: 14, background: "rgba(255,255,255,0.08)" }} />}
+                        />
+                      </div>
                       <div style={{ fontSize: 11, opacity: 0.7 }}>{item.label}</div>
                       <input
                         type="number"
                         step="0.05"
                         value={getBorderScale(item.key)}
                         onChange={(e) => setBorderScale(item.key, Number(e.target.value) || 1)}
+                        style={{ ...input(), width: "100%", fontSize: 11, padding: "6px 8px" }}
+                      />
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="3"
+                        step="0.05"
+                        value={getBorderScale(item.key)}
+                        onChange={(e) => setBorderScale(item.key, Number(e.target.value))}
+                        style={{ ...input(), width: "100%", fontSize: 11, padding: "6px 8px" }}
+                      />
+                      <input
+                        type="number"
+                        step="1"
+                        value={getBorderRotate(item.key)}
+                        onChange={(e) => setBorderRotate(item.key, Number(e.target.value) || 0)}
+                        style={{ ...input(), width: "100%", fontSize: 11, padding: "6px 8px" }}
+                      />
+                      <input
+                        type="range"
+                        min="-180"
+                        max="180"
+                        step="1"
+                        value={getBorderRotate(item.key)}
+                        onChange={(e) => setBorderRotate(item.key, Number(e.target.value))}
                         style={{ ...input(), width: "100%", fontSize: 11, padding: "6px 8px" }}
                       />
                     </div>
@@ -4995,14 +5810,83 @@ function EmailBuilderInner() {
                 <div style={grid()}>
                   {avatarBorders.map((border) => (
                     <button
-                      key={border.id ?? border.key}
-                      style={projectCard(String(border.id ?? "") === activeBorderId, false)}
-                      onClick={() => setActiveBorderId(String(border.id ?? ""))}
+                      key={rowToken(border)}
+                      style={projectCard(rowToken(border) === activeBorderId, false)}
+                      onClick={() => setActiveBorderId(rowToken(border))}
                     >
-                      <div style={cardTitle()}>{border.name}</div>
-                      <div style={cardMeta()}>{border.key}</div>
+                      <div style={{ marginBottom: 8, display: "grid", placeItems: "center" }}>
+                        <AvatarRender
+                          size={84}
+                          bg="rgba(0,0,0,0.35)"
+                          border={border}
+                          effect={{ key: "none" }}
+                          cornerOffsets={{ x: -6, y: -6, size: 42 }}
+                          bleed={14}
+                          contextKey="builder"
+                          style={{ borderRadius: 12, border: "1px solid rgba(255,255,255,0.10)" }}
+                          fallback={<div style={{ width: "65%", height: "65%", borderRadius: 10, background: "rgba(255,255,255,0.08)" }} />}
+                        />
+                      </div>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <label style={{ ...cardMeta(), display: "grid", gap: 4 }}>
+                          Name
+                          <input
+                            value={border.name ?? ""}
+                            onChange={(e) =>
+                              setAvatarBorders((prev) =>
+                                prev.map((row) => (rowToken(row) === rowToken(border) ? { ...row, name: e.target.value } : row))
+                              )
+                            }
+                            style={{ ...input(), fontSize: 12, padding: "6px 8px" }}
+                          />
+                        </label>
+                        <label style={{ ...cardMeta(), display: "grid", gap: 4 }}>
+                          Unlock level
+                          <input
+                            type="number"
+                            value={border.unlock_level ?? 1}
+                            onChange={(e) =>
+                              setAvatarBorders((prev) =>
+                                prev.map((row) =>
+                                  rowToken(row) === rowToken(border) ? { ...row, unlock_level: Number(e.target.value) || 1 } : row
+                                )
+                              )
+                            }
+                            style={{ ...input(), fontSize: 12, padding: "6px 8px" }}
+                          />
+                        </label>
+                        <label style={{ ...cardMeta(), display: "grid", gap: 4 }}>
+                          Unlock points
+                          <input
+                            type="number"
+                            value={border.unlock_points ?? 0}
+                            onChange={(e) =>
+                              setAvatarBorders((prev) =>
+                                prev.map((row) =>
+                                  rowToken(row) === rowToken(border) ? { ...row, unlock_points: Number(e.target.value) || 0 } : row
+                                )
+                              )
+                            }
+                            style={{ ...input(), fontSize: 12, padding: "6px 8px" }}
+                          />
+                        </label>
+                        <label style={{ ...checkRow(), fontSize: 12 }}>
+                          <input
+                            type="checkbox"
+                            checked={border.enabled !== false}
+                            onChange={(e) =>
+                              setAvatarBorders((prev) =>
+                                prev.map((row) => (rowToken(row) === rowToken(border) ? { ...row, enabled: e.target.checked } : row))
+                              )
+                            }
+                          />
+                          <span>Enabled</span>
+                        </label>
+                        <div style={cardMeta()}>{border.key}</div>
+                      </div>
                     </button>
                   ))}
+                  {avatarBorders.length === 0 ? <div style={cardMeta()}>No borders found.</div> : null}
                 </div>
               </section>
             </div>
@@ -5029,7 +5913,7 @@ function EmailBuilderInner() {
                   >
                     <option value="">New background...</option>
                     {avatarEffects.map((effect) => (
-                      <option key={effect.id ?? effect.key} value={String(effect.id ?? "")}>
+                      <option key={rowToken(effect)} value={rowToken(effect)}>
                         {effect.name}
                       </option>
                     ))}
@@ -5055,6 +5939,70 @@ function EmailBuilderInner() {
                     <option value="particles">Particles</option>
                     <option value="code">HTML/CSS/JS</option>
                   </select>
+                  <label style={label()}>Z layer</label>
+                  <select
+                    value={effectDraft.z_layer ?? "behind_avatar"}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      const fromPreset = clampLayerIndex(layerFromPreset(next, getEffectLayerZ(effectDraft)));
+                      setEffectDraft((prev) => setEffectLayerZ({ ...prev, z_layer: next }, fromPreset));
+                      setEffectLayerStack(stackFromSubject("bg_particles", fromPreset));
+                    }}
+                    style={input()}
+                  >
+                    <option value="behind_avatar">Behind avatar</option>
+                    <option value="above_avatar">Above avatar</option>
+                    <option value="behind_all">Behind all</option>
+                  </select>
+                  <label style={label()}>Layer stack (drag chips)</label>
+                  <div
+                    style={layerStackBox()}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setEffectLayerDropDisplayIdx(effectLayerStack.length);
+                    }}
+                  >
+                    {[...effectLayerStack].reverse().map((layerId, displayIdx) => {
+                      const idx = effectLayerStack.length - 1 - displayIdx;
+                      return (
+                        <div key={layerId} style={{ display: "grid", gap: 6 }}>
+                          {effectLayerDropDisplayIdx === displayIdx ? <div style={layerDropLine()} /> : null}
+                          <span
+                            draggable
+                            onDragStart={() => {
+                              effectLayerDragRef.current = layerId;
+                            }}
+                            onDragEnd={() => {
+                              setEffectLayerDropDisplayIdx(null);
+                            }}
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              setEffectLayerDropDisplayIdx(displayIdx);
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              const fromId = effectLayerDragRef.current;
+                              if (!fromId) return;
+                              const fromIdx = effectLayerStack.indexOf(fromId);
+                              const toIdx = idx;
+                              setEffectLayerDropDisplayIdx(null);
+                              if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+                              const nextStack = moveLayer(effectLayerStack, fromIdx, toIdx);
+                              const nextZ = stackZIndex(nextStack, "bg_particles");
+                              setEffectLayerStack(nextStack);
+                              setEffectDraft((prev) => setEffectLayerZ(prev, nextZ));
+                            }}
+                            style={layerChip(layerId === "bg_particles")}
+                            title={displayIdx === 0 ? "Highest layer" : displayIdx === effectLayerStack.length - 1 ? "Lowest layer" : "Middle layer"}
+                          >
+                            {LAYER_LABELS[layerId]}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {effectLayerDropDisplayIdx === effectLayerStack.length ? <div style={layerDropLine()} /> : null}
+                  </div>
+                  <div style={helperText()}>Drag to move particles relative to border, avatar, and edge plate.</div>
                   {effectDraft.render_mode === "particles" ? (
                     <>
                       <label style={label()}>Density</label>
@@ -5146,8 +6094,34 @@ function EmailBuilderInner() {
                     onChange={(e) => setEffectScale("builder", Number(e.target.value) || 1)}
                     style={input()}
                   />
-                  <div style={{ fontSize: 11, opacity: 0.7 }}>Context scale</div>
-                  <div style={{ display: "grid", gap: 8 }}>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="3"
+                    step="0.05"
+                    value={getEffectScale("builder")}
+                    onChange={(e) => setEffectScale("builder", Number(e.target.value))}
+                    style={input()}
+                  />
+                  <label style={label()}>Rotate (builder, deg)</label>
+                  <input
+                    type="number"
+                    step="1"
+                    value={getEffectRotate("builder")}
+                    onChange={(e) => setEffectRotate("builder", Number(e.target.value) || 0)}
+                    style={input()}
+                  />
+                  <input
+                    type="range"
+                    min="-180"
+                    max="180"
+                    step="1"
+                    value={getEffectRotate("builder")}
+                    onChange={(e) => setEffectRotate("builder", Number(e.target.value))}
+                    style={input()}
+                  />
+                  <div style={{ fontSize: 11, opacity: 0.7 }}>Context scale + rotate</div>
+                  <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
                     {AVATAR_CONTEXT_PREVIEWS.map((item) => (
                       <label key={item.key} style={{ display: "grid", gap: 4 }}>
                         <span style={{ fontSize: 11, opacity: 0.7 }}>{item.label}</span>
@@ -5156,6 +6130,31 @@ function EmailBuilderInner() {
                           step="0.05"
                           value={getEffectScale(item.key)}
                           onChange={(e) => setEffectScale(item.key, Number(e.target.value) || 1)}
+                          style={input()}
+                        />
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="3"
+                          step="0.05"
+                          value={getEffectScale(item.key)}
+                          onChange={(e) => setEffectScale(item.key, Number(e.target.value))}
+                          style={input()}
+                        />
+                        <input
+                          type="number"
+                          step="1"
+                          value={getEffectRotate(item.key)}
+                          onChange={(e) => setEffectRotate(item.key, Number(e.target.value) || 0)}
+                          style={input()}
+                        />
+                        <input
+                          type="range"
+                          min="-180"
+                          max="180"
+                          step="1"
+                          value={getEffectRotate(item.key)}
+                          onChange={(e) => setEffectRotate(item.key, Number(e.target.value))}
                           style={input()}
                         />
                       </label>
@@ -5195,11 +6194,12 @@ function EmailBuilderInner() {
                     {busy ? "Saving..." : "Save Background"}
                   </button>
                   <button
-                    onClick={() =>
-                      setEffectDraft({
+                    onClick={() => {
+                      const nextEffect: AvatarEffectRow = {
                         key: "",
                         name: "",
                         render_mode: "particles",
+                        z_layer: "behind_avatar",
                         config: { density: 40, size: 6, speed: 6, opacity: 70, scale: 1, scale_by_context: { builder: { scale: 1 } } },
                         html: "<div class=\"avatar-bg\"></div>",
                         css: ".avatar-bg{width:100%;height:100%;background:radial-gradient(circle at 20% 20%, rgba(59,130,246,0.4), transparent 60%), radial-gradient(circle at 80% 70%, rgba(34,197,94,0.35), transparent 55%);}",
@@ -5207,8 +6207,10 @@ function EmailBuilderInner() {
                         unlock_level: 1,
                         unlock_points: 0,
                         enabled: true,
-                      })
-                    }
+                      };
+                      setEffectDraft(nextEffect);
+                      setEffectLayerStack(stackFromSubject("bg_particles", getEffectLayerZ(nextEffect)));
+                    }}
                     style={ghost()}
                   >
                     New Background
@@ -5219,16 +6221,69 @@ function EmailBuilderInner() {
 
             <section style={previewPanel()}>
               <div style={panelTitle()}>Background Preview</div>
+              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>Avatar</span>
+                  <select value={previewAvatarId} onChange={(e) => setPreviewAvatarId(e.target.value)} style={{ ...input(), padding: "6px 8px", fontSize: 12 }}>
+                    <option value="">None</option>
+                    {avatars.map((row) => (
+                      <option key={rowToken(row)} value={rowToken(row)}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>BG color</span>
+                  <input type="color" value={previewBgColor} onChange={(e) => setPreviewBgColor(e.target.value)} style={{ ...input(), padding: 4, height: 36 }} />
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>Border</span>
+                  <select value={previewBorderRef} onChange={(e) => setPreviewBorderRef(e.target.value)} style={{ ...input(), padding: "6px 8px", fontSize: 12 }}>
+                    <option value="__none__">None</option>
+                    <option value="__draft__">Current Draft</option>
+                    {avatarBorders.map((row) => (
+                      <option key={rowToken(row)} value={rowToken(row)}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>Edge plate</span>
+                  <select value={previewEdgePlateRef} onChange={(e) => setPreviewEdgePlateRef(e.target.value)} style={{ ...input(), padding: "6px 8px", fontSize: 12 }}>
+                    <option value="__none__">None</option>
+                    <option value="__draft__">Current Draft</option>
+                    {edgePlates.map((row) => (
+                      <option key={rowToken(row)} value={rowToken(row)}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <div style={avatarPreviewWrap()}>
                 <div style={avatarPreviewFrame()}>
-                  {effectDraft.render_mode === "particles" ? (
-                    <div style={{ ...avatarPreviewBorder(), transform: `scale(${getEffectScale("builder")})`, transformOrigin: "center" }}>
-                      <AvatarEffectParticles effectKey={effectDraft.key || "custom"} config={effectDraft.config ?? undefined} />
-                    </div>
-                  ) : (
-                    <div style={{ ...avatarPreviewBorder(), transform: `scale(${getEffectScale("builder")})`, transformOrigin: "center" }} ref={effectPreviewRef} />
-                  )}
-                  <div style={avatarPreviewAvatar()} />
+                  {previewEdgePlateAsset?.image_url ? (
+                    <img
+                      src={previewEdgePlateAsset.image_url}
+                      alt=""
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none", zIndex: stackZIndex(effectLayerStack, "edge_plate") }}
+                    />
+                  ) : null}
+                  <AvatarRender
+                    size={200}
+                    bg={previewBgColor}
+                    style={{ borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)" }}
+                    avatarSrc={previewAvatarSrc}
+                    avatarZoomPct={previewAvatar?.zoom_pct ?? 100}
+                    border={previewBorderAsset}
+                    effect={effectDraft}
+                    cornerOffsets={{ x: -8, y: -8, size: 64 }}
+                    bleed={24}
+                    contextKey="builder"
+                    fallback={<div style={{ width: "70%", height: "70%", borderRadius: 14, background: "rgba(255,255,255,0.08)" }} />}
+                  />
                 </div>
               </div>
             </section>
@@ -5239,14 +6294,472 @@ function EmailBuilderInner() {
                 <div style={grid()}>
                   {avatarEffects.map((effect) => (
                     <button
-                      key={effect.id ?? effect.key}
-                      style={projectCard(String(effect.id ?? "") === activeEffectId, false)}
-                      onClick={() => setActiveEffectId(String(effect.id ?? ""))}
+                      key={rowToken(effect)}
+                      style={projectCard(rowToken(effect) === activeEffectId, false)}
+                      onClick={() => setActiveEffectId(rowToken(effect))}
                     >
-                      <div style={cardTitle()}>{effect.name}</div>
-                      <div style={cardMeta()}>{effect.key}</div>
+                      <div style={{ marginBottom: 8, display: "grid", placeItems: "center" }}>
+                        <AvatarRender
+                          size={84}
+                          bg="rgba(0,0,0,0.35)"
+                          effect={effect}
+                          cornerOffsets={{ x: -6, y: -6, size: 42 }}
+                          bleed={14}
+                          contextKey="builder"
+                          style={{ borderRadius: 12, border: "1px solid rgba(255,255,255,0.10)" }}
+                          fallback={<div style={{ width: "65%", height: "65%", borderRadius: 10, background: "rgba(255,255,255,0.08)" }} />}
+                        />
+                      </div>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <label style={{ ...cardMeta(), display: "grid", gap: 4 }}>
+                          Name
+                          <input
+                            value={effect.name ?? ""}
+                            onChange={(e) =>
+                              setAvatarEffects((prev) =>
+                                prev.map((row) => (rowToken(row) === rowToken(effect) ? { ...row, name: e.target.value } : row))
+                              )
+                            }
+                            style={{ ...input(), fontSize: 12, padding: "6px 8px" }}
+                          />
+                        </label>
+                        <label style={{ ...cardMeta(), display: "grid", gap: 4 }}>
+                          Unlock level
+                          <input
+                            type="number"
+                            value={effect.unlock_level ?? 1}
+                            onChange={(e) =>
+                              setAvatarEffects((prev) =>
+                                prev.map((row) =>
+                                  rowToken(row) === rowToken(effect) ? { ...row, unlock_level: Number(e.target.value) || 1 } : row
+                                )
+                              )
+                            }
+                            style={{ ...input(), fontSize: 12, padding: "6px 8px" }}
+                          />
+                        </label>
+                        <label style={{ ...cardMeta(), display: "grid", gap: 4 }}>
+                          Unlock points
+                          <input
+                            type="number"
+                            value={effect.unlock_points ?? 0}
+                            onChange={(e) =>
+                              setAvatarEffects((prev) =>
+                                prev.map((row) =>
+                                  rowToken(row) === rowToken(effect) ? { ...row, unlock_points: Number(e.target.value) || 0 } : row
+                                )
+                              )
+                            }
+                            style={{ ...input(), fontSize: 12, padding: "6px 8px" }}
+                          />
+                        </label>
+                        <label style={{ ...checkRow(), fontSize: 12 }}>
+                          <input
+                            type="checkbox"
+                            checked={effect.enabled !== false}
+                            onChange={(e) =>
+                              setAvatarEffects((prev) =>
+                                prev.map((row) => (rowToken(row) === rowToken(effect) ? { ...row, enabled: e.target.checked } : row))
+                              )
+                            }
+                          />
+                          <span>Enabled</span>
+                        </label>
+                        <div style={cardMeta()}>{effect.key}</div>
+                      </div>
                     </button>
                   ))}
+                  {avatarEffects.length === 0 ? <div style={cardMeta()}>No backgrounds found.</div> : null}
+                </div>
+              </section>
+            </div>
+          </>
+        ) : null}
+
+        {builderTab === "edge-plate" ? (
+          <>
+            <div style={column()}>
+              <section style={sidePanel()}>
+                <div style={panelTitle()}>Edge Plate Builder</div>
+                <div style={grid()}>
+                  <div style={helperText()}>
+                    Build edge plates (formerly nameplates) with unlock level and points.
+                  </div>
+                  <a href="/admin/custom/media?view=avatars" style={linkBtn()} target="_blank" rel="noreferrer">
+                    Open Avatar Design
+                  </a>
+                  <label style={label()}>Saved edge plates</label>
+                  <select
+                    value={activeEdgePlateId}
+                    onChange={(e) => setActiveEdgePlateId(e.target.value)}
+                    style={input()}
+                  >
+                    <option value="">New edge plate...</option>
+                    {edgePlates.map((plate) => (
+                      <option key={rowToken(plate)} value={rowToken(plate)}>
+                        {plate.name}
+                      </option>
+                    ))}
+                  </select>
+                  <label style={label()}>Key</label>
+                  <input
+                    value={edgePlateDraft.key ?? ""}
+                    onChange={(e) => setEdgePlateDraft((prev) => ({ ...prev, key: e.target.value }))}
+                    style={input()}
+                  />
+                  <label style={label()}>Name</label>
+                  <input
+                    value={edgePlateDraft.name ?? ""}
+                    onChange={(e) => setEdgePlateDraft((prev) => ({ ...prev, name: e.target.value }))}
+                    style={input()}
+                  />
+                  <label style={label()}>Image URL</label>
+                  <input
+                    value={edgePlateDraft.image_url ?? ""}
+                    onChange={(e) => setEdgePlateDraft((prev) => ({ ...prev, image_url: e.target.value }))}
+                    style={input()}
+                  />
+                  <label style={label()}>Offset X (builder, px)</label>
+                  <input
+                    type="number"
+                    value={getEdgePlateOffset("builder").x}
+                    onChange={(e) => {
+                      const next = Number(e.target.value) || 0;
+                      setEdgePlateDraft((prev) => ({
+                        ...prev,
+                        offsets_by_context: {
+                          ...(prev.offsets_by_context ?? {}),
+                          builder: {
+                            ...(prev.offsets_by_context?.builder ?? {}),
+                            x: next,
+                            y: getEdgePlateOffset("builder").y,
+                            scale: getEdgePlateScale("builder"),
+                            rotate: getEdgePlateRotate("builder"),
+                          },
+                        },
+                      }));
+                    }}
+                    style={input()}
+                  />
+                  <label style={label()}>Offset Y (builder, px)</label>
+                  <input
+                    type="number"
+                    value={getEdgePlateOffset("builder").y}
+                    onChange={(e) => {
+                      const next = Number(e.target.value) || 0;
+                      setEdgePlateDraft((prev) => ({
+                        ...prev,
+                        offsets_by_context: {
+                          ...(prev.offsets_by_context ?? {}),
+                          builder: {
+                            ...(prev.offsets_by_context?.builder ?? {}),
+                            x: getEdgePlateOffset("builder").x,
+                            y: next,
+                            scale: getEdgePlateScale("builder"),
+                            rotate: getEdgePlateRotate("builder"),
+                          },
+                        },
+                      }));
+                    }}
+                    style={input()}
+                  />
+                  <label style={label()}>Scale (builder)</label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    value={getEdgePlateScale("builder")}
+                    onChange={(e) => setEdgePlateScale("builder", Number(e.target.value) || 1)}
+                    style={input()}
+                  />
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="3"
+                    step="0.05"
+                    value={getEdgePlateScale("builder")}
+                    onChange={(e) => setEdgePlateScale("builder", Number(e.target.value))}
+                    style={input()}
+                  />
+                  <label style={label()}>Rotate (builder, deg)</label>
+                  <input
+                    type="number"
+                    step="1"
+                    value={getEdgePlateRotate("builder")}
+                    onChange={(e) => setEdgePlateRotate("builder", Number(e.target.value) || 0)}
+                    style={input()}
+                  />
+                  <input
+                    type="range"
+                    min="-180"
+                    max="180"
+                    step="1"
+                    value={getEdgePlateRotate("builder")}
+                    onChange={(e) => setEdgePlateRotate("builder", Number(e.target.value))}
+                    style={input()}
+                  />
+                  <label style={label()}>Unlock level</label>
+                  <input
+                    type="number"
+                    value={edgePlateDraft.unlock_level ?? ""}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setEdgePlateDraft((prev) => ({ ...prev, unlock_level: next === "" ? null : Number(next) }));
+                    }}
+                    style={input()}
+                  />
+                  <label style={label()}>Unlock points</label>
+                  <input
+                    type="number"
+                    value={edgePlateDraft.unlock_points ?? ""}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setEdgePlateDraft((prev) => ({ ...prev, unlock_points: next === "" ? null : Number(next) }));
+                    }}
+                    style={input()}
+                  />
+                  <label style={checkRow()}>
+                    <input
+                      type="checkbox"
+                      checked={edgePlateDraft.enabled !== false}
+                      onChange={(e) => setEdgePlateDraft((prev) => ({ ...prev, enabled: e.target.checked }))}
+                    />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+                <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+                  <button onClick={() => saveEdgePlate(edgePlateDraft)} style={button()} disabled={busy}>
+                    {busy ? "Saving..." : "Save Edge Plate"}
+                  </button>
+                  <button
+                    onClick={() =>
+                      setEdgePlateDraft({
+                        key: "",
+                        name: "",
+                        image_url: "",
+                        offsets_by_context: { builder: { x: 0, y: 0, scale: 1, rotate: 0 } },
+                        unlock_level: 1,
+                        unlock_points: 0,
+                        enabled: true,
+                      })
+                    }
+                    style={ghost()}
+                  >
+                    New Edge Plate
+                  </button>
+                </div>
+              </section>
+            </div>
+
+            <section style={previewPanel()}>
+              <div style={panelTitle()}>Edge Plate Preview</div>
+              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>Avatar</span>
+                  <select value={previewAvatarId} onChange={(e) => setPreviewAvatarId(e.target.value)} style={{ ...input(), padding: "6px 8px", fontSize: 12 }}>
+                    <option value="">None</option>
+                    {avatars.map((row) => (
+                      <option key={rowToken(row)} value={rowToken(row)}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>BG color</span>
+                  <input type="color" value={previewBgColor} onChange={(e) => setPreviewBgColor(e.target.value)} style={{ ...input(), padding: 4, height: 36 }} />
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>Border</span>
+                  <select value={previewBorderRef} onChange={(e) => setPreviewBorderRef(e.target.value)} style={{ ...input(), padding: "6px 8px", fontSize: 12 }}>
+                    <option value="__none__">None</option>
+                    <option value="__draft__">Current Draft</option>
+                    {avatarBorders.map((row) => (
+                      <option key={rowToken(row)} value={rowToken(row)}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontSize: 11, opacity: 0.75 }}>Particles</span>
+                  <select value={previewEffectRef} onChange={(e) => setPreviewEffectRef(e.target.value)} style={{ ...input(), padding: "6px 8px", fontSize: 12 }}>
+                    <option value="__none__">None</option>
+                    <option value="__draft__">Current Draft</option>
+                    {avatarEffects.map((row) => (
+                      <option key={rowToken(row)} value={rowToken(row)}>
+                        {row.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div style={avatarPreviewWrap()}>
+                <div style={avatarPreviewFrame()}>
+                  <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+                    {(previewEdgePlateRef === "__draft__" ? edgePlateDraft.image_url : previewEdgePlateAsset?.image_url) ? (
+                      <img
+                        src={(previewEdgePlateRef === "__draft__" ? edgePlateDraft.image_url : previewEdgePlateAsset?.image_url) ?? ""}
+                        alt=""
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "contain",
+                          transform:
+                            previewEdgePlateRef === "__draft__"
+                              ? `translate(${getEdgePlateOffset("builder").x}px, ${getEdgePlateOffset("builder").y}px) scale(${getEdgePlateScale("builder")}) rotate(${getEdgePlateRotate("builder")}deg)`
+                              : "none",
+                          transformOrigin: "center",
+                          cursor: previewEdgePlateRef === "__draft__" ? (edgePlateDragging ? "grabbing" : "grab") : "default",
+                          pointerEvents: previewEdgePlateRef === "__draft__" ? "auto" : "none",
+                        }}
+                        onMouseDown={(event) => {
+                          if (previewEdgePlateRef === "__draft__") startEdgePlateDrag(event, "builder");
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                  <AvatarRender
+                    size={200}
+                    bg={previewBgColor}
+                    avatarSrc={previewAvatarSrc}
+                    avatarZoomPct={previewAvatar?.zoom_pct ?? 100}
+                    border={previewBorderAsset}
+                    effect={previewEffectAsset}
+                    cornerOffsets={{ x: -8, y: -8, size: 64 }}
+                    bleed={24}
+                    contextKey="builder"
+                    style={{ borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)" }}
+                    fallback={<div style={{ width: "70%", height: "70%", borderRadius: 14, background: "rgba(255,255,255,0.08)" }} />}
+                  />
+                </div>
+              </div>
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontWeight: 800, fontSize: 12, opacity: 0.75 }}>Placement previews</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginTop: 10 }}>
+                  {AVATAR_CONTEXT_PREVIEWS.map((item) => (
+                    <div key={item.key} style={{ display: "grid", gap: 6, justifyItems: "center" }}>
+                      <div style={{ position: "relative" }} onMouseDown={(event) => startEdgePlateDrag(event, item.key)}>
+                        {(previewEdgePlateRef === "__draft__" ? edgePlateDraft.image_url : previewEdgePlateAsset?.image_url) ? (
+                          <img
+                            src={(previewEdgePlateRef === "__draft__" ? edgePlateDraft.image_url : previewEdgePlateAsset?.image_url) ?? ""}
+                            alt=""
+                            style={{
+                              position: "absolute",
+                              inset: 0,
+                              width: "100%",
+                              height: "100%",
+                              objectFit: "contain",
+                              transform:
+                                previewEdgePlateRef === "__draft__"
+                                  ? `translate(${getEdgePlateOffset(item.key).x}px, ${getEdgePlateOffset(item.key).y}px) scale(${getEdgePlateScale(item.key)}) rotate(${getEdgePlateRotate(item.key)}deg)`
+                                  : "none",
+                              transformOrigin: "center",
+                              pointerEvents: previewEdgePlateRef === "__draft__" ? "auto" : "none",
+                            }}
+                          />
+                        ) : null}
+                        <AvatarRender
+                          size={item.size}
+                          bg={previewBgColor}
+                          avatarSrc={previewAvatarSrc}
+                          avatarZoomPct={previewAvatar?.zoom_pct ?? 100}
+                          border={previewBorderAsset}
+                          effect={previewEffectAsset}
+                          cornerOffsets={{ x: -8, y: -8, size: 64 }}
+                          bleed={24}
+                          contextKey={item.key}
+                          style={{ borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)" }}
+                          fallback={<div style={{ width: "70%", height: "70%", borderRadius: 14, background: "rgba(255,255,255,0.08)" }} />}
+                        />
+                      </div>
+                      <div style={{ fontSize: 11, opacity: 0.7 }}>{item.label}</div>
+                      <input type="number" step="0.05" value={getEdgePlateScale(item.key)} onChange={(e) => setEdgePlateScale(item.key, Number(e.target.value) || 1)} style={{ ...input(), width: "100%", fontSize: 11, padding: "6px 8px" }} />
+                      <input type="range" min="0.1" max="3" step="0.05" value={getEdgePlateScale(item.key)} onChange={(e) => setEdgePlateScale(item.key, Number(e.target.value))} style={{ ...input(), width: "100%", fontSize: 11, padding: "6px 8px" }} />
+                      <input type="number" step="1" value={getEdgePlateRotate(item.key)} onChange={(e) => setEdgePlateRotate(item.key, Number(e.target.value) || 0)} style={{ ...input(), width: "100%", fontSize: 11, padding: "6px 8px" }} />
+                      <input type="range" min="-180" max="180" step="1" value={getEdgePlateRotate(item.key)} onChange={(e) => setEdgePlateRotate(item.key, Number(e.target.value))} style={{ ...input(), width: "100%", fontSize: 11, padding: "6px 8px" }} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <div style={column()}>
+              <section style={sidePanel()}>
+                <div style={panelTitle()}>Edge Plate Library</div>
+                <div style={grid()}>
+                  {edgePlates.map((plate) => (
+                    <button
+                      key={rowToken(plate)}
+                      style={projectCard(rowToken(plate) === activeEdgePlateId, false)}
+                      onClick={() => setActiveEdgePlateId(rowToken(plate))}
+                    >
+                      <div style={{ marginBottom: 8, display: "grid", placeItems: "center" }}>
+                        <div style={{ width: 84, height: 84, borderRadius: 12, border: "1px solid rgba(255,255,255,0.10)", overflow: "hidden" }}>
+                          {plate.image_url ? (
+                            <img src={plate.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                          ) : null}
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <label style={{ ...cardMeta(), display: "grid", gap: 4 }}>
+                          Name
+                          <input
+                            value={plate.name ?? ""}
+                            onChange={(e) =>
+                              setEdgePlates((prev) =>
+                                prev.map((row) => (rowToken(row) === rowToken(plate) ? { ...row, name: e.target.value } : row))
+                              )
+                            }
+                            style={{ ...input(), fontSize: 12, padding: "6px 8px" }}
+                          />
+                        </label>
+                        <label style={{ ...cardMeta(), display: "grid", gap: 4 }}>
+                          Unlock level
+                          <input
+                            type="number"
+                            value={plate.unlock_level ?? 1}
+                            onChange={(e) =>
+                              setEdgePlates((prev) =>
+                                prev.map((row) =>
+                                  rowToken(row) === rowToken(plate) ? { ...row, unlock_level: Number(e.target.value) || 1 } : row
+                                )
+                              )
+                            }
+                            style={{ ...input(), fontSize: 12, padding: "6px 8px" }}
+                          />
+                        </label>
+                        <label style={{ ...cardMeta(), display: "grid", gap: 4 }}>
+                          Unlock points
+                          <input
+                            type="number"
+                            value={plate.unlock_points ?? 0}
+                            onChange={(e) =>
+                              setEdgePlates((prev) =>
+                                prev.map((row) =>
+                                  rowToken(row) === rowToken(plate) ? { ...row, unlock_points: Number(e.target.value) || 0 } : row
+                                )
+                              )
+                            }
+                            style={{ ...input(), fontSize: 12, padding: "6px 8px" }}
+                          />
+                        </label>
+                        <label style={{ ...checkRow(), fontSize: 12 }}>
+                          <input
+                            type="checkbox"
+                            checked={plate.enabled !== false}
+                            onChange={(e) =>
+                              setEdgePlates((prev) =>
+                                prev.map((row) => (rowToken(row) === rowToken(plate) ? { ...row, enabled: e.target.checked } : row))
+                              )
+                            }
+                          />
+                          <span>Enabled</span>
+                        </label>
+                        <div style={cardMeta()}>{plate.key}</div>
+                      </div>
+                    </button>
+                  ))}
+                  {edgePlates.length === 0 ? <div style={cardMeta()}>No edge plates found.</div> : null}
                 </div>
               </section>
             </div>
@@ -6958,6 +8471,43 @@ function tagPill(): React.CSSProperties {
   };
 }
 
+function layerStackBox(): React.CSSProperties {
+  return {
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.04)",
+    padding: 10,
+    display: "grid",
+    gap: 8,
+  };
+}
+
+function layerChip(active: boolean): React.CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "8px 10px",
+    borderRadius: 999,
+    border: active ? "1px solid rgba(124,247,212,0.8)" : "1px solid rgba(255,255,255,0.18)",
+    background: active ? "rgba(124,247,212,0.18)" : "rgba(255,255,255,0.05)",
+    color: "white",
+    fontSize: 11,
+    fontWeight: 900,
+    cursor: "grab",
+    userSelect: "none",
+  };
+}
+
+function layerDropLine(): React.CSSProperties {
+  return {
+    height: 2,
+    borderRadius: 999,
+    background: "rgba(124,247,212,0.95)",
+    boxShadow: "0 0 0 1px rgba(124,247,212,0.45)",
+  };
+}
+
 function avatarPreviewWrap(): React.CSSProperties {
   return {
     display: "grid",
@@ -6977,27 +8527,6 @@ function avatarPreviewFrame(): React.CSSProperties {
     overflow: "visible",
     display: "grid",
     placeItems: "center",
-  };
-}
-
-function avatarPreviewBorder(): React.CSSProperties {
-  return {
-    position: "absolute",
-    inset: 0,
-    width: "100%",
-    height: "100%",
-  };
-}
-
-function avatarPreviewAvatar(): React.CSSProperties {
-  return {
-    width: 140,
-    height: 140,
-    borderRadius: 18,
-    background:
-      "radial-gradient(circle at 30% 20%, rgba(255,255,255,0.55), rgba(255,255,255,0.2)), linear-gradient(140deg, #1f2937, #0b1020)",
-    border: "2px solid rgba(255,255,255,0.2)",
-    zIndex: 2,
   };
 }
 

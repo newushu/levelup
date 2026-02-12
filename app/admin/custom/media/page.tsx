@@ -1979,7 +1979,7 @@ export default function MediaVaultAdminPage() {
           <div style={{ display: "grid", gap: 10 }}>
             <div style={{ fontWeight: 1000 }}>Card Plate Borders</div>
             <div style={{ opacity: 0.7, fontSize: 12 }}>
-              Upload nameplate border art and set the unlock level + points.
+              Upload edge plate border art and set the unlock level + points.
             </div>
             <label style={{ fontSize: 12, opacity: 0.8, maxWidth: 320 }}>
               Preview avatar

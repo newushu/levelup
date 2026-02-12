@@ -48,6 +48,10 @@ export async function GET() {
         "limit_mode",
         "limit_count",
         "limit_window_days",
+        "home_available",
+        "home_origin",
+        "home_parent_id",
+        "home_approved_at",
         "created_at",
       ].join(",")
     )

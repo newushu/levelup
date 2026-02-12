@@ -8,12 +8,15 @@ create table if not exists admin_todos (
   body text not null,
   urgency text not null default 'normal',
   student_id uuid references students(id) on delete set null,
+  due_at timestamptz,
   status text not null default 'open',
   created_by uuid,
   resolved_by uuid,
   resolved_at timestamptz,
   created_at timestamptz not null default now()
 );
+
+alter table admin_todos add column if not exists due_at timestamptz;
 
 create index if not exists admin_todos_status_idx on admin_todos(status, created_at desc);
 

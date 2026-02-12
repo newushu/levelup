@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AuthGate from "@/components/AuthGate";
+import ParentImpersonationBar, { useAdminParentImpersonation } from "@/components/ParentImpersonationBar";
 
 type Message = {
   id: string;
@@ -39,25 +40,43 @@ export default function ParentMessagesPage() {
 }
 
 function ParentMessagesInner() {
+  const [role, setRole] = useState("student");
   const [messages, setMessages] = useState<Message[]>([]);
   const [coaches, setCoaches] = useState<Coach[]>([]);
   const [body, setBody] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [activeThread, setActiveThread] = useState("general");
-
-  useEffect(() => {
-    refresh();
-  }, []);
+  const isParent = role === "parent";
+  const isAdmin = role === "admin";
+  const canView = isParent || isAdmin;
+  const impersonateId = useAdminParentImpersonation(isAdmin);
 
   useEffect(() => {
     (async () => {
-      const res = await fetch("/api/parent/coaches", { cache: "no-store" });
+      const res = await fetch("/api/auth/me", { cache: "no-store" });
+      const sj = await safeJson(res);
+      if (sj.ok) setRole(String(sj.json?.role ?? "student"));
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!isParent && !isAdmin) return;
+    if (isAdmin && !impersonateId) return;
+    refresh();
+  }, [isParent, isAdmin, impersonateId]);
+
+  useEffect(() => {
+    if (!isParent && !isAdmin) return;
+    if (isAdmin && !impersonateId) return;
+    (async () => {
+      const parentParam = isAdmin && impersonateId ? `?parent_id=${encodeURIComponent(impersonateId)}` : "";
+      const res = await fetch(`/api/parent/coaches${parentParam}`, { cache: "no-store" });
       const sj = await safeJson(res);
       if (!sj.ok) return;
       setCoaches((sj.json?.coaches ?? []) as Coach[]);
     })();
-  }, []);
+  }, [isParent, isAdmin, impersonateId]);
 
   useEffect(() => {
     if (!coaches.length) return;
@@ -65,7 +84,8 @@ function ParentMessagesInner() {
   }, [coaches]);
 
   async function refresh() {
-    const res = await fetch("/api/parent/messages", { cache: "no-store" });
+    const parentParam = isAdmin && impersonateId ? `?parent_id=${encodeURIComponent(impersonateId)}` : "";
+    const res = await fetch(`/api/parent/messages${parentParam}`, { cache: "no-store" });
     const sj = await safeJson(res);
     if (!sj.ok) return setMsg(sj.json?.error || "Failed to load messages.");
     const list = (sj.json?.messages ?? []) as Message[];
@@ -108,8 +128,22 @@ function ParentMessagesInner() {
   const activeCoachId = activeThread.startsWith("coach:") ? activeThread.split("coach:")[1] : "";
   const activeCoach = coachById.get(activeCoachId);
 
+  if (!canView) {
+    return (
+      <main style={{ padding: 18 }}>
+        <div style={{ fontSize: 22, fontWeight: 900 }}>Parent access only.</div>
+      </main>
+    );
+  }
+
   return (
-    <main style={{ padding: 18, maxWidth: 1100, margin: "0 auto" }}>
+    <main style={{ padding: 18, maxWidth: "none", margin: 0, width: "100%" }}>
+      <ParentImpersonationBar enabled={isAdmin} />
+      {isAdmin ? (
+        <div style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 10, background: "rgba(251,191,36,0.16)", border: "1px solid rgba(251,191,36,0.45)" }}>
+          Admin preview: showing data for selected parent.
+        </div>
+      ) : null}
       <div style={{ fontSize: 26, fontWeight: 1000 }}>Parent Messages</div>
       <div style={{ opacity: 0.7, marginTop: 6 }}>Threaded conversation with the academy team.</div>
       {msg ? <div style={{ marginTop: 10, opacity: 0.8 }}>{msg}</div> : null}
@@ -161,9 +195,9 @@ function ParentMessagesInner() {
                   : "Select a coach thread to send a message."
               }
               style={textarea()}
-              disabled={!activeThread.startsWith("coach:")}
+              disabled={isAdmin || !activeThread.startsWith("coach:")}
             />
-            <button onClick={send} style={btn()} disabled={busy || !activeThread.startsWith("coach:")}>
+            <button onClick={send} style={btn()} disabled={isAdmin || busy || !activeThread.startsWith("coach:")}>
               {busy ? "Sending..." : "Send Message"}
             </button>
           </div>

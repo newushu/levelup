@@ -189,9 +189,16 @@ create table if not exists ui_display_settings (
   skill_pulse_enabled boolean not null default true,
   battle_pulse_enabled boolean not null default true,
   badges_enabled boolean not null default true,
+  leaderboard_display_enabled boolean not null default true,
   live_activity_types text[] not null default '{}'::text[],
+  coach_display_activity_types text[] not null default '{}'::text[],
+  leaderboard_slots jsonb not null default '[]'::jsonb,
+  leaderboard_large_rotations jsonb not null default '[]'::jsonb,
+  display_blank_slots jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );
+
+alter table ui_display_settings add column if not exists coach_display_activity_types text[] not null default '{}'::text[];
 
 alter table ui_display_settings enable row level security;
 
@@ -407,6 +414,7 @@ alter table avatar_effects add column if not exists unlock_level integer not nul
 alter table avatar_effects add column if not exists unlock_points integer not null default 0;
 alter table avatar_effects add column if not exists config jsonb not null default '{}'::jsonb;
 alter table avatar_effects add column if not exists render_mode text not null default 'particles';
+alter table avatar_effects add column if not exists z_layer text not null default 'behind_avatar';
 alter table avatar_effects add column if not exists html text;
 alter table avatar_effects add column if not exists css text;
 alter table avatar_effects add column if not exists js text;
@@ -525,6 +533,7 @@ create table if not exists ui_corner_borders (
 alter table ui_corner_borders add column if not exists unlock_level integer not null default 1;
 alter table ui_corner_borders add column if not exists unlock_points integer not null default 0;
 alter table ui_corner_borders add column if not exists render_mode text not null default 'image';
+alter table ui_corner_borders add column if not exists z_layer text not null default 'above_avatar';
 alter table ui_corner_borders add column if not exists offset_x integer not null default 0;
 alter table ui_corner_borders add column if not exists offset_y integer not null default 0;
 alter table ui_corner_borders add column if not exists offsets_by_context jsonb not null default '{}'::jsonb;
@@ -1552,3 +1561,14 @@ create policy "realtime_select_display_admin_student_avatar_settings"
         and ur.role in ('admin','display')
     )
   );
+
+-- Home Quest parent challenge metadata
+alter table challenges add column if not exists home_available boolean not null default false;
+alter table challenges add column if not exists home_origin text;
+alter table challenges add column if not exists home_parent_id uuid;
+alter table challenges add column if not exists home_requires_approval boolean not null default false;
+alter table challenges add column if not exists home_approved_at timestamptz;
+alter table challenges add column if not exists home_approved_by uuid;
+
+create index if not exists challenges_home_parent_idx on challenges (home_origin, home_parent_id);
+create index if not exists challenges_home_available_idx on challenges (home_available);

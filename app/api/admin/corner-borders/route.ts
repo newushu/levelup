@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { supabaseServer } from "@/lib/supabase/server";
 
+const SELECT_WITH_LAYER =
+  "id,key,name,image_url,render_mode,z_layer,offset_x,offset_y,offsets_by_context,html,css,js,unlock_level,unlock_points,enabled,updated_at";
+const SELECT_NO_LAYER =
+  "id,key,name,image_url,render_mode,offset_x,offset_y,offsets_by_context,html,css,js,unlock_level,unlock_points,enabled,updated_at";
+
 async function requireAdmin() {
   const supabase = await supabaseServer();
   const { data: u } = await supabase.auth.getUser();
@@ -25,11 +30,27 @@ export async function GET() {
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 403 });
 
   const admin = supabaseAdmin();
-  const { data, error } = await admin
+  let {
+    data,
+    error,
+  }: {
+    data: any[] | null;
+    error: { message?: string } | null;
+  } = await admin
     .from("ui_corner_borders")
-    .select("id,key,name,image_url,render_mode,offset_x,offset_y,offsets_by_context,html,css,js,unlock_level,unlock_points,enabled,updated_at")
+    .select(SELECT_WITH_LAYER)
     .order("unlock_level", { ascending: true })
     .order("name", { ascending: true });
+
+  if (error && /z_layer/i.test(error.message ?? "")) {
+    const fallback = await admin
+      .from("ui_corner_borders")
+      .select(SELECT_NO_LAYER)
+      .order("unlock_level", { ascending: true })
+      .order("name", { ascending: true });
+    data = (fallback.data ?? []).map((row: any) => ({ ...row, z_layer: "above_avatar" }));
+    error = fallback.error;
+  }
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, borders: data ?? [] });
@@ -44,6 +65,7 @@ export async function POST(req: Request) {
   const name = String(body?.name ?? "").trim();
   const image_url = String(body?.image_url ?? "").trim() || null;
   const render_mode = String(body?.render_mode ?? "image").trim() || "image";
+  const z_layer = String(body?.z_layer ?? "above_avatar").trim() || "above_avatar";
   const offset_x = Number.isFinite(Number(body?.offset_x)) ? Math.floor(Number(body?.offset_x)) : 0;
   const offset_y = Number.isFinite(Number(body?.offset_y)) ? Math.floor(Number(body?.offset_y)) : 0;
   const offsets_by_context =
@@ -61,7 +83,13 @@ export async function POST(req: Request) {
   }
 
   const admin = supabaseAdmin();
-  const { data, error } = await admin
+  let {
+    data,
+    error,
+  }: {
+    data: any | null;
+    error: { message?: string } | null;
+  } = await admin
     .from("ui_corner_borders")
     .upsert(
       {
@@ -70,6 +98,7 @@ export async function POST(req: Request) {
         name,
         image_url,
         render_mode,
+        z_layer,
         offset_x,
         offset_y,
         offsets_by_context,
@@ -82,8 +111,36 @@ export async function POST(req: Request) {
       },
       { onConflict: "key" }
     )
-    .select("id,key,name,image_url,render_mode,offset_x,offset_y,offsets_by_context,html,css,js,unlock_level,unlock_points,enabled,updated_at")
+    .select(SELECT_WITH_LAYER)
     .single();
+
+  if (error && /z_layer/i.test(error.message ?? "")) {
+    const fallback = await admin
+      .from("ui_corner_borders")
+      .upsert(
+        {
+          id: body?.id ?? undefined,
+          key,
+          name,
+          image_url,
+          render_mode,
+          offset_x,
+          offset_y,
+          offsets_by_context,
+          html,
+          css,
+          js,
+          unlock_level,
+          unlock_points,
+          enabled,
+        },
+        { onConflict: "key" }
+      )
+      .select(SELECT_NO_LAYER)
+      .single();
+    data = fallback.data ? { ...fallback.data, z_layer: "above_avatar" } : fallback.data;
+    error = fallback.error;
+  }
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, border: data });

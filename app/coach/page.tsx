@@ -77,6 +77,7 @@ export default function CoachDashboardPage() {
   const [adminNoteBusy, setAdminNoteBusy] = useState(false);
   const classSelectRef = useRef<HTMLSelectElement | null>(null);
   const localChannelRef = useRef<BroadcastChannel | null>(null);
+  const lastRosterSyncRef = useRef<string>("");
 
   useEffect(() => {
     (async () => {
@@ -344,8 +345,11 @@ export default function CoachDashboardPage() {
 
   const activeTool = useMemo(() => TOOLS.find((t) => t.key === selectedTool) ?? null, [selectedTool]);
 
-  async function setTool(tool: ToolKey, overrides?: { instanceId?: string; classId?: string }) {
-    setSelectedTool(tool);
+  async function setTool(
+    tool: ToolKey,
+    overrides?: { instanceId?: string; classId?: string; previewMs?: number; forceRefresh?: boolean }
+  ) {
+    if (tool !== selectedTool) setSelectedTool(tool);
     setMsg("");
     if (!coachUserId) {
       setMsg("Select a display with an assigned coach.");
@@ -373,14 +377,22 @@ export default function CoachDashboardPage() {
       } catch {}
     }
     const nextTool = TOOLS.find((t) => t.key === tool) ?? null;
+    const previewUntil =
+      tool === "classroom_roster" && overrides?.previewMs
+        ? Date.now() + Math.max(1000, overrides.previewMs)
+        : 0;
     const lockParams =
       tool === "classroom_roster" && nextInstanceId
         ? `?lock_instance_id=${encodeURIComponent(nextInstanceId)}&lock_class_id=${encodeURIComponent(nextClassId || "")}`
         : "";
+    const previewParams = previewUntil ? `${lockParams ? "&" : "?"}preview_until=${encodeURIComponent(previewUntil)}` : "";
     const coachUrl =
       nextTool?.key === "classroom_roster" ? `${nextTool.coachUrl}${lockParams}` : nextTool?.coachUrl ?? null;
     const displayUrl =
-      nextTool?.key === "classroom_roster" ? `${nextTool.displayUrl ?? "/display/classroom"}${lockParams}` : nextTool?.displayUrl ?? null;
+      nextTool?.key === "classroom_roster"
+        ? `${nextTool.displayUrl ?? "/display/classroom"}${lockParams}${previewParams}`
+        : nextTool?.displayUrl ?? null;
+    const refreshAt = tool === "classroom_roster" ? Date.now() : undefined;
     const payload =
       tool === "default"
         ? null
@@ -389,6 +401,7 @@ export default function CoachDashboardPage() {
             display_url: displayUrl,
             lock_instance_id: nextInstanceId || null,
             lock_class_id: nextClassId || null,
+            ...(tool === "classroom_roster" ? { refresh_at: refreshAt } : {}),
           };
     try {
       await fetch("/api/coach/display-state", {
@@ -404,6 +417,17 @@ export default function CoachDashboardPage() {
       setMsg(err?.message ?? "Failed to update display");
     }
   }
+  useEffect(() => {
+    if (!coachUserId || selectedTool !== "classroom_roster" || !lockedInstanceId) return;
+    const key = `${coachUserId}:${lockedInstanceId}:${lockedClassId}`;
+    if (lastRosterSyncRef.current === key) return;
+    lastRosterSyncRef.current = key;
+    setTool("classroom_roster", {
+      instanceId: lockedInstanceId,
+      classId: lockedClassId,
+      forceRefresh: true,
+    });
+  }, [coachUserId, selectedTool, lockedInstanceId, lockedClassId]);
   useEffect(() => {
     if (!coachUserId) return;
     (async () => {
@@ -512,7 +536,7 @@ export default function CoachDashboardPage() {
                                 classId: String(match?.class_id ?? ""),
                               });
                             }
-                            if (selectedTool === "classroom_roster" && next) {
+                            if (next) {
                               setClassroomReloadNonce((n) => n + 1);
                               setTool("classroom_roster", {
                                 instanceId: next,
@@ -558,6 +582,19 @@ export default function CoachDashboardPage() {
                           }}
                         >
                           Load a new class
+                        </button>
+                        <button
+                          style={ghostBtn()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTool("classroom_roster", {
+                              instanceId: lockedInstanceId || undefined,
+                              classId: lockedClassId || undefined,
+                              previewMs: 60_000,
+                            });
+                          }}
+                        >
+                          Pre-class display (1 min)
                         </button>
                         <div style={checkinRow()} onClick={(e) => e.stopPropagation()}>
                           <input

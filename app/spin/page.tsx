@@ -331,6 +331,15 @@ export default function SpinPage() {
     setSpinLog(mapped);
   }
 
+  async function refreshStudentPoints(student: string) {
+    const res = await fetch(`/api/students/get?id=${encodeURIComponent(student)}`, { cache: "no-store" });
+    const sj = await res.json().catch(() => ({}));
+    if (!res.ok) return;
+    const updated = sj?.student as StudentRow | undefined;
+    if (!updated) return;
+    setStudents((prev) => prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)));
+  }
+
   async function spinWheel() {
     if (!selectedWheel) return setMsg("Select a wheel first.");
     if (!segments.length) return setMsg("This wheel has no segments.");
@@ -424,6 +433,7 @@ export default function SpinPage() {
     setPin("");
     if (selectedWheel && selectedStudent) {
       refreshSpinLog(selectedWheel.id, selectedStudent.id);
+      refreshStudentPoints(selectedStudent.id);
     }
   }
 
@@ -719,8 +729,8 @@ export default function SpinPage() {
                 <div style={studentBannerInfo()}>
                   <div style={studentBannerName()}>{selectedStudent.name}</div>
                   <div style={studentBannerStats()}>
-                    <span>Lvl {selectedStudent.level ?? "—"}</span>
-                    <span>Points {formatPoints(selectedStudent.points_total)}</span>
+                    <div>Lvl {selectedStudent.level ?? "—"}</div>
+                    <div>Points {formatPoints(selectedStudent.points_total)}</div>
                   </div>
                 </div>
               </div>
@@ -901,11 +911,18 @@ function studentBannerInfo(): React.CSSProperties {
 }
 
 function studentBannerName(): React.CSSProperties {
-  return { fontSize: 22, fontWeight: 900, letterSpacing: 0.3 };
+  return { fontSize: 28, fontWeight: 1000, letterSpacing: 0.4, lineHeight: 1.1 };
 }
 
 function studentBannerStats(): React.CSSProperties {
-  return { display: "flex", gap: 14, fontSize: 14, fontWeight: 800, opacity: 0.75 };
+  return {
+    display: "grid",
+    gap: 2,
+    fontSize: 18,
+    fontWeight: 900,
+    opacity: 0.8,
+    lineHeight: 1.1,
+  };
 }
 
 function studentBannerPlaceholder(): React.CSSProperties {

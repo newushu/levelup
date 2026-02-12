@@ -15,10 +15,24 @@ type FeedItem = {
   tone: "win" | "loss" | "badge" | "rank" | "skill";
 };
 
+const DISPLAY_MENU = [
+  { value: "/display", label: "Live Activity" },
+  { value: "/display/skill-pulse", label: "Skill Pulse" },
+  { value: "/display/battle-pulse", label: "Battle Pulse" },
+  { value: "/display/badges", label: "Badges" },
+  { value: "/display/leaderboards", label: "Leaderboards" },
+];
+
 export default function DisplayPage() {
   const [items, setItems] = useState<FeedItem[]>([]);
   const [msg, setMsg] = useState("");
   const navChannelRef = useRef<BroadcastChannel | null>(null);
+  const [menuValue, setMenuValue] = useState("/display");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setMenuValue(window.location.pathname || "/display");
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -67,6 +81,26 @@ export default function DisplayPage() {
 
   return (
     <main style={page()}>
+      <div style={menuWrap()}>
+        <select
+          value={menuValue}
+          onChange={(e) => {
+            const next = e.target.value;
+            setMenuValue(next);
+            if (typeof window !== "undefined" && next && window.location.pathname !== next) {
+              window.location.href = next;
+            }
+          }}
+          style={menuSelect()}
+        >
+          {DISPLAY_MENU.map((item) => (
+            <option key={item.value} value={item.value}>
+              {item.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
       <div style={hero()}>
         <div style={headline()}>Live Activity</div>
         <div style={subhead()}>
@@ -155,9 +189,31 @@ function page(): React.CSSProperties {
     minHeight: "100vh",
     padding: "28px 0px",
     overflowX: "hidden",
+    position: "relative",
     background:
       "radial-gradient(circle at top left, rgba(56,189,248,0.15), transparent 55%), radial-gradient(circle at 20% 60%, rgba(34,197,94,0.15), transparent 55%), linear-gradient(140deg, #020617, #0b1020 45%, #0f172a)",
     color: "white",
+  };
+}
+
+function menuWrap(): React.CSSProperties {
+  return {
+    position: "absolute",
+    top: 16,
+    right: 16,
+    zIndex: 5,
+  };
+}
+
+function menuSelect(): React.CSSProperties {
+  return {
+    padding: "6px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: "rgba(2,6,23,0.7)",
+    color: "white",
+    fontWeight: 800,
+    fontSize: 11,
   };
 }
 

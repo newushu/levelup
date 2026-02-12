@@ -35,27 +35,28 @@ function computeThresholds(baseJump: number, difficultyPct: number) {
 }
 
 export async function GET(req: Request) {
-  const supabase = await supabaseServer();
-  const { data: u } = await supabase.auth.getUser();
-  if (!u.user) return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
+  try {
+    const supabase = await supabaseServer();
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user) return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
 
-  const url = new URL(req.url);
-  const student_id = String(url.searchParams.get("student_id") ?? "").trim();
-  const source = String(url.searchParams.get("source") ?? "").trim().toLowerCase();
+    const url = new URL(req.url);
+    const student_id = String(url.searchParams.get("student_id") ?? "").trim();
+    const source = String(url.searchParams.get("source") ?? "").trim().toLowerCase();
 
-  let q = supabase
-    .from("skill_trackers")
-    .select(
-      "id,student_id,skill_id,repetitions_target,created_at,archived_at,group_id,created_by,created_source,students(id,name,level,points_total,lifetime_points,is_competition_team),tracker_skills(id,name,category,failure_reasons)"
-    )
-    .is("archived_at", null)
-    .order("created_at", { ascending: false });
+    let q = supabase
+      .from("skill_trackers")
+      .select(
+        "id,student_id,skill_id,repetitions_target,created_at,archived_at,group_id,created_by,created_source,students(id,name,level,points_total,lifetime_points,is_competition_team),tracker_skills(id,name,category,failure_reasons)"
+      )
+      .is("archived_at", null)
+      .order("created_at", { ascending: false });
 
-  if (student_id) q = q.eq("student_id", student_id);
-  if (source) q = q.eq("created_source", source);
+    if (student_id) q = q.eq("student_id", student_id);
+    if (source) q = q.eq("created_source", source);
 
-  const { data, error } = await q;
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    const { data, error } = await q;
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
   const rows = (data ?? []) as unknown as TrackerRow[];
   const ids = rows.map((r) => r.id);
@@ -134,20 +135,77 @@ export async function GET(req: Request) {
     });
   }
 
-  const studentIds = Array.from(new Set(rows.map((r) => r.student_id)));
-  const skillIds = Array.from(new Set(rows.map((r) => r.skill_id)));
+    const requestedStudentId = student_id || "";
+    const studentIds = Array.from(
+      new Set([...rows.map((r) => String(r.student_id ?? "")).filter(Boolean), ...(requestedStudentId ? [requestedStudentId] : [])])
+    );
+  const skillIdSet = new Set<string>(rows.map((r) => r.skill_id));
+  let battleRows: any[] = [];
+
+  let usedDirectBattleLogs = false;
+  const battleCountsById = new Map<string, { attempts: number; successes: number; last_at: string; last30_attempts: number; last30_successes: number }>();
+  if (requestedStudentId) {
+    const { data: battleLogs, error: blErr } = await supabase
+      .from("battle_tracker_logs")
+      .select("battle_id,student_id,success,created_at")
+      .eq("student_id", requestedStudentId);
+    if (blErr) return NextResponse.json({ ok: false, error: blErr.message }, { status: 500 });
+
+    const battleIds = Array.from(new Set((battleLogs ?? []).map((r: any) => String(r.battle_id ?? "")).filter(Boolean)));
+    if (battleIds.length) {
+      const { data: battleMetaRows, error: bErr } = await supabase
+        .from("battle_trackers")
+        .select("id,left_student_id,right_student_id,battle_mode,participant_ids,skill_id,repetitions_target,created_at")
+        .in("id", battleIds);
+      if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
+      battleRows = (battleMetaRows ?? []) as any[];
+      battleRows.forEach((b: any) => {
+        if (b?.skill_id) skillIdSet.add(String(b.skill_id));
+      });
+    }
+
+    for (const row of battleLogs ?? []) {
+      const bid = String((row as any)?.battle_id ?? "");
+      if (!bid) continue;
+      const prev = battleCountsById.get(bid) ?? { attempts: 0, successes: 0, last_at: "", last30_attempts: 0, last30_successes: 0 };
+      const createdAt = String((row as any)?.created_at ?? prev.last_at);
+      const createdMs = createdAt ? Date.parse(createdAt) : 0;
+      const success = !!(row as any)?.success;
+      battleCountsById.set(bid, {
+        attempts: prev.attempts + 1,
+        successes: prev.successes + (success ? 1 : 0),
+        last_at: createdAt,
+        last30_attempts: prev.last30_attempts + (createdMs && createdMs >= cutoff ? 1 : 0),
+        last30_successes: prev.last30_successes + (createdMs && createdMs >= cutoff && success ? 1 : 0),
+      });
+    }
+    usedDirectBattleLogs = true;
+  }
+  const skillIds = Array.from(skillIdSet);
   if (studentIds.length && skillIds.length) {
-    const { data: allTrackers, error: atErr } = await supabase
-      .from("skill_trackers")
-      .select("id,student_id,skill_id")
-      .in("student_id", studentIds)
-      .in("skill_id", skillIds);
-    if (atErr) return NextResponse.json({ ok: false, error: atErr.message }, { status: 500 });
+    let allTrackers: any[] = [];
+    if (requestedStudentId) {
+      const { data: allStudentTrackers, error: atErr } = await supabase
+        .from("skill_trackers")
+        .select("id,student_id,skill_id")
+        .eq("student_id", requestedStudentId);
+      if (atErr) return NextResponse.json({ ok: false, error: atErr.message }, { status: 500 });
+      allTrackers = allStudentTrackers ?? [];
+    } else {
+      const { data: allBatch, error: atErr } = await supabase
+        .from("skill_trackers")
+        .select("id,student_id,skill_id")
+        .in("student_id", studentIds)
+        .in("skill_id", skillIds);
+      if (atErr) return NextResponse.json({ ok: false, error: atErr.message }, { status: 500 });
+      allTrackers = allBatch ?? [];
+    }
 
     const allTrackerIds = (allTrackers ?? []).map((t: any) => String(t.id)).filter(Boolean);
     const trackerMeta = new Map<string, { student_id: string; skill_id: string }>();
     (allTrackers ?? []).forEach((t: any) => {
       trackerMeta.set(String(t.id), { student_id: String(t.student_id), skill_id: String(t.skill_id) });
+      if (t.skill_id) skillIdSet.add(String(t.skill_id));
     });
 
     if (allTrackerIds.length) {
@@ -179,27 +237,30 @@ export async function GET(req: Request) {
       }
     }
 
-    const { data: battles, error: bErr } = await supabase
-      .from("battle_trackers")
-      .select("id,skill_id,left_student_id,right_student_id,battle_mode")
-      .in("skill_id", skillIds);
-    if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
+    let batchBattleRows: any[] = battleRows;
+    if (!batchBattleRows.length) {
+      const { data: battles, error: bErr } = await supabase
+        .from("battle_trackers")
+        .select("id,skill_id,left_student_id,right_student_id,battle_mode")
+        .in("skill_id", skillIds);
+      if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
 
-    // Filter server results client-side to avoid constructing an invalid `.or()` string
-    // when student IDs are non-numeric/need quoting. This prevents runtime 500s.
-    const battleRows = (battles ?? []).filter((b: any) =>
-      studentIds.includes(String(b.left_student_id)) || studentIds.includes(String(b.right_student_id))
-    ) as any[];
-    const battleIds = battleRows.map((b) => String(b.id)).filter(Boolean);
+      // Filter server results client-side to avoid constructing an invalid `.or()` string
+      // when student IDs are non-numeric/need quoting. This prevents runtime 500s.
+      batchBattleRows = (battles ?? []).filter((b: any) =>
+        studentIds.includes(String(b.left_student_id)) || studentIds.includes(String(b.right_student_id))
+      ) as any[];
+    }
+    const battleIds = batchBattleRows.map((b: any) => String(b.id)).filter(Boolean);
     const battleMeta = new Map<string, { skill_id: string; battle_mode: string }>();
-    battleRows.forEach((b) =>
+    batchBattleRows.forEach((b: any) =>
       battleMeta.set(String(b.id), {
         skill_id: String(b.skill_id),
         battle_mode: String(b.battle_mode ?? "duel"),
       })
     );
 
-    if (battleIds.length) {
+    if (battleIds.length && !usedDirectBattleLogs) {
       const { data: bLogs, error: blErr } = await supabase
         .from("battle_tracker_logs")
         .select("battle_id,student_id,success,created_at")
@@ -212,7 +273,6 @@ export async function GET(req: Request) {
         if (!bid || !sid || !studentIds.includes(sid)) continue;
         const meta = battleMeta.get(bid);
         if (!meta) continue;
-        if (meta.battle_mode === "teams") continue;
         const key = `${sid}::${meta.skill_id}`;
         const lifePrev = lifetimeMap.get(key) ?? { attempts: 0, successes: 0 };
         lifetimeMap.set(key, {
@@ -229,6 +289,26 @@ export async function GET(req: Request) {
           });
         }
       }
+    }
+
+    if (usedDirectBattleLogs && requestedStudentId) {
+      battleRows.forEach((b: any) => {
+        const bid = String(b.id ?? "");
+        const meta = battleMeta.get(bid);
+        const counts = battleCountsById.get(bid);
+        if (!meta || !counts) return;
+        const key = `${requestedStudentId}::${meta.skill_id}`;
+        const lifePrev = lifetimeMap.get(key) ?? { attempts: 0, successes: 0 };
+        lifetimeMap.set(key, {
+          attempts: lifePrev.attempts + counts.attempts,
+          successes: lifePrev.successes + counts.successes,
+        });
+        const lastPrev = last30Map.get(key) ?? { attempts: 0, successes: 0 };
+        last30Map.set(key, {
+          attempts: lastPrev.attempts + counts.last30_attempts,
+          successes: lastPrev.successes + counts.last30_successes,
+        });
+      });
     }
   }
 
@@ -294,7 +374,7 @@ export async function GET(req: Request) {
   const plateKeys = Array.from(
     new Set((avatarSettings ?? []).map((s: any) => String(s.card_plate_key ?? "").trim()).filter(Boolean))
   );
-  let avatarMap = new Map<string, { storage_path: string | null }>();
+  const avatarMap = new Map<string, { storage_path: string | null }>();
   if (avatarIds.length) {
     const { data: avatars, error: avErr } = await supabase
       .from("avatars")
@@ -464,6 +544,34 @@ export async function GET(req: Request) {
     });
   });
 
+  const finalSkillIds = Array.from(skillIdSet);
+  const studentMetaById = new Map<string, any>();
+  const skillMap = new Map<string, { name: string; category?: string | null }>();
+  rows.forEach((r) => {
+    const sid = String(r.student_id ?? "");
+    if (sid && r.students) studentMetaById.set(sid, r.students);
+    const skillId = String(r.skill_id ?? "");
+    if (skillId && r.tracker_skills) {
+      skillMap.set(skillId, { name: r.tracker_skills.name, category: r.tracker_skills.category });
+    }
+  });
+  const missingSkillIds = finalSkillIds.filter((id) => !skillMap.has(String(id)));
+  if (missingSkillIds.length) {
+    const { data: skills } = await supabase
+      .from("tracker_skills")
+      .select("id,name,category")
+      .in("id", missingSkillIds);
+    (skills ?? []).forEach((s: any) => skillMap.set(String(s.id), { name: s.name, category: s.category }));
+  }
+  if (requestedStudentId && !studentMetaById.has(requestedStudentId)) {
+    const { data: sRow } = await supabase
+      .from("students")
+      .select("id,name,level,points_total,lifetime_points,is_competition_team")
+      .eq("id", requestedStudentId)
+      .maybeSingle();
+    if (sRow) studentMetaById.set(String(sRow.id), sRow);
+  }
+
   const trackers = rows.map((r) => {
     const pairKey = `${r.student_id}::${r.skill_id}`;
     const counts = logMap.get(r.id) ?? { attempts: 0, successes: 0 };
@@ -519,5 +627,63 @@ export async function GET(req: Request) {
     };
   });
 
-  return NextResponse.json({ ok: true, trackers });
+  const existingPairs = new Set(rows.map((r) => `${r.student_id}::${r.skill_id}`));
+  const synthetic: any[] = [];
+  lifetimeMap.forEach((life, pairKey) => {
+    if (existingPairs.has(pairKey)) return;
+    const [sid, skillId] = pairKey.split("::");
+    if (!sid || !skillId) return;
+    const last30 = last30Map.get(pairKey) ?? { attempts: 0, successes: 0 };
+    const lifetime_rate = life.attempts ? Math.round((life.successes / life.attempts) * 100) : 0;
+    const last30_rate = last30.attempts ? Math.round((last30.successes / last30.attempts) * 100) : 0;
+    const studentMeta = studentMetaById.get(sid) ?? {};
+    const lvl = effectiveLevelByStudent.get(sid) ?? Number(studentMeta.level ?? 1);
+    const skillMeta = skillMap.get(skillId);
+    synthetic.push({
+      id: `battle-${sid}-${skillId}`,
+      student_id: sid,
+      student_name: studentMeta.name ?? "Student",
+      student_level: lvl,
+      student_points: studentMeta.points_total ?? 0,
+      student_is_competition: studentMeta.is_competition_team ?? false,
+      avatar_path: avatarByStudent.get(sid)?.storage_path ?? null,
+      avatar_bg: avatarByStudent.get(sid)?.bg_color ?? null,
+      avatar_effect: avatarByStudent.get(sid)?.particle_style ?? null,
+      corner_border_url: avatarByStudent.get(sid)?.corner_border_url ?? null,
+      corner_border_render_mode: avatarByStudent.get(sid)?.corner_border_render_mode ?? null,
+      corner_border_html: avatarByStudent.get(sid)?.corner_border_html ?? null,
+      corner_border_css: avatarByStudent.get(sid)?.corner_border_css ?? null,
+      corner_border_js: avatarByStudent.get(sid)?.corner_border_js ?? null,
+      corner_border_offset_x: avatarByStudent.get(sid)?.corner_border_offset_x ?? 0,
+      corner_border_offset_y: avatarByStudent.get(sid)?.corner_border_offset_y ?? 0,
+      corner_border_offsets_by_context: avatarByStudent.get(sid)?.corner_border_offsets_by_context ?? {},
+      card_plate_url: avatarByStudent.get(sid)?.card_plate_url ?? null,
+      skill_id: skillId,
+      skill_name: skillMeta?.name ?? "Skill",
+      skill_category: skillMeta?.category ?? "",
+      repetitions_target: 1,
+      attempts: 0,
+      successes: 0,
+      rate: 0,
+      last_rate: 0,
+      lifetime_attempts: life.attempts,
+      lifetime_successes: life.successes,
+      lifetime_rate,
+      last30_attempts: last30.attempts,
+      last30_successes: last30.successes,
+      last30_rate,
+      points_awarded: 0,
+      recent_attempts: [],
+      created_at: new Date().toISOString(),
+      group_id: null,
+      failure_reasons: [],
+      created_by: null,
+      creator_role: null,
+    });
+  });
+
+    return NextResponse.json({ ok: true, trackers: [...trackers, ...synthetic] });
+  } catch (err: any) {
+    return NextResponse.json({ ok: false, error: err?.message ?? "Unknown error" }, { status: 500 });
+  }
 }

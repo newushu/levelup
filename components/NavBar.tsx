@@ -8,13 +8,18 @@ type Me =
   | { ok: true; role: string; user: { id: string; email: string | null } }
   | { ok: false; error: string };
 
+type StudentNotePreview = {
+  id: string;
+  body: string;
+  urgency: string | null;
+  student_name: string | null;
+  category: string | null;
+  created_at: string | null;
+};
+
 export default function NavBar() {
   const isEmbed = useSearchParams().get("embed") === "1";
   const path = usePathname();
-  if (path.startsWith("/classroom")) return null;
-  if (path.startsWith("/coach")) return null;
-  if (path.startsWith("/tools/lesson-forge")) return null;
-  if (path.startsWith("/camp/menu")) return null;
   const [me, setMe] = useState<Me | null>(null);
   const [studentName, setStudentName] = useState<string>("");
   const [dateText, setDateText] = useState<string>(""); // client-only
@@ -32,11 +37,36 @@ export default function NavBar() {
   const [adminParentMsgCount, setAdminParentMsgCount] = useState(0);
   const [adminParentRequestCount, setAdminParentRequestCount] = useState(0);
   const [adminRewardCount, setAdminRewardCount] = useState(0);
-  const [adminTodoCount, setAdminTodoCount] = useState(0);
   const [accountName, setAccountName] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [adminTodoHoverOpen, setAdminTodoHoverOpen] = useState(false);
+  const [adminTodoHoverLoading, setAdminTodoHoverLoading] = useState(false);
+  const [adminTodoHoverMsg, setAdminTodoHoverMsg] = useState("");
+  const [adminTodoHoverBusy, setAdminTodoHoverBusy] = useState<Record<string, boolean>>({});
+  const [adminTodoHoverItems, setAdminTodoHoverItems] = useState<StudentNotePreview[]>([]);
+  const [hoverNoteBody, setHoverNoteBody] = useState("");
+  const [hoverNoteCategory, setHoverNoteCategory] = useState("note");
+  const [hoverNoteUrgency, setHoverNoteUrgency] = useState("medium");
+  const [hoverStudentQuery, setHoverStudentQuery] = useState("");
+  const [hoverStudentResults, setHoverStudentResults] = useState<Array<{ id: string; name: string }>>([]);
+  const [hoverStudent, setHoverStudent] = useState<{ id: string; name: string } | null>(null);
+  const [hoverNoteSaving, setHoverNoteSaving] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const createRef = useRef<HTMLDivElement | null>(null);
+  const hoverCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideNav =
+    isEmbed ||
+    path.startsWith("/classroom") ||
+    path.startsWith("/student") ||
+    path.startsWith("/home-quest") ||
+    path.startsWith("/rewards") ||
+    path.startsWith("/my-metrics") ||
+    path.startsWith("/skill-pulse") ||
+    path.startsWith("/taolu-tracker") ||
+    path.startsWith("/award") ||
+    path.startsWith("/coach") ||
+    path.startsWith("/tools/lesson-forge") ||
+    path.startsWith("/camp/menu");
 
   const openMenuSafe = (menu: "classes" | "performance" | "passes" | "camp" | "more" | "tools") => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
@@ -119,16 +149,27 @@ export default function NavBar() {
 
   useEffect(() => {
     if (role !== "admin") return;
+    if (!adminTodoHoverOpen) return;
     (async () => {
+      setAdminTodoHoverLoading(true);
+      setAdminTodoHoverMsg("");
       try {
-        const res = await fetch("/api/admin-todos/count", { cache: "no-store" });
+        const res = await fetch("/api/student-notes?status=open&limit=20", { cache: "no-store" });
         const data = await res.json().catch(() => ({}));
-        setAdminTodoCount(Number(data?.count ?? 0));
+        if (!res.ok) {
+          setAdminTodoHoverMsg(data?.error || "Failed to load notes");
+          setAdminTodoHoverItems([]);
+        } else {
+          setAdminTodoHoverItems((data?.notes ?? []) as StudentNotePreview[]);
+        }
       } catch {
-        setAdminTodoCount(0);
+        setAdminTodoHoverMsg("Failed to load notes");
+        setAdminTodoHoverItems([]);
+      } finally {
+        setAdminTodoHoverLoading(false);
       }
     })();
-  }, [role]);
+  }, [adminTodoHoverOpen, adminTodoHoverItems.length, role]);
 
   useEffect(() => {
     function onClick(event: MouseEvent) {
@@ -142,6 +183,36 @@ export default function NavBar() {
     }
     return () => window.removeEventListener("mousedown", onClick);
   }, [createOpen]);
+
+  useEffect(() => {
+    if (!hoverStudentQuery.trim()) {
+      setHoverStudentResults([]);
+      return;
+    }
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/students/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: hoverStudentQuery.trim() }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!active) return;
+        if (!res.ok) {
+          setHoverStudentResults([]);
+        } else {
+          setHoverStudentResults((data?.students ?? []) as Array<{ id: string; name: string }>);
+        }
+      } catch {
+        if (!active) return;
+        setHoverStudentResults([]);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [hoverStudentQuery]);
 
   useEffect(() => {
     if (role !== "admin") return;
@@ -266,6 +337,7 @@ export default function NavBar() {
     );
   }
 
+  if (hideNav) return null;
   return (
     <div style={{ display: "grid", gap: 10 }}>
       <div style={{ fontSize: 18, fontWeight: 1000, letterSpacing: 0.4 }}>
@@ -448,14 +520,11 @@ export default function NavBar() {
             <a href="/admin/custom/access" style={adminFlag("ribbon")}>
               <span>ACCESS</span>
             </a>
-            <a href="/admin/roster?tab=students" style={adminFlag("roster")}>
-              <span>ROSTER</span>
-            </a>
-            <button type="button" onClick={() => setGroupPointsOpen(true)} style={adminFlag("squad")}>
-              <span>SQUAD</span>
-            </button>
             <a href="/admin/announcements" style={adminFlag("announce")}>
               <span>ANNOUNCE</span>
+            </a>
+            <a href="/award" style={adminFlag("award")}>
+              <span>AWARD</span>
             </a>
             <div ref={createRef} style={createWrap()}>
               <button type="button" onClick={() => setCreateOpen((prev) => !prev)} style={adminFlag("builder")}>
@@ -490,24 +559,223 @@ export default function NavBar() {
                 </div>
               ) : null}
             </div>
-            <a href="/admin/rewards" style={adminFlag("rewards")}>
-              <span>REWARDS</span>
-              {adminRewardCount > 0 ? <span style={adminFlagBadge()}>{adminRewardCount}</span> : null}
+            <a href="/admin/parent-messages" style={adminFlag("messages")}>
+              <span>MESSAGES</span>
+              {adminParentMsgCount > 0 ? <span style={adminFlagBadge()}>{adminParentMsgCount}</span> : null}
             </a>
             <a href="/admin/parent-pairing" style={adminFlag("pairing")}>
               <span>PAIRING</span>
               {adminParentRequestCount > 0 ? <span style={adminFlagBadge()}>{adminParentRequestCount}</span> : null}
             </a>
-            <a href="/admin/parent-messages" style={adminFlag("messages")}>
-              <span>MESSAGES</span>
-              {adminParentMsgCount > 0 ? <span style={adminFlagBadge()}>{adminParentMsgCount}</span> : null}
+            <a href="/admin/rewards" style={adminFlag("rewards")}>
+              <span>REWARDS</span>
+              {adminRewardCount > 0 ? <span style={adminFlagBadge()}>{adminRewardCount}</span> : null}
             </a>
-            <a href="/admin" style={adminFlag("admin")}>
-              <span>ADMIN</span>
-              {todoCount + adminTodoCount > 0 ? (
-                <span style={adminFlagBadge()}>{todoCount + adminTodoCount}</span>
+            <a href="/admin/roster?tab=students" style={adminFlag("roster")}>
+              <span>ROSTER</span>
+            </a>
+            <button type="button" onClick={() => setGroupPointsOpen(true)} style={adminFlag("squad")}>
+              <span>SQUAD</span>
+            </button>
+            <div
+              style={adminHoverWrap()}
+              onMouseEnter={() => {
+                if (hoverCloseTimer.current) clearTimeout(hoverCloseTimer.current);
+                setAdminTodoHoverOpen(true);
+              }}
+              onMouseLeave={() => {
+                if (hoverCloseTimer.current) clearTimeout(hoverCloseTimer.current);
+                hoverCloseTimer.current = setTimeout(() => setAdminTodoHoverOpen(false), 320);
+              }}
+            >
+              <a href="/admin" style={adminFlag("admin")}>
+                <span>ADMIN</span>
+              {todoCount > 0 ? <span style={adminFlagBadge()}>{todoCount}</span> : null}
+              </a>
+              {adminTodoHoverOpen ? (
+                <div
+                  style={adminHoverPanel()}
+                  onMouseEnter={() => {
+                    if (hoverCloseTimer.current) clearTimeout(hoverCloseTimer.current);
+                  }}
+                  onMouseLeave={() => {
+                    if (hoverCloseTimer.current) clearTimeout(hoverCloseTimer.current);
+                    hoverCloseTimer.current = setTimeout(() => setAdminTodoHoverOpen(false), 320);
+                  }}
+                >
+                  <div style={adminHoverHeader()}>
+                    <div style={{ fontWeight: 900 }}>Coach Notes & Alerts</div>
+                    <a href="/admin/custom/notes" style={adminHoverLink()}>
+                      Open notes →
+                    </a>
+                  </div>
+                  <div style={adminHoverForm()}>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <select value={hoverNoteCategory} onChange={(e) => setHoverNoteCategory(e.target.value)} style={adminHoverSelect()}>
+                        <option value="note">Note</option>
+                        <option value="todo">To-Do</option>
+                      </select>
+                      <select value={hoverNoteUrgency} onChange={(e) => setHoverNoteUrgency(e.target.value)} style={adminHoverSelect()}>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="critical">Critical</option>
+                      </select>
+                    </div>
+                    <input
+                      value={hoverStudentQuery}
+                      onChange={(e) => setHoverStudentQuery(e.target.value)}
+                      placeholder="Student name"
+                      style={adminHoverInput()}
+                    />
+                    {hoverStudentResults.length ? (
+                      <div style={adminHoverChipRow()}>
+                        {hoverStudentResults.slice(0, 5).map((row) => (
+                          <button
+                            key={row.id}
+                            type="button"
+                            style={adminHoverChip()}
+                            onClick={() => {
+                              setHoverStudent(row);
+                              setHoverStudentQuery(row.name);
+                              setHoverStudentResults([]);
+                            }}
+                          >
+                            {row.name}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {hoverStudent ? (
+                      <div style={{ fontSize: 10, opacity: 0.7 }}>Selected: {hoverStudent.name}</div>
+                    ) : null}
+                    <textarea
+                      value={hoverNoteBody}
+                      onChange={(e) => setHoverNoteBody(e.target.value)}
+                      placeholder="Note or to-do..."
+                      rows={2}
+                      style={adminHoverTextarea()}
+                    />
+                    <button
+                      type="button"
+                      style={adminHoverSaveBtn()}
+                      disabled={hoverNoteSaving}
+                      onClick={async () => {
+                        if (!hoverStudent?.id || !hoverNoteBody.trim()) {
+                          setAdminTodoHoverMsg("Student + note required.");
+                          return;
+                        }
+                        setHoverNoteSaving(true);
+                        setAdminTodoHoverMsg("");
+                        try {
+                          const res = await fetch("/api/student-notes", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              student_id: hoverStudent.id,
+                              body: hoverNoteBody.trim(),
+                              category: hoverNoteCategory,
+                              urgency: hoverNoteUrgency,
+                            }),
+                          });
+                          const data = await res.json().catch(() => ({}));
+                          if (!res.ok) {
+                            setAdminTodoHoverMsg(data?.error || "Failed to save note");
+                          } else {
+                            setHoverNoteBody("");
+                            setHoverStudent(null);
+                            setHoverStudentQuery("");
+                            setHoverStudentResults([]);
+                            setAdminTodoHoverItems((prev) => [
+                              {
+                                id: data?.note?.id ?? `${Date.now()}`,
+                                body: data?.note?.body ?? hoverNoteBody.trim(),
+                                urgency: data?.note?.urgency ?? hoverNoteUrgency,
+                                student_name: hoverStudent?.name ?? "Student",
+                                category: data?.note?.category ?? hoverNoteCategory,
+                                created_at: data?.note?.created_at ?? new Date().toISOString(),
+                              },
+                              ...prev,
+                            ]);
+                            if (hoverNoteCategory === "todo") {
+                              setTodoCount((prev) => prev + 1);
+                            }
+                          }
+                        } catch {
+                          setAdminTodoHoverMsg("Failed to save note");
+                        } finally {
+                          setHoverNoteSaving(false);
+                        }
+                      }}
+                    >
+                      Add note
+                    </button>
+                  </div>
+                  {adminTodoHoverLoading ? (
+                    <div style={adminHoverEmpty()}>Loading...</div>
+                  ) : adminTodoHoverMsg ? (
+                    <div style={adminHoverEmpty()}>{adminTodoHoverMsg}</div>
+                  ) : adminTodoHoverItems.length ? (
+                    <div style={adminHoverList()}>
+                      {adminTodoHoverItems.map((todo) => {
+                        const category = String(todo.category ?? "note").toLowerCase();
+                        return (
+                          <div key={todo.id} style={adminHoverCard()}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                              <div style={{ fontWeight: 900, fontSize: 12 }}>{todo.student_name || "Student"}</div>
+                              {todo.urgency ? <span style={todoUrgency(todo.urgency)}>{todo.urgency.toUpperCase()}</span> : null}
+                            </div>
+                            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                              <span style={noteCategory(category)}>{category.toUpperCase()}</span>
+                              <span style={{ fontSize: 11, opacity: 0.85 }}>{todo.body}</span>
+                            </div>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                              <div style={{ fontSize: 10, opacity: 0.6 }}>
+                                {todo.created_at ? `Added ${new Date(todo.created_at).toLocaleDateString()}` : ""}
+                              </div>
+                              <button
+                                type="button"
+                                style={todoDoneBtn()}
+                                disabled={!!adminTodoHoverBusy[todo.id]}
+                                onClick={async (event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  setAdminTodoHoverBusy((prev) => ({ ...prev, [todo.id]: true }));
+                                  try {
+                                    const res = await fetch("/api/student-notes/status", {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ id: todo.id, status: "done" }),
+                                    });
+                                    const data = await res.json().catch(() => ({}));
+                                    if (!res.ok) {
+                                      setAdminTodoHoverMsg(data?.error || "Failed to update");
+                                    } else {
+                                      setAdminTodoHoverItems((prev) => prev.filter((row) => row.id !== todo.id));
+                                      if (category === "todo") {
+                                        setTodoCount((prev) => Math.max(0, prev - 1));
+                                      }
+                                    }
+                                  } catch {
+                                    setAdminTodoHoverMsg("Failed to update");
+                                  } finally {
+                                    setAdminTodoHoverBusy((prev) => ({ ...prev, [todo.id]: false }));
+                                  }
+                                }}
+                              >
+                                {category === "todo" ? "Mark done" : "Hide"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={adminHoverEmpty()}>No open coach notes.</div>
+                  )}
+                </div>
               ) : null}
-            </a>
+            </div>
           </div>
         ) : loggedIn && role ? (
           <div style={roleFlag(role)}>
@@ -581,7 +849,7 @@ function adminFlagRow(): React.CSSProperties {
 }
 
 function adminFlag(
-  kind: "admin" | "messages" | "pairing" | "rewards" | "squad" | "announce" | "builder" | "roster" | "ribbon",
+  kind: "admin" | "messages" | "pairing" | "rewards" | "squad" | "announce" | "builder" | "roster" | "ribbon" | "award",
 ): React.CSSProperties {
   const palette: Record<string, { border: string; background: string; shadow: string }> = {
     ribbon: {
@@ -629,6 +897,11 @@ function adminFlag(
       background: "linear-gradient(135deg, rgba(236,72,153,0.35), rgba(244,63,94,0.35))",
       shadow: "0 10px 24px rgba(236,72,153,0.25)",
     },
+    award: {
+      border: "1px solid rgba(34,197,94,0.55)",
+      background: "linear-gradient(135deg, rgba(34,197,94,0.35), rgba(16,185,129,0.35))",
+      shadow: "0 10px 24px rgba(34,197,94,0.25)",
+    },
   };
   const style = palette[kind] ?? palette.admin;
   return {
@@ -661,6 +934,198 @@ function adminFlagBadge(): React.CSSProperties {
     fontWeight: 900,
     display: "grid",
     placeItems: "center",
+  };
+}
+
+function adminHoverWrap(): React.CSSProperties {
+  return {
+    position: "relative",
+    display: "inline-flex",
+    alignItems: "center",
+  };
+}
+
+function adminHoverPanel(): React.CSSProperties {
+  return {
+    position: "absolute",
+    right: 0,
+    top: 42,
+    width: 320,
+    padding: 12,
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.16)",
+    background: "rgba(8,10,18,0.97)",
+    boxShadow: "0 22px 50px rgba(0,0,0,0.45)",
+    zIndex: 30,
+    display: "grid",
+    gap: 10,
+  };
+}
+
+function adminHoverHeader(): React.CSSProperties {
+  return {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  };
+}
+
+function adminHoverLink(): React.CSSProperties {
+  return {
+    fontSize: 11,
+    fontWeight: 900,
+    color: "white",
+    textDecoration: "none",
+    padding: "4px 8px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: "rgba(255,255,255,0.08)",
+  };
+}
+
+function adminHoverList(): React.CSSProperties {
+  return {
+    display: "grid",
+    gap: 8,
+    maxHeight: 260,
+    overflowY: "auto",
+    paddingRight: 4,
+  };
+}
+
+function adminHoverForm(): React.CSSProperties {
+  return {
+    borderRadius: 12,
+    padding: 10,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.04)",
+    display: "grid",
+    gap: 6,
+  };
+}
+
+function adminHoverInput(): React.CSSProperties {
+  return {
+    padding: "6px 8px",
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.16)",
+    background: "rgba(0,0,0,0.3)",
+    color: "white",
+    fontWeight: 900,
+    fontSize: 11,
+  };
+}
+
+function adminHoverTextarea(): React.CSSProperties {
+  return {
+    ...adminHoverInput(),
+    minHeight: 54,
+    resize: "vertical",
+  };
+}
+
+function adminHoverSelect(): React.CSSProperties {
+  return {
+    ...adminHoverInput(),
+    cursor: "pointer",
+  };
+}
+
+function adminHoverChipRow(): React.CSSProperties {
+  return {
+    display: "flex",
+    gap: 6,
+    flexWrap: "wrap",
+  };
+}
+
+function adminHoverChip(): React.CSSProperties {
+  return {
+    padding: "4px 8px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: "rgba(255,255,255,0.1)",
+    color: "white",
+    fontWeight: 900,
+    fontSize: 10,
+    cursor: "pointer",
+  };
+}
+
+function adminHoverSaveBtn(): React.CSSProperties {
+  return {
+    padding: "6px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(56,189,248,0.45)",
+    background: "rgba(56,189,248,0.2)",
+    color: "white",
+    fontWeight: 900,
+    fontSize: 10,
+    cursor: "pointer",
+  };
+}
+
+function adminHoverCard(): React.CSSProperties {
+  return {
+    borderRadius: 12,
+    padding: 10,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.05)",
+    display: "grid",
+    gap: 6,
+  };
+}
+
+function adminHoverEmpty(): React.CSSProperties {
+  return {
+    fontSize: 12,
+    opacity: 0.7,
+  };
+}
+
+function todoUrgency(level: string): React.CSSProperties {
+  const norm = String(level || "").toLowerCase();
+  const palette: Record<string, string> = {
+    low: "rgba(148,163,184,0.35)",
+    normal: "rgba(59,130,246,0.35)",
+    high: "rgba(249,115,22,0.4)",
+    urgent: "rgba(239,68,68,0.45)",
+  };
+  return {
+    padding: "2px 6px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: palette[norm] ?? "rgba(148,163,184,0.3)",
+    fontSize: 9,
+    fontWeight: 900,
+    letterSpacing: 0.4,
+  };
+}
+
+function noteCategory(kind: string): React.CSSProperties {
+  const isTodo = kind === "todo";
+  return {
+    padding: "2px 6px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: isTodo ? "rgba(59,130,246,0.35)" : "rgba(148,163,184,0.3)",
+    fontSize: 9,
+    fontWeight: 900,
+    letterSpacing: 0.4,
+  };
+}
+
+function todoDoneBtn(): React.CSSProperties {
+  return {
+    border: "1px solid rgba(34,197,94,0.4)",
+    background: "rgba(34,197,94,0.22)",
+    color: "white",
+    fontWeight: 900,
+    fontSize: 10,
+    padding: "4px 8px",
+    borderRadius: 999,
+    cursor: "pointer",
   };
 }
 

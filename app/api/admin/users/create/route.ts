@@ -43,13 +43,27 @@ export async function POST(req: Request) {
 
   const admin = supabaseAdmin();
   const tempPassword = password || crypto.randomBytes(6).toString("base64url");
+  let user = null as any;
+  let createdNew = true;
   const { data, error } = await admin.auth.admin.createUser({
     email,
     password: tempPassword,
     email_confirm: true,
   });
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  const user = data.user;
+  if (error) {
+    const msg = String(error.message || "");
+    const alreadyExists =
+      msg.toLowerCase().includes("already registered") ||
+      msg.toLowerCase().includes("already exists") ||
+      msg.toLowerCase().includes("duplicate");
+    if (!alreadyExists) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    const existing = await admin.auth.admin.getUserByEmail(email);
+    user = existing.data?.user || null;
+    createdNew = false;
+    if (!user) return NextResponse.json({ ok: false, error: "User exists but could not be fetched" }, { status: 500 });
+  } else {
+    user = data.user;
+  }
   if (!user) return NextResponse.json({ ok: false, error: "No user returned" }, { status: 500 });
 
   const resolvedUsername = username
@@ -70,5 +84,10 @@ export async function POST(req: Request) {
   const { error: rErr } = await admin.from("user_roles").upsert(rolePayload, { onConflict: "user_id,role" });
   if (rErr) return NextResponse.json({ ok: false, error: rErr.message }, { status: 500 });
 
-  return NextResponse.json({ ok: true, user_id: user.id, temp_password: password ? null : tempPassword });
+  return NextResponse.json({
+    ok: true,
+    user_id: user.id,
+    temp_password: createdNew && !password ? tempPassword : null,
+    existed: !createdNew,
+  });
 }

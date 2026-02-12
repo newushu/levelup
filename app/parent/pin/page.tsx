@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AuthGate from "@/components/AuthGate";
+import ParentImpersonationBar from "@/components/ParentImpersonationBar";
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -25,6 +26,9 @@ function ParentPinInner() {
   const [pin, setPin] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const isParent = role === "parent";
+  const isAdmin = role === "admin";
+  const canView = isParent || isAdmin;
 
   useEffect(() => {
     (async () => {
@@ -50,7 +54,7 @@ function ParentPinInner() {
     setMsg("PIN saved.");
   }
 
-  if (role !== "parent") {
+  if (!canView) {
     return (
       <main style={{ padding: 18 }}>
         <div style={{ fontSize: 22, fontWeight: 900 }}>Parent access only.</div>
@@ -59,7 +63,13 @@ function ParentPinInner() {
   }
 
   return (
-    <main style={{ padding: 18, maxWidth: 520, margin: "0 auto" }}>
+    <main style={{ padding: 18, maxWidth: "none", margin: 0, width: "100%" }}>
+      <ParentImpersonationBar enabled={isAdmin} />
+      {isAdmin ? (
+        <div style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 10, background: "rgba(251,191,36,0.16)", border: "1px solid rgba(251,191,36,0.45)" }}>
+          Admin preview: PIN updates are disabled.
+        </div>
+      ) : null}
       <div style={{ fontSize: 28, fontWeight: 1000 }}>Parent PIN</div>
       <div style={{ opacity: 0.7, marginTop: 6 }}>Set a PIN to approve Home Quest tasks.</div>
       {msg ? <div style={{ marginTop: 10, opacity: 0.8 }}>{msg}</div> : null}
@@ -71,9 +81,10 @@ function ParentPinInner() {
           placeholder="New PIN"
           type="password"
           style={input()}
+          disabled={isAdmin}
         />
-        <button onClick={savePin} style={btn()} disabled={busy}>
-          {busy ? "Saving..." : "Save PIN"}
+        <button onClick={savePin} style={btn()} disabled={busy || isAdmin}>
+          {isAdmin ? "Admin Preview" : busy ? "Saving..." : "Save PIN"}
         </button>
       </div>
     </main>

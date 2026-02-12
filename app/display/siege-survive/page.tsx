@@ -17,6 +17,8 @@ type SiegeState = {
   roundEndActive: boolean;
   roundEndEndsAt: number | null;
   roundEndDuration: number;
+  roundEndPending: boolean;
+  roundEndReason: "time" | null;
   endGameActive: boolean;
   endGameEndsAt: number | null;
   round: number;
@@ -55,7 +57,9 @@ const EMPTY_STATE: SiegeState = {
   intermissionTotal: 20,
   roundEndActive: false,
   roundEndEndsAt: null,
-  roundEndDuration: 3,
+  roundEndDuration: 10,
+  roundEndPending: false,
+  roundEndReason: null,
   endGameActive: false,
   endGameEndsAt: null,
   round: 1,
@@ -95,9 +99,12 @@ export default function SiegeSurviveDisplayPage() {
   const navChannelRef = useRef<BroadcastChannel | null>(null);
   const lastBeepRef = useRef<number | null>(null);
   const wasIntermissionRef = useRef(false);
+  const wasRoundEndRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const confettiPieces = useMemo(
-    () =>
+  const [confettiPieces, setConfettiPieces] = useState<Array<{ id: number; left: number; size: number; delay: number; duration: number; hue: number }>>([]);
+
+  useEffect(() => {
+    setConfettiPieces(
       Array.from({ length: 36 }).map((_, idx) => ({
         id: idx,
         left: Math.random() * 100,
@@ -105,9 +112,9 @@ export default function SiegeSurviveDisplayPage() {
         delay: Math.random() * 1.6,
         duration: 2.6 + Math.random() * 2.2,
         hue: Math.floor(Math.random() * 360),
-      })),
-    []
-  );
+      }))
+    );
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 250);
@@ -144,6 +151,7 @@ export default function SiegeSurviveDisplayPage() {
       if (!data || typeof data !== "object") return;
       if (data.type === "siege_state") {
         const next = { ...EMPTY_STATE, ...(data.state as SiegeState) };
+        if (!Number.isFinite(next.timerUpdatedAt)) next.timerUpdatedAt = next.updatedAt || Date.now();
         setState(next);
         try {
           localStorage.setItem("siege_state_display", JSON.stringify(next));
@@ -176,39 +184,12 @@ export default function SiegeSurviveDisplayPage() {
     };
   }, []);
 
-  const baseStartRef = useRef<number>(Date.now());
-  const baseSecondsRef = useRef<number>(0);
-  const lastDisplayRef = useRef<number>(0);
-  const lastSecondsRef = useRef<number>(0);
-  const lastRoundRef = useRef<number>(0);
-  const lastRunningRef = useRef<boolean>(false);
-  useEffect(() => {
-    const nextSeconds = Math.max(0, state.secondsLeft);
-    const runningChanged = lastRunningRef.current !== state.running;
-    const roundChanged = lastRoundRef.current !== state.round;
-    if (runningChanged || roundChanged) {
-      baseStartRef.current = Date.now();
-      baseSecondsRef.current = nextSeconds;
-      lastSecondsRef.current = nextSeconds;
-      lastRoundRef.current = state.round;
-      lastRunningRef.current = state.running;
-      return;
-    }
-    const prevSeconds = lastSecondsRef.current || nextSeconds;
-    if (nextSeconds < prevSeconds) {
-      baseStartRef.current = Date.now();
-      baseSecondsRef.current = nextSeconds;
-      lastSecondsRef.current = nextSeconds;
-    }
-  }, [state.secondsLeft, state.running, state.round]);
-
   const displaySeconds = useMemo(() => {
     if (!state.running) return Math.max(0, state.secondsLeft);
-    const elapsed = Math.floor((now - baseStartRef.current) / 1000);
-    const raw = Math.max(0, baseSecondsRef.current - elapsed);
-    const prev = lastDisplayRef.current || raw;
-    return Math.min(raw, prev);
-  }, [state.secondsLeft, state.running, now]);
+    const elapsed = Math.floor((now - state.timerUpdatedAt) / 1000);
+    const raw = Math.max(0, state.secondsLeft - (Number.isFinite(elapsed) ? elapsed : 0));
+    return raw;
+  }, [state.secondsLeft, state.running, state.timerUpdatedAt, now]);
 
   const intermissionRemaining = useMemo(() => {
     if (!state.intermissionActive || !state.intermissionEndsAt) return 0;
@@ -226,16 +207,42 @@ export default function SiegeSurviveDisplayPage() {
   }, [state.endGameActive, state.endGameEndsAt, now]);
 
   useEffect(() => {
-    lastDisplayRef.current = displaySeconds;
-  }, [displaySeconds, state.running]);
-
-  useEffect(() => {
     if (state.intermissionActive && !wasIntermissionRef.current) {
       playGlobalSfx("siege_next_round");
       lastBeepRef.current = null;
     }
     wasIntermissionRef.current = state.intermissionActive;
   }, [state.intermissionActive]);
+
+  useEffect(() => {
+    if (state.roundEndActive && !wasRoundEndRef.current) {
+      const playBeep = () => {
+        const played = playGlobalSfx("siege_countdown_beep");
+        if (played) return;
+        const ctx =
+          audioCtxRef.current ??
+          (() => {
+            const created = new AudioContext();
+            audioCtxRef.current = created;
+            return created;
+          })();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "square";
+        osc.frequency.value = 880;
+        gain.gain.value = 0.06;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        const nowTime = ctx.currentTime;
+        osc.start(nowTime);
+        osc.stop(nowTime + 0.12);
+      };
+      playBeep();
+      window.setTimeout(playBeep, 200);
+      window.setTimeout(playBeep, 400);
+    }
+    wasRoundEndRef.current = state.roundEndActive;
+  }, [state.roundEndActive]);
 
   useEffect(() => {
     if (!state.intermissionActive) return;
@@ -339,6 +346,17 @@ export default function SiegeSurviveDisplayPage() {
             <div style={confettiWrap()}>{renderConfetti(confettiPieces)}</div>
             <div style={endGameTitle()}>{winnerLabel(state)}</div>
             <div style={endGameSub()}>Game ends in {endGameRemaining}s</div>
+            <div style={endGameScoreRow()}>
+              <div style={endGameScoreCard()}>
+                <div style={endGameScoreLabel()}>{state.teamAName || "Team A"}</div>
+                <div style={endGameScoreValue()}>{state.teamAWins}</div>
+              </div>
+              <div style={endGameScoreDash()}>-</div>
+              <div style={endGameScoreCard()}>
+                <div style={endGameScoreLabel()}>{state.teamBName || "Team B"}</div>
+                <div style={endGameScoreValue()}>{state.teamBWins}</div>
+              </div>
+            </div>
           </div>
         ) : null}
         <div className="siege-bg" style={layout()}>
@@ -571,6 +589,39 @@ function endGameSub(): React.CSSProperties {
     textTransform: "uppercase",
     opacity: 0.8,
   };
+}
+
+function endGameScoreRow(): React.CSSProperties {
+  return {
+    marginTop: 24,
+    display: "grid",
+    gridTemplateColumns: "1fr auto 1fr",
+    alignItems: "center",
+    gap: 24,
+    minWidth: 520,
+  };
+}
+
+function endGameScoreCard(): React.CSSProperties {
+  return {
+    borderRadius: 24,
+    padding: "18px 24px",
+    border: "1px solid rgba(255,255,255,0.3)",
+    background: "rgba(15,23,42,0.7)",
+    textAlign: "center",
+  };
+}
+
+function endGameScoreLabel(): React.CSSProperties {
+  return { fontSize: 20, fontWeight: 800, opacity: 0.8, textTransform: "uppercase", letterSpacing: 1.2 };
+}
+
+function endGameScoreValue(): React.CSSProperties {
+  return { fontSize: 64, fontWeight: 1000, marginTop: 4 };
+}
+
+function endGameScoreDash(): React.CSSProperties {
+  return { fontSize: 48, fontWeight: 900, opacity: 0.6 };
 }
 
 function confettiWrap(): React.CSSProperties {
