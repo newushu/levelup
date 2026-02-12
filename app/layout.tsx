@@ -17,7 +17,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Suspense fallback={null}>
                 <RouteNav />
               </Suspense>
-              <ClientShell>{children}</ClientShell>
+              <Suspense fallback={null}>
+                <ClientShell>{children}</ClientShell>
+              </Suspense>
             </AppShell>
           </div>
         </StudentProvider>
