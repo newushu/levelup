@@ -85,7 +85,6 @@ function toLocalDateKey(value: Date) {
 }
 
 function Card({ title, actions, children }: { title: string; actions?: React.ReactNode; children: React.ReactNode }) {
-  if (blockedView) return blockedView;
   return (
     <div style={{ borderRadius: 18, padding: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>

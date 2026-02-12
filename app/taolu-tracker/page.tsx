@@ -115,7 +115,6 @@ async function safeJson(res: Response) {
 }
 
 export default function TaoluTrackerPage() {
-  if (blockedView) return blockedView;
   return (
     <AuthGate>
       <TaoluTrackerInner />

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ensureHandSize, nextTurn, type SkillStrikeCard, type SkillStrikeState } from "@/lib/skillStrike";
 
@@ -54,10 +54,11 @@ function consumeEffect(
   };
 }
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, context: { params: { id: string } | Promise<{ id: string }> }) {
   try {
-    const id = String(params.id ?? "");
-    if (!id) return NextResponse.json({ ok: false, error: "Missing id" }, { status: 400 });
+    const { id } = await Promise.resolve(context.params);
+    const safeId = String(id ?? "");
+    if (!safeId) return NextResponse.json({ ok: false, error: "Missing id" }, { status: 400 });
     const body = await req.json();
     const action = String(body?.action ?? "");
 
@@ -65,7 +66,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const { data: game, error: gErr } = await admin
       .from("skill_strike_games")
       .select("id,state,status")
-      .eq("id", id)
+      .eq("id", safeId)
       .single();
     if (gErr) return NextResponse.json({ ok: false, error: gErr.message }, { status: 500 });
 
@@ -201,7 +202,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const { data: updated, error: uErr } = await admin
       .from("skill_strike_games")
       .update({ state })
-      .eq("id", id)
+      .eq("id", safeId)
       .select("id,state")
       .single();
 

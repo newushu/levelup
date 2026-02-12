@@ -4,7 +4,10 @@ import { resolveParentContext } from "../_parentContext";
 
 export async function GET(req: Request) {
   const ctx = await resolveParentContext(req);
-  if (!ctx.ok) return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
+  if (!ctx.ok) {
+    const { error, status } = ctx as { ok: false; status: number; error: string };
+    return NextResponse.json({ ok: false, error }, { status });
+  }
 
   const admin = supabaseAdmin();
   const { data: roles, error: rErr } = await admin.from("user_roles").select("user_id").eq("role", "coach");

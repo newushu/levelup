@@ -53,7 +53,6 @@ function toLocalDateKey(value: Date) {
 }
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  if (blockedView) return blockedView;
   return (
     <div
       style={{

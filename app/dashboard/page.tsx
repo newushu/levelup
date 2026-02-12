@@ -3038,7 +3038,7 @@ export function DashboardInner() {
     return null;
   }
 
-  async function completeChallenge(challenge_id: string, tier: Tier) {
+  async function completeChallengeMedal(challenge_id: string, tier: Tier) {
     if (!student) return;
     setMsg("");
 

@@ -1,0 +1,24 @@
+
+> lead-achieve-level-up@0.1.0 build
+> next build
+
+▲ Next.js 16.1.1 (Turbopack)
+- Environments: .env.local
+
+⚠ The "middleware" file convention is deprecated. Please use "proxy" instead. Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+  Creating an optimized production build ...
+✓ Compiled successfully in 3.7s
+  Running TypeScript ...
+Failed to compile.
+
+./app/api/admin/route-permissions/route.ts:93:5
+Type error: An object literal cannot have multiple properties with the same name.
+
+[0m [90m 91 |[39m     [32m"passes-assign"[39m[33m:[39m [32m"Passes Assign"[39m[33m,[39m
+ [90m 92 |[39m     [32m"display-settings"[39m[33m:[39m [32m"Display Settings"[39m[33m,[39m
+[31m[1m>[22m[39m[90m 93 |[39m     [32m"battle-pulse"[39m[33m:[39m [32m"Battle Pulse"[39m[33m,[39m
+ [90m    |[39m     [31m[1m^[22m[39m
+ [90m 94 |[39m     [32m"skill-pulse"[39m[33m:[39m [32m"Skill Pulse"[39m[33m,[39m
+ [90m 95 |[39m     [32m"badges"[39m[33m:[39m [32m"Badges"[39m[33m,[39m
+ [90m 96 |[39m     [32m"rewards"[39m[33m:[39m [32m"Rewards"[39m[33m,[39m[0m
+Next.js build worker exited with code: 1 and signal: null

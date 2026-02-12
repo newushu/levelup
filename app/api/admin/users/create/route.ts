@@ -57,8 +57,9 @@ export async function POST(req: Request) {
       msg.toLowerCase().includes("already exists") ||
       msg.toLowerCase().includes("duplicate");
     if (!alreadyExists) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    const existing = await admin.auth.admin.getUserByEmail(email);
-    user = existing.data?.user || null;
+    const { data: existingData, error: existingErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    if (existingErr) return NextResponse.json({ ok: false, error: existingErr.message }, { status: 500 });
+    user = (existingData?.users ?? []).find((u) => String(u.email ?? "").toLowerCase() === email.toLowerCase()) || null;
     createdNew = false;
     if (!user) return NextResponse.json({ ok: false, error: "User exists but could not be fetched" }, { status: 500 });
   } else {

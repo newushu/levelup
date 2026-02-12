@@ -53,7 +53,6 @@ async function safeJson(res: Response) {
 }
 
 export default function PrepsTrackerPage() {
-  if (blockedView) return blockedView;
   return (
     <AuthGate>
       <PrepsTrackerInner />

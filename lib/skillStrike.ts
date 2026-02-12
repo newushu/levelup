@@ -132,12 +132,12 @@ export function dealHands(deck: SkillStrikeCard[], players: SkillStrikePlayer[],
   return { hands, deck };
 }
 
-export function nextTurn(state: SkillStrikeState) {
+export function nextTurn(state: SkillStrikeState): SkillStrikeState {
   const order = state.turn.order;
   if (!order.length) return state;
   const nextIndex = (state.turn.index + 1) % order.length;
   const activePlayer = order[nextIndex];
-  const activeTeam = state.teams.a.players.some((p) => p.id === activePlayer) ? "a" : "b";
+  const activeTeam: "a" | "b" = state.teams.a.players.some((p) => p.id === activePlayer) ? "a" : "b";
   return {
     ...state,
     turn: {

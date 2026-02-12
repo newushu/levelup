@@ -59,7 +59,7 @@ export async function POST(req: Request) {
 
   let { data: sessions, error: sErr } = await admin
     .from("taolu_sessions")
-    .select("id,student_id,taolu_form_id,created_at,ended_at")
+    .select("id,student_id,taolu_form_id,created_at,ended_at,sections")
     .in("student_id", student_ids);
   if (sErr && String(sErr.message || "").includes("column")) {
     const retry = await admin
@@ -71,13 +71,14 @@ export async function POST(req: Request) {
   }
 
   if (sErr) return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
-  const sessionMap = new Map<string, { student_id: string; taolu_form_id: string; created_at?: string | null; ended_at?: string | null }>();
+  const sessionMap = new Map<string, { student_id: string; taolu_form_id: string; created_at?: string | null; ended_at?: string | null; sections?: number[] | null }>();
   (sessions ?? []).forEach((s: any) => {
     sessionMap.set(String(s.id), {
       student_id: String(s.student_id),
       taolu_form_id: String(s.taolu_form_id),
       created_at: s.created_at ?? null,
       ended_at: s.ended_at ?? null,
+      sections: Array.isArray(s.sections) ? s.sections : null,
     });
   });
 

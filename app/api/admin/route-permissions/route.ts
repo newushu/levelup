@@ -90,8 +90,6 @@ function describeRoute(route: string) {
     "passes-accounting": "Passes Accounting",
     "passes-assign": "Passes Assign",
     "display-settings": "Display Settings",
-    "battle-pulse": "Battle Pulse",
-    "skill-pulse": "Skill Pulse",
     "badges": "Badges",
     "rewards": "Rewards",
     "profile": "Profile",

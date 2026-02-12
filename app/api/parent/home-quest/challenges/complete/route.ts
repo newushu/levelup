@@ -14,7 +14,10 @@ async function hashPin(pin: string) {
 
 export async function POST(req: Request) {
   const ctx = await resolveParentContext(req);
-  if (!ctx.ok) return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
+  if (!ctx.ok) {
+    const { error, status } = ctx as { ok: false; status: number; error: string };
+    return NextResponse.json({ ok: false, error }, { status });
+  }
 
   const admin = supabaseAdmin();
   const body = await req.json().catch(() => ({}));

@@ -177,7 +177,10 @@ export default function ClassroomDisplayPage() {
   }, [effectiveInstanceId, targetSession]);
 
   const displayRoster = useMemo(() => {
-    const items = roster.map((row) => ({ type: "row" as const, row }));
+    const items: Array<{ type: "row"; row: RosterRow } | { type: "placeholder"; row: null }> = roster.map((row) => ({
+      type: "row" as const,
+      row,
+    }));
     const minSlots = 10;
     const needed = Math.max(0, minSlots - items.length);
     for (let i = 0; i < needed; i += 1) {

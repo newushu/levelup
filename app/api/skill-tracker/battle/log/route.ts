@@ -163,6 +163,9 @@ export async function POST(req: Request) {
     }
 
     let limitReached = false;
+    const baseWinById = new Map<string, number>();
+    const netWinById = new Map<string, number>();
+    const lossById = new Map<string, number>();
     if (isSkillUser) {
       const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const { data: trackerRows, error: trErr } = await supabase
@@ -227,9 +230,6 @@ export async function POST(req: Request) {
       );
 
       const ledgerRows: Array<{ student_id: string; points: number; note: string; category: string; created_by: string }> = [];
-      const baseWinById = new Map<string, number>();
-      const netWinById = new Map<string, number>();
-      const lossById = new Map<string, number>();
 
       if (wagerAmount > 0) {
         if (winnerIds.length) {

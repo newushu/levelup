@@ -83,9 +83,17 @@ type PerfLeaderboard = {
 };
 
 type TaoluSummary = {
-  forms: Array<{ id: string; name: string }>
-  session_history: Array<{ session_id: string; taolu_form_id: string; created_at: string; deductions: Array<{ id: string; occurred_at: string; voided?: boolean | null }> }>
-  preps_session_history: Array<{ session_id: string; taolu_form_id: string; created_at: string; remediation_points: number }>
+  forms: Array<{ id: string; name: string }>;
+  session_history: Array<{
+    session_id: string;
+    taolu_form_id: string;
+    created_at: string;
+    deductions: Array<{ id: string; occurred_at: string; voided?: boolean | null; code_id?: string | null; section_number?: number | null }>;
+  }>;
+  preps_session_history: Array<{ session_id: string; taolu_form_id: string; created_at: string; remediation_points: number }>;
+  codes?: Array<{ id: string; code_number?: string | null; name?: string | null; description?: string | null }>;
+  form_section_code_totals?: Record<string, Record<string, Record<string, number>>>;
+  form_section_code_notes?: Record<string, Record<string, Record<string, string[]>>>;
 };
 
 async function safeJson(res: Response) {
@@ -518,7 +526,7 @@ function MyMetricsInner() {
       .map((f) => {
         const formId = String(f.id ?? "");
         const sectionMap = formSectionTotals[formId] ?? {};
-        const sectionTotals: Array<{ section: string; count: number; topCodes: Array<{ label: string; count: number }> }> =
+        const sectionTotals: Array<{ section: string; count: number; topCodes: Array<{ label: string; count: number; codeNumber?: string }> }> =
           Object.keys(sectionMap).map((sectionKey) => {
             const codes = sectionMap[sectionKey] ?? {};
             const entries = Object.entries(codes).map(([codeId, count]) => ({
@@ -562,7 +570,7 @@ function MyMetricsInner() {
   }, [taoluSummary]);
 
   const trendLine = useMemo(() => {
-    if (!skillTrend.length) return { path: "", points: [] as Array<{ x: number; y: number; label: string }> };
+    if (!skillTrend.length) return { path: "", points: [] as Array<{ x: number; y: number; label: string; stat: string; pct: number }> };
     const width = 700;
     const height = 260;
     const padding = { top: 20, right: 56, bottom: 36, left: 36 };

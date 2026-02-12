@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireUser } from "@/lib/authz";
 import { resolveParentContext } from "../_parentContext";
 
 export async function GET(req: Request) {
   const ctx = await resolveParentContext(req);
-  if (!ctx.ok) return NextResponse.json({ ok: false, error: ctx.error }, { status: ctx.status });
+  if (!ctx.ok) {
+    const { error, status } = ctx as { ok: false; status: number; error: string };
+    return NextResponse.json({ ok: false, error }, { status });
+  }
   const parent = ctx.parent;
 
   const admin = supabaseAdmin();
