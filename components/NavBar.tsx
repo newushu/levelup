@@ -54,10 +54,14 @@ export default function NavBar() {
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const createRef = useRef<HTMLDivElement | null>(null);
   const hoverCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loggedIn = me?.ok === true;
+  const role = loggedIn ? me.role : null;
   const hideNav =
     isEmbed ||
+    (path === "/" && role === "admin") ||
     path.startsWith("/classroom") ||
     path.startsWith("/student") ||
+    path.startsWith("/admin/custom") ||
     path.startsWith("/home-quest") ||
     path.startsWith("/rewards") ||
     path.startsWith("/my-metrics") ||
@@ -130,9 +134,6 @@ export default function NavBar() {
       }
     })();
   }, []);
-
-  const loggedIn = me?.ok === true;
-  const role = loggedIn ? me.role : null;
 
   useEffect(() => {
     if (role !== "admin") return;

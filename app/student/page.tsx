@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import AuthGate from "../../components/AuthGate";
 import AvatarRender from "@/components/AvatarRender";
+import StudentWorkspaceTopBar, { studentWorkspaceTopBarStyles } from "@/components/StudentWorkspaceTopBar";
 
 type StudentRow = {
   id: string;
@@ -12,6 +14,7 @@ type StudentRow = {
   points_balance?: number | null;
   avatar_storage_path?: string | null;
   avatar_zoom_pct?: number | null;
+  is_competition_team?: boolean | null;
 };
 
 const cards = [
@@ -22,21 +25,15 @@ const cards = [
     artClass: "art-student",
   },
   {
-    title: "At-Home Tasks",
-    subtitle: "Home Quest and goals",
-    href: "/home-quest",
-    artClass: "art-home",
-  },
-  {
     title: "Redeem Rewards",
-    subtitle: "Spend points & unlocks",
-    href: "/rewards",
+    subtitle: "Request rewards from the rewards shelf",
+    href: "/student/rewards",
     artClass: "art-rewards",
   },
   {
     title: "Logs & Reports",
     subtitle: "History and metrics",
-    href: "/my-metrics?tab=Taolu%20Tracker",
+    href: "/student/logs",
     artClass: "art-logs",
   },
   {
@@ -64,6 +61,7 @@ export default function StudentLandingPage() {
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [studentQuery, setStudentQuery] = useState("");
   const [notice, setNotice] = useState("");
+  const [mvpBadgeUrl, setMvpBadgeUrl] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -73,6 +71,10 @@ export default function StudentLandingPage() {
       if (!mounted) return;
       if (data?.logo_url) setLogoUrl(String(data.logo_url));
       if (data?.logo_zoom) setLogoZoom(Number(data.logo_zoom ?? 1));
+      const badgeRes = await fetch("/api/student/mvp-badge", { cache: "no-store" });
+      const badgeData = await badgeRes.json().catch(() => ({}));
+      if (!mounted) return;
+      if (badgeRes.ok && badgeData?.badge_url) setMvpBadgeUrl(String(badgeData.badge_url));
     })();
     return () => {
       mounted = false;
@@ -150,9 +152,10 @@ export default function StudentLandingPage() {
     <AuthGate>
       <div className="student-landing">
         <style>{pageStyles()}</style>
+        <style>{studentWorkspaceTopBarStyles()}</style>
         <div className="student-landing__halo" />
         <div className="student-landing__content">
-          <button className="back-btn" onClick={() => window.history.back()}>Back</button>
+          <StudentWorkspaceTopBar student={student} onClearStudent={clearSelectedStudent} badgeUrl={mvpBadgeUrl} />
           <div className="student-landing__selector">
             {!student ? (
               <>
@@ -212,7 +215,7 @@ export default function StudentLandingPage() {
           {checked ? (
             <section className="student-landing__grid">
               {cards.map((card) => (
-                <a
+                <Link
                   key={card.title}
                   href={card.href}
                   className="student-landing__card"
@@ -226,7 +229,7 @@ export default function StudentLandingPage() {
                   <div className={`student-landing__art ${card.artClass}`} />
                   <div className="student-landing__card-title">{card.title}</div>
                   <div className="student-landing__card-subtitle">{card.subtitle}</div>
-                </a>
+                </Link>
               ))}
             </section>
           ) : (
@@ -244,7 +247,7 @@ function pageStyles() {
       min-height: 80vh;
       display: grid;
       place-items: center;
-      padding: 40px 18px 60px;
+      padding: 40px 24px 60px 268px;
       position: relative;
       overflow: visible;
     }
@@ -265,19 +268,6 @@ function pageStyles() {
       gap: 30px;
       position: relative;
       z-index: 1;
-    }
-
-    .back-btn {
-      justify-self: start;
-      padding: 8px 12px;
-      border-radius: 12px;
-      border: 1px solid rgba(148,163,184,0.2);
-      background: rgba(30,41,59,0.7);
-      color: inherit;
-      font-weight: 900;
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
-      font-size: 11px;
     }
 
     .student-landing__selector {
@@ -447,11 +437,6 @@ function pageStyles() {
         linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.7));
     }
 
-    .art-home {
-      background: radial-gradient(circle at 20% 20%, rgba(251,191,36,0.45), rgba(15,23,42,0.75)),
-        linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.7));
-    }
-
     .art-rewards {
       background: radial-gradient(circle at 20% 20%, rgba(16,185,129,0.45), rgba(15,23,42,0.75)),
         linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.7));
@@ -469,7 +454,7 @@ function pageStyles() {
 
     @media (max-width: 720px) {
       .student-landing {
-        padding: 30px 14px 50px;
+        padding: 22px 12px 48px;
       }
 
       .student-landing__grid {
@@ -489,6 +474,12 @@ function pageStyles() {
     @media (max-width: 1200px) {
       .student-landing__grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 1100px) {
+      .student-landing {
+        padding: 30px 14px 50px;
       }
     }
   `;

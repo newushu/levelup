@@ -344,6 +344,7 @@ export default function SkillTrackerPage() {
   const [viewerRole, setViewerRole] = useState("coach");
   const [studentBlocked, setStudentBlocked] = useState(false);
   const [isTabletRoute, setIsTabletRoute] = useState(false);
+  const [isCompactViewport, setIsCompactViewport] = useState(false);
   const [tabletCreateOpen, setTabletCreateOpen] = useState(false);
   const [selectedTrackerId, setSelectedTrackerId] = useState<string | null>(null);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -358,6 +359,8 @@ export default function SkillTrackerPage() {
   const pendingLogCounts = useRef<Map<string, number>>(new Map());
   const pendingLogSuccessCounts = useRef<Map<string, number>>(new Map());
   const logQueue = useRef<Map<string, Promise<void>>>(new Map());
+  const pendingBattleLogCounts = useRef<Map<string, number>>(new Map());
+  const battleLogQueue = useRef<Map<string, Promise<void>>>(new Map());
 
   const compCrestUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/badges/prestige/compteam.png`
@@ -381,6 +384,16 @@ export default function SkillTrackerPage() {
   useEffect(() => {
     isTabletRouteRef.current = isTabletRoute;
   }, [isTabletRoute]);
+
+  useEffect(() => {
+    const syncViewport = () => {
+      if (typeof window === "undefined") return;
+      setIsCompactViewport(window.innerWidth <= 1024);
+    };
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+    return () => window.removeEventListener("resize", syncViewport);
+  }, []);
 
   async function refreshStudents(preserveSelected = true) {
     const r = await fetch("/api/students/list", { cache: "no-store" });
@@ -1250,25 +1263,129 @@ export default function SkillTrackerPage() {
     setMsg("");
     setFlash({ id: battleId, type: success ? "add" : "remove" });
     playSound(success ? "battle_pulse_check" : "battle_pulse_x");
-    const res = await fetch("/api/skill-tracker/battle/log", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ battle_id: battleId, student_id: studentIdForLog, success }),
-    });
-    const sj = await safeJson(res);
-    if (!sj.ok) {
-      setFlash(null);
-      return setMsg(sj.json?.error || "Failed to log battle attempt");
-    }
     const battle = battles.find((b) => b.id === battleId);
+    if (!canLogBattleAttempt(battle, studentIdForLog)) return;
+    pendingBattleLogCounts.current.set(
+      battleId,
+      (pendingBattleLogCounts.current.get(battleId) ?? 0) + 1
+    );
+    setBattles((prev) => applyOptimisticBattleAttempt(prev, battleId, studentIdForLog, success));
     if (success && (battle?.battle_mode ?? "duel") === "lanes") {
       setLaneSuccessPulse({ battleId, playerId: studentIdForLog, at: Date.now() });
     }
     if ((battle?.battle_mode ?? "duel") === "lanes") {
       nextBattleTurn(battleId);
     }
-    await refreshBattles();
-    await refreshFeed();
+    const prev = battleLogQueue.current.get(battleId) ?? Promise.resolve();
+    const next = prev
+      .catch(() => undefined)
+      .then(() => sendBattleLogAttempt(battleId, studentIdForLog, success));
+    battleLogQueue.current.set(battleId, next);
+    next.catch(() => undefined);
+  }
+
+  function buildAttemptList(existing: boolean[] | undefined, attempts = 0, successes = 0) {
+    if (Array.isArray(existing)) return [...existing];
+    const clampedAttempts = Math.max(0, Number(attempts ?? 0));
+    const clampedSuccesses = Math.max(0, Math.min(clampedAttempts, Number(successes ?? 0)));
+    return [
+      ...Array.from({ length: clampedSuccesses }, () => true),
+      ...Array.from({ length: Math.max(0, clampedAttempts - clampedSuccesses) }, () => false),
+    ];
+  }
+
+  function canLogBattleAttempt(battle: BattleRow | undefined, studentIdForLog: string) {
+    if (!battle) return false;
+    const target = Math.max(1, Number(battle.repetitions_target ?? 1));
+    const mode = (battle.battle_mode ?? "duel") as "duel" | "ffa" | "teams" | "lanes";
+    if (mode === "duel") {
+      if (studentIdForLog === battle.left_student_id) {
+        return buildAttemptList(battle.left_attempts_list, battle.left_attempts, battle.left_successes).length < target;
+      }
+      if (studentIdForLog === battle.right_student_id) {
+        return buildAttemptList(battle.right_attempts_list, battle.right_attempts, battle.right_successes).length < target;
+      }
+      return false;
+    }
+    const participant = (battle.participants ?? []).find((p) => p.id === studentIdForLog);
+    if (!participant) return false;
+    return buildAttemptList(participant.attempts_list, participant.attempts, participant.successes).length < target;
+  }
+
+  function applyOptimisticBattleAttempt(
+    rows: BattleRow[],
+    battleId: string,
+    studentIdForLog: string,
+    success: boolean
+  ) {
+    return rows.map((battle) => {
+      if (battle.id !== battleId) return battle;
+      const target = Math.max(1, Number(battle.repetitions_target ?? 1));
+      const mode = (battle.battle_mode ?? "duel") as "duel" | "ffa" | "teams" | "lanes";
+      if (mode === "duel") {
+        if (studentIdForLog === battle.left_student_id) {
+          const nextList = buildAttemptList(battle.left_attempts_list, battle.left_attempts, battle.left_successes);
+          if (nextList.length >= target) return battle;
+          nextList.push(success);
+          return {
+            ...battle,
+            left_attempts_list: nextList,
+            left_attempts: nextList.length,
+            left_successes: nextList.filter(Boolean).length,
+          };
+        }
+        if (studentIdForLog === battle.right_student_id) {
+          const nextList = buildAttemptList(battle.right_attempts_list, battle.right_attempts, battle.right_successes);
+          if (nextList.length >= target) return battle;
+          nextList.push(success);
+          return {
+            ...battle,
+            right_attempts_list: nextList,
+            right_attempts: nextList.length,
+            right_successes: nextList.filter(Boolean).length,
+          };
+        }
+        return battle;
+      }
+      const nextParticipants = (battle.participants ?? []).map((participant) => {
+        if (participant.id !== studentIdForLog) return participant;
+        const nextList = buildAttemptList(participant.attempts_list, participant.attempts, participant.successes);
+        if (nextList.length >= target) return participant;
+        nextList.push(success);
+        return {
+          ...participant,
+          attempts_list: nextList,
+          attempts: nextList.length,
+          successes: nextList.filter(Boolean).length,
+        };
+      });
+      return { ...battle, participants: nextParticipants };
+    });
+  }
+
+  async function sendBattleLogAttempt(battleId: string, studentIdForLog: string, success: boolean) {
+    const res = await fetch("/api/skill-tracker/battle/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ battle_id: battleId, student_id: studentIdForLog, success }),
+    });
+    const sj = await safeJson(res);
+    const inflight = pendingBattleLogCounts.current.get(battleId) ?? 1;
+    const nextInflight = Math.max(0, inflight - 1);
+    pendingBattleLogCounts.current.set(battleId, nextInflight);
+    if (!sj.ok) {
+      await refreshBattles();
+      await refreshFeed();
+      setFlash(null);
+      setMsg(sj.json?.error || "Failed to log battle attempt");
+      return;
+    }
+    if (nextInflight === 0) {
+      setTimeout(() => {
+        refreshBattles();
+        refreshFeed();
+      }, 80);
+    }
     setFlash(null);
   }
 
@@ -1693,6 +1810,9 @@ export default function SkillTrackerPage() {
   );
 
   const groupedItems = useMemo(() => {
+    if (isTabletRoute) {
+      return trackers.map((t) => ({ type: "single" as const, tracker: t }));
+    }
     const groupMap = new Map<string, TrackerRow[]>();
     for (const t of trackers) {
       if (!t.group_id) continue;
@@ -1717,7 +1837,7 @@ export default function SkillTrackerPage() {
       }
     }
     return items;
-  }, [trackers]);
+  }, [trackers, isTabletRoute]);
 
   const formStudentSuggestions = studentSuggestions(formStudentQuery);
   const showFormStudentSuggestions =
@@ -4204,10 +4324,6 @@ export default function SkillTrackerPage() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (isTabletMode && selectedTrackerId !== t.id) {
-                                setSelectedTrackerId(t.id);
-                                return;
-                              }
                               if (!done && canEdit) logAttempt(t.id, true);
                             }}
                             style={groupMiniBtn("good", done || viewOnly)}
@@ -4218,10 +4334,6 @@ export default function SkillTrackerPage() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (isTabletMode && selectedTrackerId !== t.id) {
-                                setSelectedTrackerId(t.id);
-                                return;
-                              }
                               if (!done && canEdit) logAttempt(t.id, false);
                             }}
                             style={groupMiniBtn("bad", done || viewOnly)}
@@ -4369,10 +4481,6 @@ export default function SkillTrackerPage() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (isTabletMode && selectedTrackerId !== t.id) {
-                    setSelectedTrackerId(t.id);
-                    return;
-                  }
                   if (!done && canEdit) logAttempt(t.id, true);
                 }}
                 style={sideBtn("left", done || viewOnly)}
@@ -4384,10 +4492,6 @@ export default function SkillTrackerPage() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (isTabletMode && selectedTrackerId !== t.id) {
-                    setSelectedTrackerId(t.id);
-                    return;
-                  }
                   if (!done && canEdit) logAttempt(t.id, false);
                 }}
                 style={sideBtn("right", done || viewOnly)}
@@ -4717,7 +4821,7 @@ export default function SkillTrackerPage() {
                     <div style={{ fontSize: 12, opacity: 0.7 }}>
                       Admin edit unlocks rep result changes for completed trackers.
                     </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: isCompactViewport ? "1fr" : "1fr auto", gap: 10 }}>
                       <input
                         type="password"
                         value={adminPin}
@@ -4736,7 +4840,15 @@ export default function SkillTrackerPage() {
                         <div style={{ fontWeight: 900 }}>Rep Results</div>
                         <div style={{ display: "grid", gap: 8 }}>
                           {adminLogs.map((log, idx) => (
-                            <div key={log.id} style={{ display: "grid", gridTemplateColumns: "80px 1fr auto auto", gap: 10, alignItems: "center" }}>
+                            <div
+                              key={log.id}
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: isCompactViewport ? "1fr" : "80px 1fr auto auto",
+                                gap: 10,
+                                alignItems: "center",
+                              }}
+                            >
                               <div style={{ fontWeight: 800 }}>Rep {idx + 1}</div>
                               <div style={{ opacity: 0.75 }}>{log.success ? "Success" : "Failure"}</div>
                               <button
@@ -5291,7 +5403,7 @@ export default function SkillTrackerPage() {
             </div>
 
             {battleMode === "duel" ? (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isCompactViewport ? "1fr" : "1fr 1fr", gap: 12 }}>
                 <div style={{ display: "grid", gap: 6 }}>
                   <div style={formLabel()}>Left Student</div>
                   <div style={{ position: "relative" }}>
@@ -5431,7 +5543,7 @@ export default function SkillTrackerPage() {
               </div>
             ) : battleMode === "lanes" ? (
               <div style={{ display: "grid", gap: 12 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: isCompactViewport ? "1fr" : "1fr 1fr", gap: 12 }}>
                   <div style={{ display: "grid", gap: 6 }}>
                     <div style={formLabel()}>Team A (min 2)</div>
                     <div style={{ position: "relative" }}>
@@ -5573,7 +5685,7 @@ export default function SkillTrackerPage() {
 
                 <div style={{ display: "grid", gap: 8 }}>
                   <div style={formLabel()}>Assign Categories Per Player (multi-select)</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: isCompactViewport ? "1fr" : "1fr 1fr", gap: 12 }}>
                     {(["a", "b"] as const).map((teamKey) => {
                       const teamIds = teamKey === "a" ? battleTeamAIds : battleTeamBIds;
                       return (
@@ -5698,7 +5810,7 @@ export default function SkillTrackerPage() {
                 ) : null}
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isCompactViewport ? "1fr" : "repeat(2, minmax(0, 1fr))", gap: 12 }}>
                 <div style={{ display: "grid", gap: 6 }}>
                   <div style={formLabel()}>Team A</div>
                   <div style={{ position: "relative" }}>
@@ -8648,15 +8760,19 @@ function Overlay({ title, onClose, children }: { title: string; onClose: () => v
         zIndex: 200,
         background: "rgba(0,0,0,0.72)",
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         justifyContent: "center",
-        padding: 18,
+        padding: "clamp(8px, 2.8vw, 18px)",
+        overflowY: "auto",
       }}
       onClick={onClose}
     >
       <div
         style={{
-          width: "min(760px, 100%)",
+          width: "min(760px, calc(100vw - 12px))",
+          maxHeight: "92vh",
+          overflowY: "auto",
+          overflowX: "hidden",
           borderRadius: 22,
           border: "1px solid rgba(255,255,255,0.10)",
           background: "rgba(5,7,11,0.96)",
@@ -8687,17 +8803,19 @@ function OverlayWide({ title, onClose, children }: { title: string; onClose: () 
         zIndex: 200,
         background: "rgba(0,0,0,0.72)",
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         justifyContent: "center",
-        padding: 18,
+        padding: "clamp(8px, 2.8vw, 18px)",
+        overflowY: "auto",
       }}
       onClick={onClose}
     >
       <div
         style={{
-          width: "min(1400px, 96vw)",
-          maxHeight: "90vh",
-          overflow: "auto",
+          width: "min(1400px, calc(100vw - 10px))",
+          maxHeight: "92vh",
+          overflowY: "auto",
+          overflowX: "hidden",
           borderRadius: 22,
           border: "1px solid rgba(255,255,255,0.10)",
           background: "rgba(5,7,11,0.96)",

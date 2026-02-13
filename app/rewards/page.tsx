@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { playGlobalSfx, setGlobalSounds } from "@/lib/globalAudio";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import StudentTopBar from "@/components/StudentTopBar";
 import CriticalNoticeBar from "@/components/CriticalNoticeBar";
 import { fireFx } from "../../components/GlobalFx";
-import AvatarRender from "@/components/AvatarRender";
 import StudentNavPanel, { studentNavStyles } from "@/components/StudentNavPanel";
+import StudentWorkspaceTopBar, { studentWorkspaceTopBarStyles } from "@/components/StudentWorkspaceTopBar";
 
 type StudentRow = {
   id: string;
@@ -41,7 +41,11 @@ async function safeJson(res: Response) {
 }
 
 export default function RewardsPage() {
-  const isEmbed = useSearchParams().get("embed") === "1";
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const isEmbed = params.get("embed") === "1";
+  const requestOnly = params.get("requestOnly") === "1" || pathname === "/student/rewards";
+  const inStudentWorkspace = pathname.startsWith("/student/");
   const [msg, setMsg] = useState("");
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [studentId, setStudentId] = useState<string>("");
@@ -51,20 +55,13 @@ export default function RewardsPage() {
   const [rewards, setRewards] = useState<RewardRow[]>([]);
   const [redeemCounts, setRedeemCounts] = useState<RedeemCounts>({});
   const [pendingCounts, setPendingCounts] = useState<RedeemCounts>({});
+  const [mvpBadgeUrl, setMvpBadgeUrl] = useState<string | null>(null);
+  const [requestToast, setRequestToast] = useState<{ open: boolean; label: string }>({ open: false, label: "" });
 
   const activeStudent = useMemo(
     () => students.find((s) => s.id === studentId) ?? null,
     [students, studentId]
   );
-  const avatarSrc = useMemo(() => {
-    const path = String(activeStudent?.avatar_storage_path ?? "").trim();
-    if (!path) return null;
-    const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    return base ? `${base}/storage/v1/object/public/avatars/${path}` : null;
-  }, [activeStudent?.avatar_storage_path]);
-  const avatarZoomPct = Math.max(50, Math.min(200, Number(activeStudent?.avatar_zoom_pct ?? 100)));
-  const pointsDisplay = Number(activeStudent?.points_balance ?? activeStudent?.points_total ?? 0);
-  const initials = (activeStudent?.name || "").trim().slice(0, 2).toUpperCase() || "LA";
 
   async function refreshStudents(preserveSelected = true) {
     const r = await fetch("/api/students/list", { cache: "no-store" });
@@ -149,6 +146,10 @@ export default function RewardsPage() {
       const sj = await safeJson(r);
       if (!sj.ok) return setMsg(sj.json?.error || "Failed to load rewards");
       setRewards((sj.json?.rewards ?? []) as RewardRow[]);
+
+      const badgeRes = await fetch("/api/student/mvp-badge", { cache: "no-store" });
+      const badgeData = await safeJson(badgeRes);
+      if (badgeData.ok) setMvpBadgeUrl(String(badgeData.json?.badge_url ?? "") || null);
     })();
   }, []);
 
@@ -205,25 +206,27 @@ export default function RewardsPage() {
     setMsg(`${name} redeemed`);
   }
 
-  async function requestHold(rewardId: string, name: string, cost: number) {
+  async function requestHold(rewardId: string, name: string) {
     if (!studentId) return;
     setMsg("");
     const res = await fetch("/api/rewards/redeem-hold", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reward_id: rewardId }),
+      body: JSON.stringify({ reward_id: rewardId, student_id: studentId }),
     });
     const sj = await safeJson(res);
     if (!sj.ok) return setMsg(sj.json?.error || "Failed to request hold");
     fireFx("remove");
     await refreshStudents(true);
     await refreshRedeems(studentId);
+    setRequestToast({ open: true, label: name });
+    setTimeout(() => setRequestToast((prev) => ({ ...prev, open: false })), 2200);
     setMsg(`${name} requested`);
   }
 
   const student = useMemo(() => students.find((s) => s.id === studentId) ?? null, [students, studentId]);
   const total = Number(student?.points_total ?? 0);
-  const isStudentView = viewerRole === "student";
+  const isStudentView = viewerRole === "student" || requestOnly;
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -237,30 +240,158 @@ export default function RewardsPage() {
     return list.filter((r) => (r.category ?? "Other") === category);
   }, [category, rewards]);
 
+  function clearSelectedStudent() {
+    setStudentId("");
+    try {
+      localStorage.removeItem("active_student_id");
+    } catch {}
+  }
+
   return (
-    <main>
-      <style>{studentNavStyles()}</style>
-      <StudentNavPanel />
-      <button style={backBtn()} onClick={() => window.history.back()}>Back</button>
-      <div style={topBar()}>
-        <div style={identity()}>
-          <div style={studentNameStyle()}>{activeStudent?.name ?? "Student"}</div>
-          <div style={studentMeta()}>Level {activeStudent?.level ?? 1} • {pointsDisplay.toLocaleString()} pts</div>
-          <div style={avatarWrap()}>
-            <AvatarRender
-              size={160}
-              bg="rgba(15,23,42,0.6)"
-              avatarSrc={avatarSrc}
-              avatarZoomPct={avatarZoomPct}
-              showImageBorder={false}
-              style={{ borderRadius: 20 }}
-              fallback={<div style={avatarFallback()}>{initials}</div>}
-            />
-          </div>
+    <main className="student-rewards">
+      {!inStudentWorkspace ? <style>{studentNavStyles()}</style> : null}
+      <style>{studentWorkspaceTopBarStyles()}</style>
+      <style>{`
+        .student-rewards {
+          padding: 20px 20px 54px 252px;
+          position: relative;
+        }
+        .prize-vault {
+          margin-top: 12px;
+          border-radius: 28px;
+          padding: 16px;
+          border: 1px solid rgba(56,189,248,0.34);
+          background:
+            radial-gradient(circle at 10% 15%, rgba(56,189,248,0.16), rgba(15,23,42,0) 36%),
+            radial-gradient(circle at 90% 5%, rgba(251,191,36,0.18), rgba(15,23,42,0) 42%),
+            linear-gradient(160deg, rgba(9,13,24,0.95), rgba(4,10,20,0.96));
+          box-shadow: 0 22px 50px rgba(0,0,0,0.38), inset 0 0 0 1px rgba(255,255,255,0.05);
+          position: relative;
+          overflow: hidden;
+        }
+        .prize-vault::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background-image: radial-gradient(rgba(255,255,255,0.15) 1.1px, transparent 1.1px);
+          background-size: 22px 22px;
+          opacity: 0.2;
+          pointer-events: none;
+          animation: prizeDrift 20s linear infinite;
+        }
+        .prize-vault::after {
+          content: "";
+          position: absolute;
+          inset: 1px;
+          border-radius: 26px;
+          border: 1px solid rgba(148,163,184,0.2);
+          pointer-events: none;
+        }
+        .prize-vault__grid {
+          margin-top: 14px;
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+          gap: 14px;
+          position: relative;
+          z-index: 1;
+        }
+        .reward-card {
+          position: relative;
+          overflow: hidden;
+        }
+        .reward-card::after {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(120deg, rgba(56,189,248,0.1), rgba(255,255,255,0) 35%);
+          pointer-events: none;
+        }
+        @keyframes prizeDrift {
+          from { transform: translate3d(0,0,0); }
+          to { transform: translate3d(24px, -18px, 0); }
+        }
+        .request-toast {
+          position: fixed;
+          top: 18px;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 240;
+          min-width: min(520px, calc(100vw - 24px));
+          border-radius: 20px;
+          padding: 14px 18px;
+          border: 1px solid rgba(255,255,255,0.35);
+          background:
+            radial-gradient(circle at 15% 20%, rgba(250,204,21,0.45), rgba(255,255,255,0) 40%),
+            radial-gradient(circle at 85% 5%, rgba(34,211,238,0.35), rgba(255,255,255,0) 38%),
+            linear-gradient(135deg, rgba(16,185,129,0.72), rgba(59,130,246,0.72), rgba(236,72,153,0.72));
+          box-shadow: 0 20px 44px rgba(0,0,0,0.36), inset 0 0 0 1px rgba(255,255,255,0.18);
+          color: white;
+          text-align: center;
+          font-weight: 1000;
+          letter-spacing: 0.35px;
+          overflow: hidden;
+          animation: requestToastIn 220ms ease, requestToastPulse 1.4s ease-in-out infinite;
+        }
+        .request-toast::before {
+          content: "";
+          position: absolute;
+          inset: -20% 0;
+          background: linear-gradient(110deg, rgba(255,255,255,0), rgba(255,255,255,0.42), rgba(255,255,255,0));
+          transform: translateX(-120%);
+          animation: requestShine 1.4s ease-in-out infinite;
+          pointer-events: none;
+        }
+        .request-toast::after {
+          content: "✦ ✧ ✦";
+          position: absolute;
+          right: 12px;
+          top: 6px;
+          font-size: 14px;
+          opacity: 0.85;
+          text-shadow: 0 0 14px rgba(255,255,255,0.8);
+          animation: requestSparkle 1.2s ease-in-out infinite;
+        }
+        .request-toast__sub {
+          margin-top: 4px;
+          font-size: 12px;
+          opacity: 0.9;
+          font-weight: 900;
+        }
+        @keyframes requestToastIn {
+          from { transform: translateX(-50%) translateY(-12px) scale(0.96); opacity: 0; }
+          to { transform: translateX(-50%) translateY(0) scale(1); opacity: 1; }
+        }
+        @keyframes requestToastPulse {
+          0% { box-shadow: 0 20px 44px rgba(0,0,0,0.36), 0 0 0 rgba(255,255,255,0); }
+          50% { box-shadow: 0 24px 48px rgba(0,0,0,0.42), 0 0 26px rgba(255,255,255,0.28); }
+          100% { box-shadow: 0 20px 44px rgba(0,0,0,0.36), 0 0 0 rgba(255,255,255,0); }
+        }
+        @keyframes requestShine {
+          0% { transform: translateX(-120%); }
+          65% { transform: translateX(125%); }
+          100% { transform: translateX(125%); }
+        }
+        @keyframes requestSparkle {
+          0% { transform: scale(1) rotate(0deg); opacity: 0.7; }
+          50% { transform: scale(1.18) rotate(8deg); opacity: 1; }
+          100% { transform: scale(1) rotate(0deg); opacity: 0.7; }
+        }
+        @media (max-width: 1100px) {
+          .student-rewards {
+            padding: 16px 10px 36px;
+          }
+        }
+      `}</style>
+      {requestToast.open ? (
+        <div className="request-toast" role="status" aria-live="polite">
+          {requestToast.label} requested
+          <div className="request-toast__sub">Request sent for admin approval</div>
         </div>
-      </div>
+      ) : null}
+      {!inStudentWorkspace ? <StudentNavPanel /> : null}
+      <StudentWorkspaceTopBar student={activeStudent} onClearStudent={clearSelectedStudent} badgeUrl={mvpBadgeUrl} />
       {!isEmbed && (
-        <div style={{ position: "fixed", left: 12, top: 150, width: 320, zIndex: 120, display: "grid", gap: 12 }}>
+        <div style={{ position: "fixed", left: 12, top: 150, width: 320, zIndex: 120, display: isStudentView ? "none" : "grid", gap: 12 }}>
           <StudentTopBar
             students={students}
             activeStudentId={studentId}
@@ -292,12 +423,12 @@ export default function RewardsPage() {
         </div>
       ) : null}
 
-      <div className="card" style={{ borderRadius: 26, padding: 14, background: "rgba(255,255,255,0.05)", marginTop: 12 }}>
+      <div className="prize-vault">
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
           <div>
-            <div style={{ fontSize: 24, fontWeight: 980 }}>Prize Shelf</div>
+            <div style={{ fontSize: 24, fontWeight: 980 }}>Prize Request Vault</div>
             <div className="sub" style={{ marginTop: 4 }}>
-              Redeem prizes multiple times. Your redeemed count is shown on each card.
+              Request rewards from the master rewards list. Your requested and redeemed counts are shown per card.
             </div>
           </div>
 
@@ -325,16 +456,8 @@ export default function RewardsPage() {
             </select>
           </div>
         </div>
-      </div>
 
-      <div
-        style={{
-          marginTop: 14,
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: 14,
-        }}
-      >
+      <div className="prize-vault__grid">
         {filtered.map((r) => {
           const cost = r.cost;
           const canRedeem = total >= cost;
@@ -392,7 +515,7 @@ export default function RewardsPage() {
 
               <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
                 {canRedeem ? (
-                  <div style={{ fontWeight: 950, color: "rgba(255,255,255,0.92)" }}>Click to redeem</div>
+                  <div style={{ fontWeight: 950, color: "rgba(255,255,255,0.92)" }}>{isStudentView ? "Request this reward" : "Click to redeem"}</div>
                 ) : (
                   <div className="sub" style={{ fontWeight: 900 }}>Need {Math.max(0, cost - total)} more</div>
                 )}
@@ -431,7 +554,7 @@ export default function RewardsPage() {
               {isStudentView ? (
                 <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
                   <button
-                    onClick={() => requestHold(r.id, r.name, cost)}
+                    onClick={() => requestHold(r.id, r.name)}
                     disabled={!canRedeem}
                     style={{
                       padding: "8px 12px",
@@ -443,7 +566,7 @@ export default function RewardsPage() {
                       cursor: canRedeem ? "pointer" : "not-allowed",
                     }}
                   >
-                    Request Hold
+                    Request Reward
                   </button>
                 </div>
               ) : null}
@@ -451,7 +574,7 @@ export default function RewardsPage() {
           );
 
           return isStudentView ? (
-            <div key={r.id} style={cardStyle} title={canRedeem ? "Request hold" : `Need ${cost - total} more points`}>
+            <div key={r.id} className="reward-card" style={cardStyle} title={canRedeem ? "Request hold" : `Need ${cost - total} more points`}>
               {content}
             </div>
           ) : (
@@ -459,6 +582,7 @@ export default function RewardsPage() {
               key={r.id}
               onClick={() => doRedeem(r.id, r.name, cost)}
               disabled={!canRedeem}
+              className="reward-card"
               style={cardStyle}
               title={canRedeem ? "Click to redeem" : `Need ${cost - total} more points`}
             >
@@ -467,76 +591,7 @@ export default function RewardsPage() {
           );
         })}
       </div>
+      </div>
     </main>
   );
-}
-
-function topBar(): React.CSSProperties {
-  return {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 20,
-    flexWrap: "wrap",
-    alignItems: "flex-start",
-    marginBottom: 16,
-  };
-}
-
-function identity(): React.CSSProperties {
-  return {
-    display: "grid",
-    gap: 8,
-  };
-}
-
-function studentNameStyle(): React.CSSProperties {
-  return {
-    fontSize: "clamp(24px, 4vw, 36px)",
-    fontWeight: 1000,
-  };
-}
-
-function studentMeta(): React.CSSProperties {
-  return {
-    fontSize: 14,
-    opacity: 0.75,
-    fontWeight: 800,
-  };
-}
-
-function avatarWrap(): React.CSSProperties {
-  return {
-    marginTop: 6,
-    display: "grid",
-    placeItems: "start",
-  };
-}
-
-function avatarFallback(): React.CSSProperties {
-  return {
-    width: 160,
-    height: 160,
-    borderRadius: 20,
-    display: "grid",
-    placeItems: "center",
-    fontWeight: 900,
-    fontSize: 30,
-    background: "rgba(30,41,59,0.8)",
-  };
-}
-
-function backBtn(): React.CSSProperties {
-  return {
-    justifySelf: "start",
-    padding: "8px 12px",
-    borderRadius: 12,
-    border: "1px solid rgba(148,163,184,0.2)",
-    background: "rgba(30,41,59,0.7)",
-    color: "inherit",
-    fontWeight: 900,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    fontSize: 11,
-    marginBottom: 12,
-  };
 }

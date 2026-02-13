@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import AuthGate from "../../../components/AuthGate";
 import AvatarRender from "@/components/AvatarRender";
-import StudentNavPanel, { studentNavStyles } from "@/components/StudentNavPanel";
 
 type StudentRow = {
   id: string;
@@ -72,6 +71,7 @@ type SkillTrackerRow = {
   repetitions_target: number;
   attempts: number;
 };
+const medalTierOrder = ["bronze", "silver", "gold", "platinum", "diamond", "master"];
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -106,6 +106,7 @@ export default function StudentInfoPage() {
   const [mvpWeek, setMvpWeek] = useState(0);
   const [battleTotal, setBattleTotal] = useState(0);
   const [skillCompletedTotal, setSkillCompletedTotal] = useState(0);
+  const [mvpBadgeUrl, setMvpBadgeUrl] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
@@ -157,7 +158,7 @@ export default function StudentInfoPage() {
       const weekStart = getWeekStartUTC();
       const weekStartIso = weekStart.toISOString();
 
-      const [badgesRes, prestigeRes, prestigeProgRes, challengesRes, medalsRes, highlightsRes, attendanceRes, mvpTotalRes, mvpWeekRes, taoluRes, battlesRes, trackersRes] =
+      const [badgesRes, prestigeRes, prestigeProgRes, challengesRes, medalsRes, highlightsRes, attendanceRes, mvpTotalRes, mvpWeekRes, taoluRes, battlesRes, trackersRes, mvpBadgeRes] =
         await Promise.all([
           fetch("/api/students/badges", {
             method: "POST",
@@ -199,6 +200,7 @@ export default function StudentInfoPage() {
           fetch(`/api/taolu/student-summary?student_id=${selectedStudent.id}`, { cache: "no-store" }),
           fetch("/api/skill-tracker/battle/list", { cache: "no-store" }),
           fetch(`/api/skill-tracker/list?student_id=${selectedStudent.id}`, { cache: "no-store" }),
+          fetch("/api/student/mvp-badge", { cache: "no-store" }),
         ]);
 
       const badgesJson = await safeJson(badgesRes);
@@ -250,6 +252,9 @@ export default function StudentInfoPage() {
         const completed = rows.filter((t) => Number(t.attempts ?? 0) >= Number(t.repetitions_target ?? 1)).length;
         setSkillCompletedTotal(completed);
       }
+
+      const mvpBadgeJson = await safeJson(mvpBadgeRes);
+      if (mvpBadgeJson.ok) setMvpBadgeUrl(String(mvpBadgeJson.json?.badge_url ?? "") || null);
     })();
   }, [checked]);
 
@@ -308,10 +313,7 @@ export default function StudentInfoPage() {
     <AuthGate>
       <div className="student-info">
         <style>{pageStyles()}</style>
-        <style>{studentNavStyles()}</style>
-        <StudentNavPanel />
         <div className="student-info__inner">
-          <button className="back-btn" onClick={() => window.history.back()}>Back</button>
           <section className="student-info__split">
             <aside className="student-info__left">
               <div className="left-card">
@@ -342,11 +344,11 @@ export default function StudentInfoPage() {
                         <div className="stats-label">Points Earned</div>
                         <div className="stats-value">{highlights?.points_earned ?? 0}</div>
                       </div>
-                      <div className="stats-cell">
+                      <div className="stats-cell stats-cell--rule-breaker">
                         <div className="stats-label">Rule Breakers</div>
                         <div className="stats-value">{highlights?.rule_breaker_count ?? 0}</div>
                       </div>
-                      <div className="stats-cell">
+                      <div className="stats-cell stats-cell--rule-keeper">
                         <div className="stats-label">Rule Keepers</div>
                         <div className="stats-value">{highlights?.rule_keeper_count ?? 0}</div>
                       </div>
@@ -368,9 +370,14 @@ export default function StudentInfoPage() {
                   <div className="stats-card">
                     <div className="stats-card__title">Total Stats</div>
                     <div className="stats-grid">
-                      <div className="stats-cell">
+                      <div className="stats-cell stats-cell--mvp">
                         <div className="stats-label">Battle MVPs</div>
-                        <div className="stats-value">{mvpTotal}</div>
+                        <div className="stats-value stats-value--mvp">
+                          {mvpTotal}
+                          <span className="mvp-badge-inline">
+                            {mvpBadgeUrl ? <img src={mvpBadgeUrl} alt="MVP badge" /> : "MVP"}
+                          </span>
+                        </div>
                       </div>
                       <div className="stats-cell">
                         <div className="stats-label">Spotlight Stars</div>
@@ -415,8 +422,8 @@ export default function StudentInfoPage() {
                               <div className="badge-progress">
                                 <span className="badge-progress__fill" style={{ width: `${pct * 100}%` }} />
                               </div>
-                              <div className="badge-progress__text">
-                                {progress ? `${progress.current}/${progress.target}` : earned ? "Earned" : "Locked"}
+                              <div className="badge-progress__text" title={progress?.detail ?? ""}>
+                                {progress ? `${Number(progress.current ?? 0).toLocaleString()} / ${Number(progress.target ?? 0).toLocaleString()}` : earned ? "Earned" : "0 / 0"}
                               </div>
                             </div>
                           );
@@ -429,10 +436,10 @@ export default function StudentInfoPage() {
                 <div className="medal-bar">
                   <div className="block-title">Challenge Medals</div>
                   <div className="medal-row medal-row--vertical">
-                    {Object.entries(medalIcons).map(([tier, url]) => (
-                      <div key={tier} className="medal-tile">
-                        {url ? <img src={url} alt={tier} /> : <span>{tier.slice(0, 1).toUpperCase()}</span>}
-                        <div className="medal-count">{medalCounts[tier.toLowerCase()] ?? 0}</div>
+                    {medalTierOrder.map((tier) => (
+                      <div key={tier} className={`medal-tile ${tier === "gold" || tier === "platinum" || tier === "diamond" ? `medal-tile--sparkle medal-tile--${tier}` : ""}`}>
+                        {medalIcons[tier] ? <img src={String(medalIcons[tier])} alt={tier} /> : <span>{tier.slice(0, 1).toUpperCase()}</span>}
+                        <div className="medal-count">{medalCounts[tier] ?? 0}</div>
                         <div className="medal-label">{tier}</div>
                       </div>
                     ))}
@@ -465,19 +472,6 @@ function pageStyles() {
       max-width: none;
       display: grid;
       gap: 20px;
-    }
-
-    .back-btn {
-      justify-self: start;
-      padding: 8px 12px;
-      border-radius: 12px;
-      border: 1px solid rgba(148,163,184,0.2);
-      background: rgba(30,41,59,0.7);
-      color: inherit;
-      font-weight: 900;
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
-      font-size: 11px;
     }
 
     .student-info__top {
@@ -625,10 +619,27 @@ function pageStyles() {
     .stats-cell {
       padding: 12px;
       border-radius: 14px;
-      background: rgba(30,41,59,0.7);
+      background: linear-gradient(155deg, rgba(51,65,85,0.75), rgba(30,41,59,0.7));
       border: 1px solid rgba(148,163,184,0.16);
       display: grid;
       gap: 6px;
+    }
+
+    .stats-cell--rule-breaker {
+      border-color: rgba(239,68,68,0.45);
+      background: linear-gradient(155deg, rgba(127,29,29,0.6), rgba(68,8,8,0.65));
+      box-shadow: inset 0 1px 0 rgba(252,165,165,0.15), 0 10px 20px rgba(127,29,29,0.25);
+    }
+
+    .stats-cell--rule-keeper {
+      border-color: rgba(34,197,94,0.45);
+      background: linear-gradient(155deg, rgba(22,101,52,0.58), rgba(8,52,30,0.68));
+      box-shadow: inset 0 1px 0 rgba(134,239,172,0.15), 0 10px 20px rgba(21,128,61,0.24);
+    }
+
+    .stats-cell--mvp {
+      border-color: rgba(250,204,21,0.5);
+      background: linear-gradient(155deg, rgba(113,63,18,0.55), rgba(31,23,8,0.8));
     }
 
     .stats-label {
@@ -642,6 +653,30 @@ function pageStyles() {
     .stats-value {
       font-size: 20px;
       font-weight: 1000;
+    }
+
+    .stats-value--mvp {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .mvp-badge-inline {
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(250,204,21,0.5);
+      background: radial-gradient(circle, rgba(250,204,21,0.32), rgba(15,23,42,0.75));
+      font-size: 10px;
+      font-weight: 1000;
+    }
+
+    .mvp-badge-inline img {
+      width: 92%;
+      height: 92%;
+      object-fit: contain;
     }
 
     .badge-row-wrap {
@@ -668,13 +703,13 @@ function pageStyles() {
     }
 
     .badge-row {
-      display: flex;
-      flex-wrap: wrap;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 12px;
     }
 
     .badge-tile {
-      width: 86px;
+      width: 100%;
       padding: 10px;
       border-radius: 18px;
       position: relative;
@@ -683,13 +718,14 @@ function pageStyles() {
       background: rgba(30,41,59,0.7);
       border: 1px solid rgba(148,163,184,0.18);
       overflow: hidden;
-      gap: 6px;
+      gap: 8px;
       text-align: center;
+      min-height: 124px;
     }
 
     .badge-tile__img {
-      width: 64px;
-      height: 64px;
+      width: 86px;
+      height: 86px;
       display: grid;
       place-items: center;
     }
@@ -710,9 +746,9 @@ function pageStyles() {
     }
 
     .badge-row--prestige {
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      padding-bottom: 6px;
+      max-height: 288px;
+      overflow-y: auto;
+      padding-right: 4px;
     }
 
     .badge-tile--earned::after {
@@ -741,9 +777,11 @@ function pageStyles() {
     }
 
     .badge-progress__text {
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 900;
-      opacity: 0.7;
+      opacity: 1;
+      color: rgba(255,255,255,0.95);
+      text-shadow: 0 1px 2px rgba(0,0,0,0.55);
       text-transform: uppercase;
       letter-spacing: 0.6px;
     }
@@ -779,6 +817,36 @@ function pageStyles() {
       display: grid;
       gap: 6px;
       place-items: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .medal-tile--sparkle::before {
+      content: "";
+      position: absolute;
+      width: 140%;
+      height: 140%;
+      top: -20%;
+      left: -20%;
+      background: radial-gradient(circle, rgba(255,255,255,0.35), rgba(255,255,255,0));
+      opacity: 0.4;
+      animation: medalSparkle 3s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    .medal-tile--gold {
+      box-shadow: 0 0 20px rgba(250,204,21,0.35);
+      border-color: rgba(250,204,21,0.55);
+    }
+
+    .medal-tile--platinum {
+      box-shadow: 0 0 20px rgba(226,232,240,0.4);
+      border-color: rgba(203,213,225,0.65);
+    }
+
+    .medal-tile--diamond {
+      box-shadow: 0 0 20px rgba(56,189,248,0.45);
+      border-color: rgba(56,189,248,0.62);
     }
 
     .medal-tile img {
@@ -826,12 +894,27 @@ function pageStyles() {
       .medal-bar {
         height: auto;
       }
+      .badge-row {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 640px) {
+      .badge-row {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
     }
 
     @keyframes sparkle {
       0% { transform: scale(0.9); opacity: 0.4; }
       50% { transform: scale(1.05); opacity: 0.8; }
       100% { transform: scale(0.9); opacity: 0.4; }
+    }
+
+    @keyframes medalSparkle {
+      0% { transform: scale(0.8) rotate(0deg); opacity: 0.2; }
+      50% { transform: scale(1.08) rotate(30deg); opacity: 0.5; }
+      100% { transform: scale(0.8) rotate(0deg); opacity: 0.2; }
     }
   `;
 }

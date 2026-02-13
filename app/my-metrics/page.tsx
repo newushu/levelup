@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import AuthGate from "../../components/AuthGate";
 import AvatarRender from "@/components/AvatarRender";
 import StudentNavPanel, { studentNavStyles } from "@/components/StudentNavPanel";
@@ -114,7 +114,9 @@ export default function MyMetricsPage() {
 }
 
 function MyMetricsInner() {
+  const pathname = usePathname();
   const searchParams = useSearchParams();
+  const inStudentWorkspace = pathname.startsWith("/student/");
   const [student, setStudent] = useState<StudentRow | null>(null);
   const [trackers, setTrackers] = useState<TrackerRow[]>([]);
   const [taoluSummary, setTaoluSummary] = useState<TaoluSummary | null>(null);
@@ -621,9 +623,9 @@ function MyMetricsInner() {
   return (
     <main className="logs-page">
       <style>{pageStyles()}</style>
-      <style>{studentNavStyles()}</style>
-      <StudentNavPanel />
-      <button className="back-btn" onClick={() => window.history.back()}>Back</button>
+      {!inStudentWorkspace ? <style>{studentNavStyles()}</style> : null}
+      {!inStudentWorkspace ? <StudentNavPanel /> : null}
+      {!inStudentWorkspace ? <button className="back-btn" onClick={() => window.history.back()}>Back</button> : null}
       <header className="logs-header">
         <div className="logs-header__left">
           <div className="logs-title">{student?.name ?? "Student"}</div>

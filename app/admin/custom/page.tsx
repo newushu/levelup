@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+type DockKey = "class" | "performance" | "customization" | "ribbons";
+
 const adminSections = [
   {
     title: "Insights",
@@ -259,6 +261,22 @@ const operationsCards = [
   },
 ];
 
+const ribbonLinks = [
+  { title: "Announcements", href: "/admin/announcements" },
+  { title: "Rewards Approvals", href: "/admin/rewards" },
+  { title: "Parent Pairing", href: "/admin/parent-pairing" },
+  { title: "Parent Messages", href: "/admin/parent-messages" },
+  { title: "To-Do Inbox", href: "/admin/todos" },
+  { title: "Schedule Board", href: "/admin/schedule" },
+];
+
+function sectionDock(title: string): DockKey {
+  if (title === "Insights") return "performance";
+  if (title === "Program Setup" || title === "Passes & Registration" || title === "Camp") return "class";
+  if (title === "Engagement & Rewards") return "ribbons";
+  return "customization";
+}
+
 export default function CustomAdminHome() {
   const [pinOk, setPinOk] = useState(false);
   const [pinSet, setPinSet] = useState<boolean | null>(null);
@@ -268,9 +286,15 @@ export default function CustomAdminHome() {
   const [pinBusy, setPinBusy] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [query, setQuery] = useState("");
+  const [activeDock, setActiveDock] = useState<DockKey>("class");
+  const [ribbonOpen, setRibbonOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const alreadyUnlocked = window.sessionStorage.getItem("admin_pin_ok") === "1";
+    if (alreadyUnlocked) {
+      setPinOk(true);
+    }
     (async () => {
       const res = await fetch("/api/skill-tracker/settings", { cache: "no-store" });
       const sj = await res.json().catch(() => ({}));
@@ -290,6 +314,10 @@ export default function CustomAdminHome() {
     const sj = await res.json().catch(() => ({}));
     setPinBusy(false);
     if (!res.ok) return setPinMsg(sj?.error || "Invalid PIN");
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem("admin_pin_ok", "1");
+      window.sessionStorage.setItem("admin_nfc_ok", "0");
+    }
     setPinOk(true);
     setPin("");
   }
@@ -306,6 +334,10 @@ export default function CustomAdminHome() {
     const sj = await res.json().catch(() => ({}));
     setPinBusy(false);
     if (!res.ok) return setPinMsg(sj?.error || "Invalid NFC code");
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem("admin_pin_ok", "1");
+      window.sessionStorage.setItem("admin_nfc_ok", "1");
+    }
     setPinOk(true);
     setNfcCode("");
   }
@@ -408,6 +440,7 @@ export default function CustomAdminHome() {
     .map((section) => {
       const matchesSection = section.title.toLowerCase().includes(q);
       const cards = section.cards.filter((card) => {
+        if (sectionDock(section.title) !== activeDock) return false;
         if (!q) return true;
         const haystack = `${card.title} ${card.desc} ${section.title}`.toLowerCase();
         return haystack.includes(q) || matchesSection;
@@ -416,7 +449,8 @@ export default function CustomAdminHome() {
     })
     .filter((section) => section.cards.length > 0);
   return (
-    <main style={{ display: "grid", gap: 16 }}>
+    <main style={{ display: "grid", gap: 16, paddingBottom: 110 }}>
+      <style>{dockStyles()}</style>
       <div style={{ fontSize: 28, fontWeight: 1000 }}>Admin Workspace</div>
       <div style={{ opacity: 0.75, fontSize: 13 }}>
         Configure your program and manage daily operations.
@@ -474,17 +508,43 @@ export default function CustomAdminHome() {
         </section>
       ))}
 
-      <section style={{ display: "grid", gap: 10 }}>
-        <div style={{ fontWeight: 1000, fontSize: 16 }}>Operations</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-          {operationsCards.map((card) => (
-            <Link key={card.href} href={card.href} style={cardStyle()}>
-              <div style={{ fontWeight: 1000 }}>{card.title}</div>
-              <div style={{ opacity: 0.75, fontSize: 12, marginTop: 6 }}>{card.desc}</div>
+      {activeDock === "ribbons" ? (
+        <section style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontWeight: 1000, fontSize: 16 }}>Ribbon Workspace</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+            {operationsCards.map((card) => (
+              <Link key={card.href} href={card.href} style={cardStyle()}>
+                <div style={{ fontWeight: 1000 }}>{card.title}</div>
+                <div style={{ opacity: 0.75, fontSize: 12, marginTop: 6 }}>{card.desc}</div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {ribbonOpen ? (
+        <div className="admin-dock-sheet">
+          {ribbonLinks.map((item) => (
+            <Link key={item.href} href={item.href} className="admin-dock-sheet__link" onClick={() => setRibbonOpen(false)}>
+              {item.title}
             </Link>
           ))}
         </div>
-      </section>
+      ) : null}
+      <div className="admin-dock">
+        <button className={`admin-dock__btn ${activeDock === "class" ? "admin-dock__btn--active" : ""}`} onClick={() => { setActiveDock("class"); setRibbonOpen(false); }}>
+          Class
+        </button>
+        <button className={`admin-dock__btn ${activeDock === "performance" ? "admin-dock__btn--active" : ""}`} onClick={() => { setActiveDock("performance"); setRibbonOpen(false); }}>
+          Performance
+        </button>
+        <button className={`admin-dock__btn ${activeDock === "customization" ? "admin-dock__btn--active" : ""}`} onClick={() => { setActiveDock("customization"); setRibbonOpen(false); }}>
+          Customization
+        </button>
+        <button className={`admin-dock__btn ${activeDock === "ribbons" ? "admin-dock__btn--active" : ""}`} onClick={() => { setActiveDock("ribbons"); setRibbonOpen((v) => !v); }}>
+          Ribbons
+        </button>
+      </div>
     </main>
   );
 }
@@ -512,4 +572,67 @@ function badge(): React.CSSProperties {
     fontSize: 11,
     fontWeight: 900,
   };
+}
+
+function dockStyles() {
+  return `
+    .admin-dock {
+      position: fixed;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      z-index: 80;
+      border-radius: 16px;
+      border: 1px solid rgba(148,163,184,0.26);
+      background: rgba(2,6,23,0.9);
+      padding: 8px;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.45);
+      backdrop-filter: blur(10px);
+    }
+    .admin-dock__btn {
+      border-radius: 12px;
+      border: 1px solid rgba(148,163,184,0.3);
+      background: rgba(30,41,59,0.78);
+      color: white;
+      font-weight: 900;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    .admin-dock__btn--active {
+      border-color: rgba(56,189,248,0.55);
+      background: rgba(56,189,248,0.24);
+      box-shadow: 0 0 16px rgba(56,189,248,0.24);
+    }
+    .admin-dock-sheet {
+      position: fixed;
+      right: 18px;
+      bottom: 76px;
+      z-index: 81;
+      width: 260px;
+      max-height: 62vh;
+      overflow: auto;
+      display: grid;
+      gap: 8px;
+      border-radius: 16px;
+      border: 1px solid rgba(148,163,184,0.26);
+      background: rgba(2,6,23,0.94);
+      box-shadow: 0 16px 34px rgba(0,0,0,0.45);
+      padding: 10px;
+    }
+    .admin-dock-sheet__link {
+      text-decoration: none;
+      color: white;
+      border-radius: 12px;
+      border: 1px solid rgba(148,163,184,0.24);
+      background: rgba(30,41,59,0.75);
+      padding: 9px 10px;
+      font-weight: 800;
+      font-size: 12px;
+    }
+  `;
 }

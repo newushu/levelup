@@ -8,6 +8,7 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => ({}));
   const reward_id = String(body?.reward_id ?? "").trim();
+  const requestedStudentId = String(body?.student_id ?? "").trim();
   if (!reward_id) return NextResponse.json({ ok: false, error: "Missing reward_id" }, { status: 400 });
 
   const { data: roles, error: roleErr } = await supabase
@@ -17,11 +18,27 @@ export async function POST(req: Request) {
   if (roleErr) return NextResponse.json({ ok: false, error: roleErr.message }, { status: 500 });
 
   const roleList = (roles ?? []).map((r) => String(r.role ?? "").toLowerCase());
-  if (!roleList.includes("student")) {
-    return NextResponse.json({ ok: false, error: "Hold requests are for student accounts" }, { status: 403 });
+  const isStudent = roleList.includes("student");
+  const isAdminLike = roleList.some((r) => ["admin", "coach", "classroom"].includes(r));
+
+  let student_id = "";
+  if (isStudent) {
+    student_id = String((roles ?? []).find((r) => String(r.role ?? "").toLowerCase() === "student")?.student_id ?? "");
+  } else if (isAdminLike) {
+    student_id = requestedStudentId;
   }
 
-  const student_id = String((roles ?? []).find((r) => String(r.role ?? "").toLowerCase() === "student")?.student_id ?? "");
+  if (!student_id) {
+    return NextResponse.json(
+      { ok: false, error: "student_id is required for admin/coach requests" },
+      { status: 400 }
+    );
+  }
+
+  if (!isStudent && !isAdminLike) {
+    return NextResponse.json({ ok: false, error: "Not allowed to request holds" }, { status: 403 });
+  }
+
   if (!student_id) return NextResponse.json({ ok: false, error: "Student mapping missing" }, { status: 400 });
 
   const { data: reward, error: rErr } = await supabase.from("rewards").select("id,name,cost").eq("id", reward_id).single();

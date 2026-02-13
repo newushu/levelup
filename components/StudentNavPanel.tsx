@@ -1,13 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const items = [
   { key: "home", label: "Student Home", href: "/student", tone: "tone-blue" },
   { key: "info", label: "Student Info", href: "/student/info", tone: "tone-teal" },
-  { key: "homequest", label: "Home Quest", href: "/home-quest", tone: "tone-amber" },
-  { key: "rewards", label: "Rewards", href: "/rewards", tone: "tone-rose" },
-  { key: "logs", label: "Logs & Reports", href: "/my-metrics", tone: "tone-violet" },
+  { key: "rewards", label: "Rewards", href: "/student/rewards", tone: "tone-rose" },
+  { key: "logs", label: "Logs & Reports", href: "/student/logs", tone: "tone-violet" },
   { key: "challenges", label: "Challenge Vault", href: "/student/challenges", tone: "tone-green" },
 ];
 
@@ -17,15 +17,19 @@ export default function StudentNavPanel() {
     <div className="student-nav">
       <div className="student-nav__title">Navigation</div>
       <div className="student-nav__list">
-        {items.map((item) => (
-          <a
+        {items.map((item) => {
+          const hrefPath = item.href.split("?")[0];
+          const active = path === hrefPath;
+          return (
+          <Link
             key={item.key}
             href={item.href}
-            className={`student-nav__item ${item.tone} ${path === item.href ? "student-nav__item--active" : ""}`}
+            className={`student-nav__item ${item.tone} ${active ? "student-nav__item--active" : ""}`}
           >
             {item.label}
-          </a>
-        ))}
+          </Link>
+          );
+        })}
       </div>
     </div>
   );
@@ -115,8 +119,9 @@ export function studentNavStyles() {
 
     .student-nav__item--active {
       border-color: rgba(255,255,255,0.5);
-      box-shadow: inset 0 2px 6px rgba(0,0,0,0.45), 0 0 18px rgba(34,197,94,0.25);
-      transform: translateY(2px);
+      box-shadow: inset 0 2px 6px rgba(0,0,0,0.45), 0 0 24px rgba(34,197,94,0.32);
+      transform: translateX(8px) scale(1.04);
+      z-index: 2;
     }
 
     .student-nav__item:hover {
@@ -131,12 +136,7 @@ export function studentNavStyles() {
 
     @media (max-width: 1100px) {
       .student-nav {
-        position: static;
-        width: 100%;
-        height: auto;
-      }
-      .student-nav__list {
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        display: none;
       }
     }
   `;
