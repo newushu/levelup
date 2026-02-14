@@ -5,6 +5,13 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 const isMissingColumn = (err: any, column: string) =>
   String(err?.message || "").toLowerCase().includes(`column "${column.toLowerCase()}"`);
 
+const normalizeName = (value: string) =>
+  String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
 export async function POST(req: Request) {
   const supabase = await supabaseServer();
   const admin = supabaseAdmin();
@@ -291,6 +298,53 @@ export async function POST(req: Request) {
     instance_id: instanceId,
     session_id: sessionId,
   };
+
+  const consumeQueuedEmote = async () => {
+    const { data: student } = await admin
+      .from("students")
+      .select("name")
+      .eq("id", student_id)
+      .maybeSingle();
+    const fullName = String(student?.name ?? "").trim();
+    if (!fullName) return null;
+    const normalized = normalizeName(fullName);
+    if (!normalized) return null;
+    const parts = normalized.split(" ").filter(Boolean);
+    const short = parts.length > 1 ? `${parts[0]} ${parts[parts.length - 1].slice(0, 1)}` : normalized;
+
+    const { data: queued } = await admin
+      .from("class_emote_messages")
+      .select("id,sender_name,recipient_name,emote_id,created_at")
+      .is("consumed_at", null)
+      .eq("instance_id", instanceId)
+      .in("recipient_search", [normalized, short])
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (!queued?.id) return null;
+
+    const { data: emote } = await admin
+      .from("class_emotes")
+      .select("label,emoji,image_url,html,css,js")
+      .eq("id", queued.emote_id)
+      .maybeSingle();
+
+    await admin.from("class_emote_messages").update({ consumed_at: new Date().toISOString() }).eq("id", queued.id);
+
+    return {
+      sender_name: String(queued.sender_name ?? "Someone"),
+      recipient_name: String(queued.recipient_name ?? fullName),
+      message: `${String(queued.sender_name ?? "Someone")} sends you ${String(emote?.label ?? "an emote")}, welcome to class.`,
+      emote: {
+        label: String(emote?.label ?? "Emote"),
+        emoji: String(emote?.emoji ?? "✨"),
+        image_url: emote?.image_url ?? null,
+        html: String(emote?.html ?? ""),
+        css: String(emote?.css ?? ""),
+        js: String(emote?.js ?? ""),
+      },
+    };
+  };
   const insertAttempt = await admin.from("attendance_checkins").insert(insertPayload).select("id").single();
 
   const finalizeDuplicate = async (useInstance: boolean) => {
@@ -327,11 +381,13 @@ export async function POST(req: Request) {
         if ((retry.error as any)?.code === "23505") return finalizeDuplicate(false);
         return NextResponse.json({ ok: false, error: retry.error.message }, { status: 500 });
       }
-      return NextResponse.json({ ok: true, checkin_id: retry.data.id });
+      const emote_popup = await consumeQueuedEmote();
+      return NextResponse.json({ ok: true, checkin_id: retry.data.id, emote_popup });
     }
     if ((insertAttempt.error as any)?.code === "23505") return finalizeDuplicate(true);
     return NextResponse.json({ ok: false, error: insertAttempt.error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, checkin_id: insertAttempt.data.id });
+  const emote_popup = await consumeQueuedEmote();
+  return NextResponse.json({ ok: true, checkin_id: insertAttempt.data.id, emote_popup });
 }

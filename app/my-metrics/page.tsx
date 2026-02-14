@@ -141,6 +141,13 @@ function MyMetricsInner() {
   const [taoluSectionDetail, setTaoluSectionDetail] = useState<{ formId: string; section: string } | null>(null);
   const [leaderboard, setLeaderboard] = useState<PerfLeaderboard | null>(null);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [avatarCatalog, setAvatarCatalog] = useState<Array<{ id: string; storage_path: string | null; enabled?: boolean | null }>>([]);
+  const [avatarId, setAvatarId] = useState("");
+  const [avatarBg, setAvatarBg] = useState("rgba(15,23,42,0.6)");
+  const [avatarEffectKey, setAvatarEffectKey] = useState<string | null>(null);
+  const [cornerBorderKey, setCornerBorderKey] = useState<string | null>(null);
+  const [effectCatalog, setEffectCatalog] = useState<Array<{ key: string; config?: any; render_mode?: string | null; z_layer?: string | null; html?: string | null; css?: string | null; js?: string | null }>>([]);
+  const [cornerBorders, setCornerBorders] = useState<Array<{ key: string; image_url?: string | null; render_mode?: string | null; z_layer?: string | null; html?: string | null; css?: string | null; js?: string | null; offset_x?: number | null; offset_y?: number | null; offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null; rotate?: number | null }> | null; enabled?: boolean | null }>>([]);
 
   useEffect(() => {
     (async () => {
@@ -156,6 +163,22 @@ function MyMetricsInner() {
       const selected = list.find((s) => String(s.id) === String(selectedId));
       if (!selected?.id) return setMsg("Please select student.");
       setStudent(selected);
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const [avatarsRes, effectsRes, bordersRes] = await Promise.all([
+        fetch("/api/avatars/list", { cache: "no-store" }),
+        fetch("/api/avatar-effects/list", { cache: "no-store" }),
+        fetch("/api/corner-borders", { cache: "no-store" }),
+      ]);
+      const avatarsJson = await avatarsRes.json().catch(() => ({}));
+      if (avatarsRes.ok) setAvatarCatalog((avatarsJson?.avatars ?? []) as any[]);
+      const effectsJson = await effectsRes.json().catch(() => ({}));
+      if (effectsRes.ok) setEffectCatalog((effectsJson?.effects ?? []) as any[]);
+      const bordersJson = await bordersRes.json().catch(() => ({}));
+      if (bordersRes.ok) setCornerBorders((bordersJson?.borders ?? []) as any[]);
     })();
   }, []);
 
@@ -268,14 +291,49 @@ function MyMetricsInner() {
     })();
   }, [student?.id]);
 
+  useEffect(() => {
+    if (!student?.id) return;
+    (async () => {
+      const res = await fetch("/api/avatar/get", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_id: student.id }),
+      });
+      const sj = await safeJson(res);
+      if (!sj.ok) return;
+      const s = sj.json?.settings ?? null;
+      setAvatarId(String(s?.avatar_id ?? "").trim());
+      const bg = String(s?.bg_color ?? "").trim();
+      setAvatarBg(bg || "rgba(15,23,42,0.6)");
+      const effectKey = String(s?.particle_style ?? "").trim();
+      setAvatarEffectKey(effectKey || null);
+      const borderKey = String(s?.corner_border_key ?? "").trim();
+      setCornerBorderKey(borderKey || null);
+    })();
+  }, [student?.id]);
+
   const pointsDisplay = Number(student?.points_balance ?? student?.points_total ?? 0);
   const levelDisplay = Number(student?.level ?? 1);
   const avatarSrc = useMemo(() => {
+    const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    if (!base) return null;
+    if (avatarId) {
+      const row = avatarCatalog.find((a) => String(a.id) === String(avatarId));
+      const mapped = String(row?.storage_path ?? "").trim();
+      if (mapped) return `${base}/storage/v1/object/public/avatars/${mapped}`;
+    }
     const path = String(student?.avatar_storage_path ?? "").trim();
     if (!path) return null;
-    const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    return base ? `${base}/storage/v1/object/public/avatars/${path}` : null;
-  }, [student?.avatar_storage_path]);
+    return `${base}/storage/v1/object/public/avatars/${path}`;
+  }, [avatarId, avatarCatalog, student?.avatar_storage_path]);
+  const selectedEffect = useMemo(() => {
+    if (!avatarEffectKey) return null;
+    return effectCatalog.find((e) => String(e.key) === String(avatarEffectKey)) ?? { key: avatarEffectKey };
+  }, [avatarEffectKey, effectCatalog]);
+  const selectedBorder = useMemo(() => {
+    if (!cornerBorderKey) return null;
+    return cornerBorders.find((b) => String(b.key) === String(cornerBorderKey) && b.enabled !== false) ?? null;
+  }, [cornerBorderKey, cornerBorders]);
   const avatarZoomPct = Math.max(50, Math.min(200, Number(student?.avatar_zoom_pct ?? 100)));
   const displayAvatarZoom = Math.min(100, avatarZoomPct);
   const initials = (student?.name || "").trim().slice(0, 2).toUpperCase() || "LA";
@@ -633,11 +691,14 @@ function MyMetricsInner() {
           <div className="logs-avatar">
             <AvatarRender
               size={160}
-              bg="rgba(15,23,42,0.6)"
+              bg={avatarBg}
               avatarSrc={avatarSrc}
               avatarZoomPct={displayAvatarZoom}
+              effect={selectedEffect as any}
+              border={selectedBorder as any}
               showImageBorder={false}
               style={{ borderRadius: 20 }}
+              contextKey="student_logs"
               fallback={<div className="logs-avatar__fallback">{initials}</div>}
             />
           </div>
@@ -1067,7 +1128,7 @@ function MyMetricsInner() {
 function pageStyles() {
   return `
     .logs-page {
-      padding: 36px 24px 80px;
+      padding: 36px 24px 80px 276px;
       display: grid;
       gap: 20px;
       width: min(1400px, 96vw);
@@ -1969,6 +2030,9 @@ function pageStyles() {
     }
 
     @media (max-width: 1200px) {
+      .logs-page {
+        padding: 24px 16px 108px;
+      }
       .perf-grid {
         grid-template-columns: repeat(3, minmax(160px, 1fr));
       }

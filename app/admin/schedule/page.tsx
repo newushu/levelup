@@ -45,8 +45,92 @@ type ScheduleInstance = {
   is_cancelled?: boolean;
   is_fallback?: boolean;
 };
+type StaffRow = {
+  user_id: string;
+  email: string | null;
+  username: string | null;
+  role: string | null;
+  roles?: string[];
+  is_coach?: boolean;
+  is_staff?: boolean;
+};
+type StaffMeta = {
+  hours: string;
+  services: string[];
+  roleTag: "coach" | "staff";
+  availability: Record<number, { enabled: boolean; start: string; end: string }>;
+};
 
 const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const serviceOptions = ["Class", "Event", "Test", "Private", "Small Group"] as const;
+const STAFF_META_PREFIX = "__schedule_meta_v1__";
+
+function buildDefaultAvailability() {
+  return dayLabels.reduce((acc, _label, index) => {
+    acc[index] = { enabled: false, start: "16:00", end: "20:00" };
+    return acc;
+  }, {} as Record<number, { enabled: boolean; start: string; end: string }>);
+}
+
+function defaultStaffMeta(roleTag: "coach" | "staff" = "coach"): StaffMeta {
+  return { hours: "", services: [], roleTag, availability: buildDefaultAvailability() };
+}
+
+function parseStoredStaffMeta(rawHours: string | null | undefined, services: string[] | null | undefined) {
+  const base = defaultStaffMeta("coach");
+  base.services = Array.isArray(services) ? services.map((s) => String(s || "").trim()).filter(Boolean) : [];
+  const hoursText = String(rawHours ?? "");
+  if (!hoursText.startsWith(STAFF_META_PREFIX)) {
+    base.hours = hoursText;
+    return base;
+  }
+  try {
+    const parsed = JSON.parse(hoursText.slice(STAFF_META_PREFIX.length));
+    const roleTag = String(parsed?.roleTag ?? "").toLowerCase();
+    base.roleTag = roleTag === "staff" ? "staff" : "coach";
+    base.hours = String(parsed?.hours ?? "");
+    if (parsed?.availability && typeof parsed.availability === "object") {
+      const next = buildDefaultAvailability();
+      Object.entries(parsed.availability).forEach(([k, v]) => {
+        const idx = Number(k);
+        if (!Number.isFinite(idx) || idx < 0 || idx > 6 || !v || typeof v !== "object") return;
+        next[idx] = {
+          enabled: Boolean((v as any).enabled),
+          start: String((v as any).start ?? next[idx].start),
+          end: String((v as any).end ?? next[idx].end),
+        };
+      });
+      base.availability = next;
+    }
+  } catch {
+    base.hours = "";
+  }
+  return base;
+}
+
+function serializeStaffMetaHours(meta: StaffMeta) {
+  return `${STAFF_META_PREFIX}${JSON.stringify({
+    roleTag: meta.roleTag,
+    hours: meta.hours,
+    availability: meta.availability,
+  })}`;
+}
+
+function normalizeEntryType(value: string) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "small group" || raw === "small-group" || raw === "small_group") return "small group";
+  if (raw === "private" || raw === "privates") return "private";
+  if (raw === "event" || raw === "events") return "event";
+  if (raw === "test" || raw === "tests") return "test";
+  if (raw === "class" || raw === "classes") return "class";
+  return "class";
+}
+
+function formatStaffName(row: StaffRow) {
+  const name = String(row.username ?? "").trim();
+  const email = String(row.email ?? "").trim();
+  return name || email || row.user_id.slice(0, 8);
+}
 
 export default function ScheduleAdminPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -89,6 +173,9 @@ export default function ScheduleAdminPage() {
   const [breakDatesInput, setBreakDatesInput] = useState("");
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
   const [dayTimes, setDayTimes] = useState<Record<number, { start: string; end: string }>>({});
+  const [staff, setStaff] = useState<StaffRow[]>([]);
+  const [staffMeta, setStaffMeta] = useState<Record<string, StaffMeta>>({});
+  const [selectedInstructorIds, setSelectedInstructorIds] = useState<string[]>([]);
   const [scheduleStatus, setScheduleStatus] = useState<"idle" | "saving" | "scheduled">("idle");
   const scheduleStatusTimer = useRef<number | null>(null);
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
@@ -114,6 +201,7 @@ export default function ScheduleAdminPage() {
   const [editRangeExceptions, setEditRangeExceptions] = useState<string[]>([]);
   const [editRangeOptions, setEditRangeOptions] = useState<string[]>([]);
   const [editRangeLoading, setEditRangeLoading] = useState(false);
+  const [locationDrafts, setLocationDrafts] = useState<Record<string, Partial<LocationRow>>>({});
 
   const activeLocation = useMemo(
     () => locations.find((l) => l.id === formLocationId) ?? null,
@@ -165,6 +253,33 @@ export default function ScheduleAdminPage() {
   }, []);
 
   useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/staff/list", { cache: "no-store" });
+        const data = await res.json();
+        if (res.ok) setStaff((data.staff ?? []) as StaffRow[]);
+      } catch {}
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/staff/schedule-profiles", { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok) return;
+        const next: Record<string, StaffMeta> = {};
+        ((data.profiles ?? []) as Array<{ user_id: string; availability_hours?: string | null; services?: string[] | null }>).forEach((row) => {
+          const id = String(row.user_id ?? "");
+          if (!id) return;
+          next[id] = parseStoredStaffMeta(row.availability_hours, row.services);
+        });
+        setStaffMeta(next);
+      } catch {}
+    })();
+  }, []);
+
+  useEffect(() => {
     if (!newClassLocationId && locations[0]?.id) setNewClassLocationId(locations[0].id);
   }, [newClassLocationId, locations]);
 
@@ -172,6 +287,28 @@ export default function ScheduleAdminPage() {
     if (!formClassId && classes[0]?.id) setFormClassId(classes[0].id);
     if (!formLocationId && locations[0]?.id) setFormLocationId(locations[0].id);
   }, [classes, formClassId, formLocationId, locations]);
+
+  useEffect(() => {
+    const drafts: Record<string, Partial<LocationRow>> = {};
+    locations.forEach((loc) => {
+      drafts[loc.id] = {
+        id: loc.id,
+        name: loc.name,
+        timezone: loc.timezone ?? "",
+        address_line1: loc.address_line1 ?? "",
+        address_line2: loc.address_line2 ?? "",
+        city: loc.city ?? "",
+        state: loc.state ?? "",
+        postal_code: loc.postal_code ?? "",
+        country: loc.country ?? "",
+      };
+    });
+    setLocationDrafts(drafts);
+  }, [locations]);
+
+  useEffect(() => {
+    setSelectedInstructorIds([]);
+  }, [formEntryType]);
 
   useEffect(() => {
     if (!rangeStart) {
@@ -403,6 +540,21 @@ export default function ScheduleAdminPage() {
     }
 
     const breakDates = parseBreakDates(breakDatesInput);
+    const selectedInstructorNames = selectedInstructorIds
+      .map((id) => eligibleInstructorPool.find((row) => row.user_id === id))
+      .filter(Boolean)
+      .map((row) => formatStaffName(row as StaffRow));
+    const instructorNamePayload = selectedInstructorNames.length
+      ? selectedInstructorNames.join(", ")
+      : (formInstructor || null);
+    const normalizedType = (() => {
+      const kind = normalizeEntryType(formEntryType);
+      if (kind === "small group") return "Small Group";
+      if (kind === "private") return "Private";
+      if (kind === "event") return "Event";
+      if (kind === "test") return "Test";
+      return "Class";
+    })();
     const payloads = selectedDays.map((day) => ({
       class_id: formClassId,
       location_id: formLocationId,
@@ -411,9 +563,9 @@ export default function ScheduleAdminPage() {
       end_time: dayTimes[day]?.end || baseEnd || null,
       start_date: rangeStart,
       end_date: rangeEnd,
-      instructor_name: formInstructor || null,
+      instructor_name: instructorNamePayload,
       room_name: formRoom || null,
-      entry_type: formEntryType || "Class",
+      entry_type: normalizedType,
       break_dates: breakDates,
     }));
 
@@ -460,6 +612,48 @@ export default function ScheduleAdminPage() {
   const instructorOptions = useMemo(() => {
     return Array.from(new Set(entries.map((e) => e.instructor_name).filter(Boolean))) as string[];
   }, [entries]);
+
+  const coachRoster = useMemo(() => {
+    return staff.filter((row) => {
+      const configuredRole = staffMeta[row.user_id]?.roleTag;
+      if (configuredRole === "coach") return true;
+      if (configuredRole === "staff") return false;
+      const roles = (row.roles ?? []).map((r) => String(r).toLowerCase());
+      return row.is_coach || roles.includes("coach") || String(row.role ?? "").toLowerCase() === "coach";
+    });
+  }, [staff, staffMeta]);
+
+  const staffRoster = useMemo(() => {
+    return staff.filter((row) => {
+      const configuredRole = staffMeta[row.user_id]?.roleTag;
+      if (configuredRole === "coach" || configuredRole === "staff") return true;
+      const roles = (row.roles ?? []).map((r) => String(r).toLowerCase());
+      const isCoach = row.is_coach || roles.includes("coach") || String(row.role ?? "").toLowerCase() === "coach";
+      const isAdminOrStaff =
+        row.is_staff || roles.includes("admin") || roles.includes("staff") || ["admin", "staff"].includes(String(row.role ?? "").toLowerCase());
+      return isCoach || isAdminOrStaff;
+    });
+  }, [staff, staffMeta]);
+
+  const eligibleInstructorPool = useMemo(() => {
+    const kind = normalizeEntryType(formEntryType);
+    const source =
+      ["class", "private", "small group"].includes(kind) ? coachRoster :
+      ["event", "test"].includes(kind) ? staffRoster :
+      coachRoster;
+    return source.filter((row) => {
+      const meta = staffMeta[row.user_id];
+      if (!meta || !Array.isArray(meta.services) || !meta.services.length) return true;
+      const normalized = meta.services.map((svc) => normalizeEntryType(svc));
+      return normalized.includes(kind);
+    });
+  }, [coachRoster, formEntryType, staffMeta, staffRoster]);
+
+  useEffect(() => {
+    setSelectedInstructorIds((prev) =>
+      prev.filter((id) => eligibleInstructorPool.some((row) => row.user_id === id))
+    );
+  }, [eligibleInstructorPool]);
 
   const roomOptions = useMemo(() => {
     return Array.from(new Set(entries.map((e) => e.room_name).filter(Boolean))) as string[];
@@ -662,6 +856,48 @@ export default function ScheduleAdminPage() {
     loadAll();
   }
 
+  async function saveLocation(id: string) {
+    const draft = locationDrafts[id];
+    if (!draft) return;
+    setMsg("");
+    const res = await fetch("/api/locations/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id,
+        name: String(draft.name ?? "").trim(),
+        timezone: String(draft.timezone ?? "").trim() || null,
+        address_line1: String(draft.address_line1 ?? "").trim() || null,
+        address_line2: String(draft.address_line2 ?? "").trim() || null,
+        city: String(draft.city ?? "").trim() || null,
+        state: String(draft.state ?? "").trim() || null,
+        postal_code: String(draft.postal_code ?? "").trim() || null,
+        country: String(draft.country ?? "").trim() || null,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setMsg(data?.error || "Failed to update location");
+    setMsg("Location updated.");
+    await loadAll();
+  }
+
+  async function saveStaffProfile(userId: string) {
+    const row = staffMeta[userId] ?? defaultStaffMeta("coach");
+    setMsg("");
+    const res = await fetch("/api/admin/staff/schedule-profiles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: userId,
+        availability_hours: serializeStaffMetaHours(row),
+        services: row.services,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setMsg(data?.error || "Failed to save staff profile");
+    setMsg("Staff profile updated.");
+  }
+
   return (
     <main style={{ display: "grid", gap: 16 }}>
       <div style={pageHeader()}>
@@ -747,15 +983,103 @@ export default function ScheduleAdminPage() {
             <div style={{ display: "grid", gap: 8 }}>
               {locations.map((loc) => (
                 <div key={loc.id} style={locationCard()}>
-                  <div style={{ fontWeight: 900 }}>{loc.name}</div>
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>
-                    {loc.timezone ? loc.timezone : "Timezone not set"}
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <input
+                      value={String(locationDrafts[loc.id]?.name ?? "")}
+                      onChange={(e) =>
+                        setLocationDrafts((prev) => ({
+                          ...prev,
+                          [loc.id]: { ...(prev[loc.id] ?? {}), name: e.target.value },
+                        }))
+                      }
+                      placeholder="Location name"
+                      style={input()}
+                    />
+                    <input
+                      value={String(locationDrafts[loc.id]?.timezone ?? "")}
+                      onChange={(e) =>
+                        setLocationDrafts((prev) => ({
+                          ...prev,
+                          [loc.id]: { ...(prev[loc.id] ?? {}), timezone: e.target.value },
+                        }))
+                      }
+                      placeholder="Timezone"
+                      style={input()}
+                    />
+                    <input
+                      value={String(locationDrafts[loc.id]?.address_line1 ?? "")}
+                      onChange={(e) =>
+                        setLocationDrafts((prev) => ({
+                          ...prev,
+                          [loc.id]: { ...(prev[loc.id] ?? {}), address_line1: e.target.value },
+                        }))
+                      }
+                      placeholder="Address line 1"
+                      style={input()}
+                    />
+                    <input
+                      value={String(locationDrafts[loc.id]?.address_line2 ?? "")}
+                      onChange={(e) =>
+                        setLocationDrafts((prev) => ({
+                          ...prev,
+                          [loc.id]: { ...(prev[loc.id] ?? {}), address_line2: e.target.value },
+                        }))
+                      }
+                      placeholder="Address line 2"
+                      style={input()}
+                    />
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <input
+                        value={String(locationDrafts[loc.id]?.city ?? "")}
+                        onChange={(e) =>
+                          setLocationDrafts((prev) => ({
+                            ...prev,
+                            [loc.id]: { ...(prev[loc.id] ?? {}), city: e.target.value },
+                          }))
+                        }
+                        placeholder="City"
+                        style={input()}
+                      />
+                      <input
+                        value={String(locationDrafts[loc.id]?.state ?? "")}
+                        onChange={(e) =>
+                          setLocationDrafts((prev) => ({
+                            ...prev,
+                            [loc.id]: { ...(prev[loc.id] ?? {}), state: e.target.value },
+                          }))
+                        }
+                        placeholder="State / Region"
+                        style={input()}
+                      />
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <input
+                        value={String(locationDrafts[loc.id]?.postal_code ?? "")}
+                        onChange={(e) =>
+                          setLocationDrafts((prev) => ({
+                            ...prev,
+                            [loc.id]: { ...(prev[loc.id] ?? {}), postal_code: e.target.value },
+                          }))
+                        }
+                        placeholder="Postal code"
+                        style={input()}
+                      />
+                      <input
+                        value={String(locationDrafts[loc.id]?.country ?? "")}
+                        onChange={(e) =>
+                          setLocationDrafts((prev) => ({
+                            ...prev,
+                            [loc.id]: { ...(prev[loc.id] ?? {}), country: e.target.value },
+                          }))
+                        }
+                        placeholder="Country"
+                        style={input()}
+                      />
+                    </div>
+                    <button onClick={() => saveLocation(loc.id)} style={btnGhost()}>
+                      Save Location
+                    </button>
                   </div>
-                  {formatLocationAddress(loc) ? (
-                    <div style={{ fontSize: 12, opacity: 0.82 }}>{formatLocationAddress(loc)}</div>
-                  ) : (
-                    <div style={{ fontSize: 12, opacity: 0.55 }}>Address not set</div>
-                  )}
                 </div>
               ))}
               {!locations.length ? <div style={{ opacity: 0.7 }}>No locations yet.</div> : null}
@@ -815,21 +1139,180 @@ export default function ScheduleAdminPage() {
         </div>
 
         <div style={card()}>
+          <div style={{ fontWeight: 1000, marginBottom: 8 }}>Staff & Coach Roster</div>
+          <div style={{ fontSize: 12, opacity: 0.72, marginBottom: 8 }}>
+            Schedule builder uses this list. Class/Private/Small Group = coaches only. Event/Test = coach + staff.
+          </div>
+          <div style={{ display: "grid", gap: 8, maxHeight: 360, overflow: "auto" }}>
+            {staffRoster.map((row) => {
+              const defaultRole: "coach" | "staff" = row.is_coach ? "coach" : "staff";
+              const meta = staffMeta[row.user_id] ?? defaultStaffMeta(defaultRole);
+              const label = formatStaffName(row);
+              return (
+                <div key={row.user_id} style={entryCard()}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ fontWeight: 900 }}>{label}</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={{ ...miniPill("coach"), cursor: "pointer", opacity: meta.roleTag === "coach" ? 1 : 0.55 }}
+                        onClick={() =>
+                          setStaffMeta((prev) => {
+                            const current = prev[row.user_id] ?? defaultStaffMeta(defaultRole);
+                            return { ...prev, [row.user_id]: { ...current, roleTag: "coach" } };
+                          })
+                        }
+                      >
+                        Coach
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...miniPill("staff"), cursor: "pointer", opacity: meta.roleTag === "staff" ? 1 : 0.55 }}
+                        onClick={() =>
+                          setStaffMeta((prev) => {
+                            const current = prev[row.user_id] ?? defaultStaffMeta(defaultRole);
+                            return { ...prev, [row.user_id]: { ...current, roleTag: "staff" } };
+                          })
+                        }
+                      >
+                        Staff
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.8 }}>Availability (Sun-Sat)</div>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      {dayLabels.map((day, dayIndex) => {
+                        const slot = meta.availability[dayIndex] ?? { enabled: false, start: "16:00", end: "20:00" };
+                        return (
+                          <div key={`${row.user_id}-${day}`} style={{ display: "grid", gridTemplateColumns: "56px 1fr 1fr", gap: 8, alignItems: "center" }}>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setStaffMeta((prev) => {
+                                  const current = prev[row.user_id] ?? defaultStaffMeta(defaultRole);
+                                  const next = current.availability[dayIndex] ?? slot;
+                                  return {
+                                    ...prev,
+                                    [row.user_id]: {
+                                      ...current,
+                                      availability: { ...current.availability, [dayIndex]: { ...next, enabled: !next.enabled } },
+                                    },
+                                  };
+                                })
+                              }
+                              style={{
+                                ...pill(),
+                                fontSize: 11,
+                                background: slot.enabled ? "rgba(34,197,94,0.2)" : "rgba(255,255,255,0.08)",
+                                border: slot.enabled ? "1px solid rgba(34,197,94,0.55)" : "1px solid rgba(255,255,255,0.12)",
+                              }}
+                            >
+                              {day}
+                            </button>
+                            <input
+                              type="time"
+                              value={slot.start}
+                              onChange={(e) =>
+                                setStaffMeta((prev) => {
+                                  const current = prev[row.user_id] ?? defaultStaffMeta(defaultRole);
+                                  const next = current.availability[dayIndex] ?? slot;
+                                  return {
+                                    ...prev,
+                                    [row.user_id]: {
+                                      ...current,
+                                      availability: { ...current.availability, [dayIndex]: { ...next, start: e.target.value } },
+                                    },
+                                  };
+                                })
+                              }
+                              style={input()}
+                            />
+                            <input
+                              type="time"
+                              value={slot.end}
+                              onChange={(e) =>
+                                setStaffMeta((prev) => {
+                                  const current = prev[row.user_id] ?? defaultStaffMeta(defaultRole);
+                                  const next = current.availability[dayIndex] ?? slot;
+                                  return {
+                                    ...prev,
+                                    [row.user_id]: {
+                                      ...current,
+                                      availability: { ...current.availability, [dayIndex]: { ...next, end: e.target.value } },
+                                    },
+                                  };
+                                })
+                              }
+                              style={input()}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <input
+                    value={meta.hours}
+                    onChange={(e) =>
+                      setStaffMeta((prev) => {
+                        const current = prev[row.user_id] ?? defaultStaffMeta(defaultRole);
+                        return { ...prev, [row.user_id]: { ...current, hours: e.target.value } };
+                      })
+                    }
+                    placeholder="Optional notes (private lessons, constraints, etc.)"
+                    style={input()}
+                  />
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {serviceOptions.map((svc) => {
+                      const selected = meta.services.includes(svc);
+                      return (
+                        <button
+                          key={`${row.user_id}-${svc}`}
+                          type="button"
+                          onClick={() =>
+                            setStaffMeta((prev) => {
+                              const current = prev[row.user_id] ?? defaultStaffMeta(defaultRole);
+                              const next = current.services.includes(svc)
+                                ? current.services.filter((v) => v !== svc)
+                                : [...current.services, svc];
+                              return { ...prev, [row.user_id]: { ...current, services: next } };
+                            })
+                          }
+                          style={{
+                            ...pill(),
+                            fontSize: 11,
+                            background: selected ? "rgba(34,197,94,0.2)" : "rgba(255,255,255,0.08)",
+                            border: selected ? "1px solid rgba(34,197,94,0.55)" : "1px solid rgba(255,255,255,0.12)",
+                          }}
+                        >
+                          {svc}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <button type="button" onClick={() => saveStaffProfile(row.user_id)} style={btnGhost()}>
+                      Save Staff Profile
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {!staffRoster.length ? <div style={{ opacity: 0.7 }}>No staff/coach accounts found.</div> : null}
+          </div>
+        </div>
+
+        <div style={card()}>
           <div style={{ fontWeight: 1000, marginBottom: 8 }}>Schedule Entry</div>
           <div style={{ display: "grid", gap: 8 }}>
             <div style={{ fontWeight: 900, fontSize: 12, opacity: 0.75 }}>Entry type</div>
-            <input
-              list="entry-type-options"
-              value={formEntryType}
-              onChange={(e) => setFormEntryType(e.target.value)}
-              placeholder="Class / Event / Test / Competition / Performance"
-              style={input()}
-            />
-            <datalist id="entry-type-options">
-              {["Class", "Event", "Camp", "Test", "Competition", "Performance"].map((t) => (
-                <option key={t} value={t} />
+            <select value={formEntryType} onChange={(e) => setFormEntryType(e.target.value)} style={input()}>
+              {serviceOptions.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
               ))}
-            </datalist>
+            </select>
             <select value={formClassId} onChange={(e) => setFormClassId(e.target.value)} style={input()}>
               {classes.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -968,18 +1451,48 @@ export default function ScheduleAdminPage() {
                 </div>
               )}
             </div>
-            <input
-              list="instructor-options"
-              value={formInstructor}
-              onChange={(e) => setFormInstructor(e.target.value)}
-              placeholder="Instructor name"
-              style={input()}
-            />
-            <datalist id="instructor-options">
-              {instructorOptions.map((n) => (
-                <option key={n} value={n} />
-              ))}
-            </datalist>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontWeight: 900, fontSize: 12, opacity: 0.75 }}>
+                Instructors ({["class", "private", "small group"].includes(normalizeEntryType(formEntryType)) ? "Coach only" : "Coach + Staff"})
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {eligibleInstructorPool.map((row) => {
+                  const selected = selectedInstructorIds.includes(row.user_id);
+                  return (
+                    <button
+                      key={row.user_id}
+                      type="button"
+                      onClick={() =>
+                        setSelectedInstructorIds((prev) =>
+                          prev.includes(row.user_id) ? prev.filter((id) => id !== row.user_id) : [...prev, row.user_id]
+                        )
+                      }
+                      style={{
+                        ...pill(),
+                        fontSize: 11,
+                        background: selected ? "rgba(14,165,233,0.24)" : "rgba(255,255,255,0.08)",
+                        border: selected ? "1px solid rgba(56,189,248,0.55)" : "1px solid rgba(255,255,255,0.12)",
+                      }}
+                    >
+                      {formatStaffName(row)}
+                    </button>
+                  );
+                })}
+                {!eligibleInstructorPool.length ? <div style={{ opacity: 0.7, fontSize: 12 }}>No eligible instructors</div> : null}
+              </div>
+              <input
+                list="instructor-options"
+                value={formInstructor}
+                onChange={(e) => setFormInstructor(e.target.value)}
+                placeholder="Optional custom/extra instructor text"
+                style={input()}
+              />
+              <datalist id="instructor-options">
+                {instructorOptions.map((n) => (
+                  <option key={n} value={n} />
+                ))}
+              </datalist>
+            </div>
             <input
               list="room-options"
               value={formRoom}
@@ -1567,6 +2080,21 @@ function modeBtn(active: boolean): React.CSSProperties {
     fontWeight: 900,
     cursor: "pointer",
     fontSize: 11,
+  };
+}
+
+function miniPill(kind: "coach" | "staff"): React.CSSProperties {
+  const coach = kind === "coach";
+  return {
+    padding: "3px 8px",
+    borderRadius: 999,
+    border: coach ? "1px solid rgba(56,189,248,0.45)" : "1px solid rgba(250,204,21,0.45)",
+    background: coach ? "rgba(14,165,233,0.18)" : "rgba(245,158,11,0.18)",
+    color: "white",
+    fontWeight: 900,
+    fontSize: 10,
+    textTransform: "uppercase",
+    letterSpacing: 0.35,
   };
 }
 

@@ -61,10 +61,18 @@ export async function GET(req: Request) {
     return higherIsBetter ? b.value - a.value : a.value - b.value;
   });
 
-  const leaderboard = rows.slice(0, limit).map((row, idx) => ({
-    rank: idx + 1,
-    ...row,
-  }));
+  const positiveRows = rows.filter((row) => Number(row.value ?? 0) > 0);
+  const leaderboard: Array<{ rank: number; student_id: string; student_name: string; value: number; recorded_at: string }> = [];
+  let prevValue: number | null = null;
+  let prevRank = 0;
+  for (let i = 0; i < positiveRows.length; i += 1) {
+    const row = positiveRows[i];
+    const rank = prevValue !== null && row.value === prevValue ? prevRank : i + 1;
+    prevValue = row.value;
+    prevRank = rank;
+    if (rank > limit) break;
+    leaderboard.push({ rank, ...row });
+  }
 
   return NextResponse.json({
     ok: true,

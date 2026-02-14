@@ -17,6 +17,15 @@ type StaffRow = {
   role: string | null;
 };
 
+type UserRow = {
+  user_id: string;
+  email: string | null;
+  username: string | null;
+  role: string | null;
+  roles?: string[];
+  created_at?: string | null;
+};
+
 async function safeJson(res: Response) {
   const text = await res.text();
   try {
@@ -30,6 +39,7 @@ export default function AccountDirectoryPage() {
   const [role, setRole] = useState("student");
   const [parents, setParents] = useState<ParentRow[]>([]);
   const [staff, setStaff] = useState<StaffRow[]>([]);
+  const [users, setUsers] = useState<UserRow[]>([]);
   const [msg, setMsg] = useState("");
   const [saving, setSaving] = useState<Record<string, boolean>>({});
 
@@ -53,6 +63,11 @@ export default function AccountDirectoryPage() {
       const sJson = await safeJson(sRes);
       if (!sJson.ok) return setMsg(sJson.json?.error || "Failed to load staff");
       setStaff((sJson.json?.staff ?? []) as StaffRow[]);
+
+      const uRes = await fetch("/api/admin/users/list", { cache: "no-store" });
+      const uJson = await safeJson(uRes);
+      if (!uJson.ok) return setMsg(uJson.json?.error || "Failed to load users");
+      setUsers((uJson.json?.users ?? []) as UserRow[]);
     })();
   }, [role]);
 
@@ -189,6 +204,29 @@ export default function AccountDirectoryPage() {
           {!staff.length && <div style={{ opacity: 0.7 }}>No staff accounts yet.</div>}
         </div>
       </section>
+
+      <section style={{ display: "grid", gap: 10 }}>
+        <div style={{ fontWeight: 1000, fontSize: 16 }}>All Users (Roles, Email, Name)</div>
+        <div style={{ display: "grid", gap: 10 }}>
+          {users.map((u) => (
+            <div key={u.user_id} style={rowCard()}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontWeight: 900 }}>{u.username || "No name"}</div>
+                <div style={{ fontSize: 12, opacity: 0.78 }}>{u.email || "No email"}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {(u.roles?.length ? u.roles : [u.role || "—"]).map((r) => (
+                    <span key={`${u.user_id}-${r}`} style={roleChip()}>{r}</span>
+                  ))}
+                </div>
+              </div>
+              <div style={{ fontSize: 11, opacity: 0.62 }}>
+                Created {u.created_at ? new Date(u.created_at).toLocaleString() : "—"}
+              </div>
+            </div>
+          ))}
+          {!users.length && <div style={{ opacity: 0.7 }}>No users found.</div>}
+        </div>
+      </section>
     </main>
   );
 }
@@ -270,5 +308,18 @@ function backLink(): React.CSSProperties {
     textDecoration: "none",
     fontWeight: 900,
     fontSize: 12,
+  };
+}
+
+function roleChip(): React.CSSProperties {
+  return {
+    borderRadius: 999,
+    border: "1px solid rgba(56,189,248,0.4)",
+    background: "rgba(14,116,144,0.24)",
+    padding: "3px 8px",
+    fontSize: 11,
+    fontWeight: 900,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   };
 }

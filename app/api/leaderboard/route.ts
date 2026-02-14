@@ -9,6 +9,36 @@ type StudentRow = {
   lifetime_points: number | null;
   is_competition_team: boolean | null;
 };
+type BoardRow = {
+  student_id: string;
+  name: string;
+  points: number;
+  level: number | null;
+  is_competition_team: boolean;
+  avatar_storage_path: string | null;
+  avatar_bg: string | null;
+  avatar_effect: string | null;
+  rank?: number;
+};
+
+function topWithTies(rows: BoardRow[], higherIsBetter = true, limitRank = 10) {
+  const sorted = rows.slice().sort((a, b) => {
+    if (a.points === b.points) return String(a.name).localeCompare(String(b.name));
+    return higherIsBetter ? b.points - a.points : a.points - b.points;
+  });
+  const out: BoardRow[] = [];
+  let prevPoints: number | null = null;
+  let prevRank = 0;
+  for (let i = 0; i < sorted.length; i += 1) {
+    const row = sorted[i];
+    const rank = prevPoints !== null && row.points === prevPoints ? prevRank : i + 1;
+    prevPoints = row.points;
+    prevRank = rank;
+    if (rank > limitRank) break;
+    out.push({ ...row, rank });
+  }
+  return out;
+}
 
 export async function GET() {
   const supabase = await supabaseServer();
@@ -156,19 +186,20 @@ export async function GET() {
   });
 
   const top = (list: typeof pack, key: "points_total" | "lifetime_points" | "weekly_points") =>
-    [...list]
-      .sort((a, b) => (b[key] ?? 0) - (a[key] ?? 0))
-      .slice(0, 10)
-      .map((r) => ({
+    topWithTies(
+      list.map((r) => ({
         student_id: r.student_id,
         name: r.name,
         points: r[key],
         level: r.level,
-      is_competition_team: r.is_competition_team,
-      avatar_storage_path: r.avatar_storage_path,
-      avatar_bg: r.avatar_bg,
-      avatar_effect: r.avatar_effect ?? null,
-    }));
+        is_competition_team: r.is_competition_team,
+        avatar_storage_path: r.avatar_storage_path,
+        avatar_bg: r.avatar_bg,
+        avatar_effect: r.avatar_effect ?? null,
+      })),
+      true,
+      10
+    );
 
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
@@ -187,7 +218,8 @@ export async function GET() {
     skillPulseToday.set(id, (skillPulseToday.get(id) ?? 0) + pts);
   });
 
-  const topSkillPulseToday = [...pack]
+  const topSkillPulseToday = topWithTies(
+    [...pack]
     .map((r) => ({
       student_id: r.student_id,
       name: r.name,
@@ -198,8 +230,10 @@ export async function GET() {
       avatar_bg: r.avatar_bg,
       avatar_effect: r.avatar_effect ?? null,
     }))
-    .sort((a, b) => b.points - a.points)
-    .slice(0, 10);
+    .filter((row) => Number(row.points ?? 0) > 0),
+    true,
+    10
+  );
 
   const { data: mvpRows, error: mvpErr } = await supabase
     .from("battle_mvp_awards")
@@ -211,7 +245,8 @@ export async function GET() {
     if (!id) return;
     mvpCounts.set(id, (mvpCounts.get(id) ?? 0) + 1);
   });
-  const topMvp = [...pack]
+  const topMvp = topWithTies(
+    [...pack]
     .map((r) => ({
       student_id: r.student_id,
       name: r.name,
@@ -221,19 +256,84 @@ export async function GET() {
       avatar_storage_path: r.avatar_storage_path,
       avatar_bg: r.avatar_bg,
       avatar_effect: r.avatar_effect ?? null,
-    }))
-    .sort((a, b) => b.points - a.points)
-    .slice(0, 10);
+    })),
+    true,
+    10
+  );
+
+  const leaderboards: Record<string, BoardRow[]> = {
+    total: top(pack, "points_total"),
+    weekly: top(pack, "weekly_points"),
+    lifetime: top(pack, "lifetime_points"),
+    skill_pulse_today: topSkillPulseToday,
+    mvp: topMvp,
+  };
+  const leaderboard_labels: Record<string, string> = {
+    total: "Total Points",
+    weekly: "Weekly Points",
+    lifetime: "Lifetime Points",
+    skill_pulse_today: "Skill Pulse Today",
+    mvp: "Battle MVP",
+  };
+
+  const { data: stats, error: statsErr } = await supabase
+    .from("stats")
+    .select("id,name,higher_is_better");
+  if (statsErr) return NextResponse.json({ ok: false, error: statsErr.message }, { status: 500 });
+
+  const packMap = new Map(pack.map((p) => [p.student_id, p]));
+  for (const stat of stats ?? []) {
+    const statId = String((stat as any)?.id ?? "").trim();
+    if (!statId) continue;
+    const higherIsBetter = (stat as any)?.higher_is_better !== false;
+    const { data: statRows, error: statRowsErr } = await supabase
+      .from("student_stats")
+      .select("student_id,value,recorded_at")
+      .eq("stat_id", statId);
+    if (statRowsErr) continue;
+
+    const bestByStudent = new Map<string, { value: number; recorded_at: string }>();
+    (statRows ?? []).forEach((row: any) => {
+      const studentId = String(row?.student_id ?? "");
+      if (!studentId) return;
+      const value = Number(row?.value ?? 0);
+      const recordedAt = String(row?.recorded_at ?? "");
+      const existing = bestByStudent.get(studentId);
+      if (!existing) {
+        bestByStudent.set(studentId, { value, recorded_at: recordedAt });
+        return;
+      }
+      const isBetter = higherIsBetter ? value > existing.value : value < existing.value;
+      const isTieNewer = value === existing.value && recordedAt > existing.recorded_at;
+      if (isBetter || isTieNewer) bestByStudent.set(studentId, { value, recorded_at: recordedAt });
+    });
+
+    const boardKey = `performance_stat:${statId}`;
+    leaderboard_labels[boardKey] = String((stat as any)?.name ?? "Performance Stat");
+    leaderboards[boardKey] = topWithTies(
+      Array.from(bestByStudent.entries())
+      .map(([studentId, best]) => {
+        const base = packMap.get(studentId);
+        return {
+          student_id: studentId,
+          name: base?.name ?? "Student",
+          points: Number(best.value ?? 0),
+          level: base?.level ?? 1,
+          is_competition_team: !!base?.is_competition_team,
+          avatar_storage_path: base?.avatar_storage_path ?? null,
+          avatar_bg: base?.avatar_bg ?? null,
+          avatar_effect: base?.avatar_effect ?? null,
+        };
+      }).filter((row) => Number(row.points ?? 0) > 0),
+      higherIsBetter,
+      10
+    );
+  }
 
   return NextResponse.json({
     ok: true,
-    leaderboards: {
-      total: top(pack, "points_total"),
-      weekly: top(pack, "weekly_points"),
-      lifetime: top(pack, "lifetime_points"),
-      skill_pulse_today: topSkillPulseToday,
-      mvp: topMvp,
-    },
+    leaderboards,
+    leaderboard_labels,
   });
 }
 

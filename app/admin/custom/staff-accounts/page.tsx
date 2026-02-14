@@ -35,7 +35,7 @@ export default function StaffAccountsPage() {
       return setMsg("Name, email, and password are required.");
     }
     setBusy(true);
-    const res = await fetch("/api/admin/create-coach", {
+    const res = await fetch("/api/admin/create-role-login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -48,7 +48,7 @@ export default function StaffAccountsPage() {
     const sj = await safeJson(res);
     setBusy(false);
     if (!sj.ok) return setMsg(sj.json?.error || "Failed to create account.");
-    setMsg("Staff account created.");
+    setMsg("Account created.");
     setName("");
     setEmail("");
     setPassword("");
@@ -67,23 +67,32 @@ export default function StaffAccountsPage() {
     <main style={{ display: "grid", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
         <div>
-          <div style={{ fontSize: 26, fontWeight: 1000 }}>Staff Accounts</div>
-          <div style={{ opacity: 0.7, fontSize: 12 }}>Create coach or admin logins (backend only).</div>
+          <div style={{ fontSize: 26, fontWeight: 1000 }}>Staff & Station Accounts</div>
+          <div style={{ opacity: 0.7, fontSize: 12 }}>Create coach/admin/classroom and station logins.</div>
         </div>
-        <Link href="/admin/custom" style={backLink()}>
-          Return to Custom
-        </Link>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Link href="/admin/custom/access" style={backLink()}>
+            Open User Access Manager
+          </Link>
+          <Link href="/admin/custom" style={backLink()}>
+            Return to Custom
+          </Link>
+        </div>
       </div>
 
       <div style={card()}>
-        <div style={{ fontWeight: 1000, marginBottom: 8 }}>New Staff Account</div>
-        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontWeight: 1000, marginBottom: 8 }}>New Account</div>
+          <div style={{ display: "grid", gap: 10 }}>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" style={input()} />
           <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" style={input()} />
           <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" type="password" style={input()} />
           <select value={accountRole} onChange={(e) => setAccountRole(e.target.value)} style={select()}>
             <option value="coach">Coach</option>
             <option value="admin">Admin</option>
+            <option value="classroom">Classroom</option>
+            <option value="display">Display</option>
+            <option value="skill_pulse">Skill Pulse</option>
+            <option value="camp">Camp</option>
           </select>
           {msg ? <div style={{ fontSize: 12, opacity: 0.75 }}>{msg}</div> : null}
           <button onClick={createAccount} style={btn()} disabled={busy}>

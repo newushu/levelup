@@ -414,6 +414,13 @@ export default function ChallengeVaultPanel({ studentId, title = "Challenge Vaul
                   const completions = completionMap[String(c.id)] ?? [];
                   const countWindow = countInWindow(c, completions, now);
                   const blocked = countWindow >= Math.max(1, Number(c.limit_count ?? 1));
+                  const showCompletedChip = Boolean(
+                    completedAt &&
+                      (
+                        !isRepeatable || // one-time style completions stay marked
+                        blocked // repeatable completions only show while still cooldown-locked
+                      )
+                  );
                   const remaining = Math.max(0, Math.max(1, Number(c.limit_count ?? 1)) - countWindow);
                   const availableAt = blocked ? nextAvailableDateFromCompletions(c, completions, now) : null;
                   const msLeft = availableAt ? availableAt.getTime() - now : null;
@@ -429,10 +436,10 @@ export default function ChallengeVaultPanel({ studentId, title = "Challenge Vaul
                           <div className="cvault__limit-countdown cvault__limit-countdown--large">{unlockMsg.value}</div>
                         </div>
                       ) : null}
-                      <div className="cvault__info">
+                        <div className="cvault__info">
                         <div className="cvault__name">{c.name}</div>
                         {c.description ? <div className="cvault__desc">{c.description}</div> : null}
-                        {completedAt ? <div className="cvault__chip cvault__chip--center">Completed</div> : null}
+                        {showCompletedChip ? <div className="cvault__chip cvault__chip--center">Completed</div> : null}
                         <div className="cvault__meta">{formatLimit(c)}</div>
                         <div className="cvault__remain-inline">
                           Remaining: {remaining} / {Math.max(1, Number(c.limit_count ?? 1))}

@@ -47,12 +47,13 @@ export async function GET() {
 
   const users = allUsers.map((u) => {
     const profile = profileMap.get(String(u.id));
-    const roles = roleMap.get(String(u.id)) ?? [];
+    const roles = Array.from(new Set((roleMap.get(String(u.id)) ?? []).map((r) => String(r).toLowerCase()))).sort();
     return {
       user_id: u.id,
       email: profile?.email ?? u.email ?? null,
       username: profile?.username ?? u.user_metadata?.username ?? null,
       role: profile?.role ?? roles[0] ?? null,
+      roles,
       created_at: profile?.created_at ?? u.created_at ?? null,
     };
   });

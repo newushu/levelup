@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import AuthGate from "../components/AuthGate";
 import AvatarEffectParticles from "@/components/AvatarEffectParticles";
+import ChallengeVaultPanel from "@/components/ChallengeVaultPanel";
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -47,6 +48,8 @@ type AdminPendingReward = {
   requested_at: string;
   hold_until?: string | null;
 };
+
+type AwardType = { id: string; name: string; points?: number | null; enabled?: boolean | null };
 
 export default function HomePage() {
   return (
@@ -381,7 +384,7 @@ function HomeInner() {
 }
 
 function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
-  const [tab, setTab] = useState<"workspace" | "rewards" | "performance" | "classes">("workspace");
+  const [tab, setTab] = useState<"workspace" | "rewards" | "performance" | "classes" | "award" | "roster" | "rebuild">("workspace");
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [activeCardIdx, setActiveCardIdx] = useState(0);
@@ -390,6 +393,16 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
   const [rewardLoading, setRewardLoading] = useState(false);
   const [rewardBusy, setRewardBusy] = useState<Record<string, boolean>>({});
   const [rewardMsg, setRewardMsg] = useState("");
+  const [awardQuery, setAwardQuery] = useState("");
+  const [awardResults, setAwardResults] = useState<Array<{ id: string; name: string; level?: number; points_total?: number }>>([]);
+  const [awardStudentId, setAwardStudentId] = useState("");
+  const [awardClassId, setAwardClassId] = useState("");
+  const [awardTypes, setAwardTypes] = useState<AwardType[]>([]);
+  const [awardView, setAwardView] = useState<"earn" | "vault">("earn");
+  const [awardBusy, setAwardBusy] = useState(false);
+  const [awardMsg, setAwardMsg] = useState("");
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const [snapshotMsg, setSnapshotMsg] = useState("");
   const carouselRef = useRef<HTMLDivElement | null>(null);
 
   const workspaceCards = [
@@ -403,7 +416,7 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
     {
       title: "Admin Check-In",
       subtitle: "Open check-in controls for classes and attendance",
-      href: "/checkin",
+      href: "/classroom/checkin",
       tone: "orange" as const,
       icon: "CI",
     },
@@ -415,14 +428,34 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
       icon: "BLD",
     },
     {
+      title: "Schedule Builder",
+      subtitle: "Configure class schedule templates and timing blocks",
+      href: "/admin/custom/schedule",
+      tone: "sky" as const,
+      icon: "SCH",
+    },
+    {
       title: "Styling & UI Customization",
       subtitle: "Manage menus and interface visibility settings",
       href: "/admin/custom/navigation",
       tone: "indigo" as const,
       icon: "UI",
     },
-    { title: "Workspace Slot 4", subtitle: "Placeholder module", href: "#", tone: "indigo" as const, icon: "04" },
-    { title: "Workspace Slot 5", subtitle: "Placeholder module", href: "#", tone: "rose" as const, icon: "05" },
+    {
+      title: "Classroom Emotes",
+      subtitle: "Create sendable emotes, effects, and unlock pricing",
+      href: "/admin/custom/emotes",
+      tone: "rose" as const,
+      icon: "EM",
+    },
+    {
+      title: "Rebuild Leaderboards",
+      subtitle: "Rebuild tonight's leaderboard snapshot and bonus pool",
+      href: "#",
+      tone: "amber" as const,
+      icon: "LB",
+      tab: "rebuild" as const,
+    },
     { title: "Workspace Slot 6", subtitle: "Placeholder module", href: "#", tone: "amber" as const, icon: "06" },
     { title: "Workspace Slot 7", subtitle: "Placeholder module", href: "#", tone: "sky" as const, icon: "07" },
     { title: "Workspace Slot 8", subtitle: "Placeholder module", href: "#", tone: "violet" as const, icon: "08" },
@@ -511,6 +544,79 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
     return () => window.clearInterval(pollId);
   }, [tab]);
 
+  useEffect(() => {
+    if (tab !== "award") return;
+    const q = awardQuery.trim();
+    if (!q) {
+      setAwardResults([]);
+      return;
+    }
+    const t = window.setTimeout(async () => {
+      const res = await fetch("/api/students/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q }),
+      });
+      const sj = await safeJson(res);
+      if (!sj.ok) return;
+      setAwardResults((sj.json?.students ?? []) as Array<{ id: string; name: string; level?: number; points_total?: number }>);
+    }, 220);
+    return () => window.clearTimeout(t);
+  }, [tab, awardQuery]);
+
+  useEffect(() => {
+    try {
+      const classSaved = localStorage.getItem("coach_dashboard_lock_class") || "";
+      if (classSaved) setAwardClassId(classSaved);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (tab !== "award") return;
+    (async () => {
+      const res = await fetch("/api/awards/types", { cache: "no-store" });
+      const sj = await safeJson(res);
+      if (!sj.ok) return;
+      setAwardTypes((sj.json?.types ?? []) as AwardType[]);
+    })();
+  }, [tab]);
+
+  async function awardPoints(awardTypeId: string) {
+    if (!awardStudentId) return setAwardMsg("Select a student first.");
+    if (!awardClassId.trim()) return setAwardMsg("Class ID required.");
+    if (!awardTypeId) return setAwardMsg("Award type is required.");
+    setAwardBusy(true);
+    setAwardMsg("");
+    const res = await fetch("/api/awards/award", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        student_id: awardStudentId,
+        class_id: awardClassId.trim(),
+        award_type_id: awardTypeId,
+      }),
+    });
+    const sj = await safeJson(res);
+    setAwardBusy(false);
+    if (!sj.ok) return setAwardMsg(sj.json?.error || "Failed to award points");
+    setAwardMsg(`Awarded ${sj.json?.points_awarded ?? 0} pts.`);
+  }
+
+  async function rebuildLeaderboardSnapshot() {
+    if (snapshotBusy) return;
+    setSnapshotBusy(true);
+    setSnapshotMsg("");
+    const res = await fetch("/api/admin/leaderboard-snapshot/rebuild", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    const sj = await safeJson(res);
+    setSnapshotBusy(false);
+    if (!sj.ok) return setSnapshotMsg(String(sj.json?.error ?? "Failed to rebuild snapshot"));
+    setSnapshotMsg(`Snapshot rebuilt (${Number(sj.json?.rows ?? 0)} rows).`);
+    window.setTimeout(() => setSnapshotMsg(""), 2800);
+  }
+
   function scrollWorkspace(direction: "left" | "right") {
     const el = carouselRef.current;
     if (!el) return;
@@ -529,18 +635,29 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
     { label: "Taolu Tracker", href: "/taolu-tracker" },
   ];
   const classLinks = [
+    { label: "Schedule Builder", href: "/admin/custom/schedule" },
     { label: "Classroom", href: "/classroom" },
     { label: "Roster", href: "/roster" },
-    { label: "Check-In", href: "/checkin" },
-    { label: "Schedule", href: "/schedule" },
+    { label: "Check-In", href: "/classroom/checkin" },
+    { label: "Schedule Board", href: "/schedule" },
+  ];
+  const rosterLinks = [
+    { label: "Roster Board", href: "/admin/roster" },
+    { label: "Staff Accounts", href: "/admin/custom/staff-accounts" },
+    { label: "Account Directory", href: "/admin/custom/account-directory" },
+    { label: "User Access Manager", href: "/admin/custom/access" },
+    { label: "Parent Relationships", href: "/admin/parent-relationships" },
   ];
   const shortcutLinks = [
     { label: "Announcements", href: "/admin/announcements" },
     { label: "Parent Pairing", href: "/admin/parent-pairing" },
     { label: "Parent Messages", href: "/admin/parent-messages" },
     { label: "Admin Workspace", href: "/admin/custom" },
-    { label: "Rewards Approvals", href: "/admin/rewards" },
+    { label: "Rebuild Leaderboards", tab: "rebuild" as const },
   ];
+  const ruleKeeper = awardTypes.find((t) => String(t.name ?? "").toLowerCase().includes("rule keeper"));
+  const ruleBreaker = awardTypes.find((t) => String(t.name ?? "").toLowerCase().includes("rule breaker"));
+  const quickAwardTypes = awardTypes.filter((t) => t.enabled !== false);
 
   return (
     <div style={adminHomeWrap()}>
@@ -551,22 +668,16 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
             alt="Lead & Achieve"
             style={adminTopLogo()}
           />
-          <div style={{ display: "grid", gap: 4 }}>
-            <div style={adminLevelUpTitle()}>Level Up</div>
-            <div style={adminHomeHeader()}>Admin</div>
-            <div style={adminHomeSub()}>Workspace Station</div>
-          </div>
+          <div style={adminLevelUpTitle()}>Level Up</div>
         </div>
         <div style={adminTopRight()}>
           <div style={adminAdminOnlyChip()}>Admin/Coach Only Station</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <Link href="/login" style={adminSessionBtn()}>
-              Login
-            </Link>
-            <a href="/logout" style={adminSessionBtn("logout")}>
-              🚪 Logout
-            </a>
-          </div>
+          <Link href="/login" style={adminSessionBtn()}>
+            Login
+          </Link>
+          <a href="/logout" style={adminSessionBtn("logout")}>
+            🚪 Logout
+          </a>
         </div>
       </div>
 
@@ -596,7 +707,7 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
                   </div>
                 );
                 return card.href === "#" ? (
-                  <button key={card.title} type="button" style={style}>
+                  <button key={card.title} type="button" style={style} onClick={() => card.tab ? setTab(card.tab) : undefined}>
                     {body}
                   </button>
                 ) : (
@@ -674,9 +785,109 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
 
         {tab === "classes" ? (
           <div style={adminPanelWrap()}>
-            <div style={adminPanelTitle()}>Classes</div>
+            <div style={adminPanelTitle()}>Schedule Builder</div>
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {classLinks.map((item) => (
+                  <Link key={item.href} href={item.href} style={adminPanelLink()}>
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+              <div
+                style={{
+                  borderRadius: 16,
+                  border: "1px solid rgba(125,211,252,0.28)",
+                  background: "rgba(2,6,23,0.32)",
+                  overflow: "hidden",
+                  minHeight: "62vh",
+                }}
+              >
+                <iframe
+                  title="Admin Schedule Builder"
+                  src="/admin/custom/schedule"
+                  style={{ width: "100%", height: "62vh", border: "none", background: "transparent" }}
+                />
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {tab === "award" ? (
+          <div style={adminPanelWrap()}>
+            <div style={adminPanelTitle()}>Award</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" style={adminAwardModeBtn(awardView === "earn")} onClick={() => setAwardView("earn")}>
+                Earn Points
+              </button>
+              <button type="button" style={adminAwardModeBtn(awardView === "vault")} onClick={() => setAwardView("vault")}>
+                Challenge Vault List
+              </button>
+            </div>
+            {awardView === "earn" ? (
+            <div style={{ display: "grid", gap: 10, maxWidth: 760 }}>
+              <input
+                value={awardQuery}
+                onChange={(e) => setAwardQuery(e.target.value)}
+                placeholder="Type student name..."
+                style={adminAwardInput()}
+              />
+              <div style={{ display: "grid", gap: 8, maxHeight: 180, overflow: "auto" }}>
+                {awardResults.slice(0, 8).map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => {
+                      setAwardStudentId(s.id);
+                      setAwardQuery(s.name);
+                    }}
+                    style={adminAwardStudentBtn(awardStudentId === s.id)}
+                  >
+                    <span style={{ fontWeight: 900 }}>{s.name}</span>
+                    <span style={{ opacity: 0.72, fontSize: 12 }}>Lv {s.level ?? 1} • {s.points_total ?? 0} pts</span>
+                  </button>
+                ))}
+              </div>
+              <input
+                value={awardClassId}
+                onChange={(e) => setAwardClassId(e.target.value)}
+                placeholder="Class ID"
+                style={adminAwardInput()}
+              />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {ruleKeeper ? (
+                  <button type="button" onClick={() => awardPoints(ruleKeeper.id)} style={adminAwardQuickBtn("primary")} disabled={awardBusy}>
+                    {ruleKeeper.name} {ruleKeeper.points ? `(+${ruleKeeper.points})` : ""}
+                  </button>
+                ) : null}
+                {ruleBreaker ? (
+                  <button type="button" onClick={() => awardPoints(ruleBreaker.id)} style={adminAwardQuickBtn()} disabled={awardBusy}>
+                    {ruleBreaker.name} {ruleBreaker.points ? `(+${ruleBreaker.points})` : ""}
+                  </button>
+                ) : null}
+                {quickAwardTypes
+                  .filter((t) => t.id !== ruleKeeper?.id && t.id !== ruleBreaker?.id)
+                  .map((t) => (
+                    <button key={t.id} type="button" onClick={() => awardPoints(t.id)} style={adminAwardQuickBtn()} disabled={awardBusy}>
+                      {t.name} {t.points ? `(+${t.points})` : ""}
+                    </button>
+                  ))}
+              </div>
+              {awardMsg ? <div style={adminInlineNotice(awardMsg.includes("Awarded"))}>{awardMsg}</div> : null}
+            </div>
+            ) : (
+              <div style={{ marginTop: 2 }}>
+                <ChallengeVaultPanel title="Challenge Vault List" studentId={awardStudentId || undefined} />
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {tab === "roster" ? (
+          <div style={adminPanelWrap()}>
+            <div style={adminPanelTitle()}>Roster</div>
             <div style={adminPanelGrid()}>
-              {classLinks.map((item) => (
+              {rosterLinks.map((item) => (
                 <Link key={item.href} href={item.href} style={adminPanelLink()}>
                   {item.label}
                 </Link>
@@ -684,15 +895,49 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
             </div>
           </div>
         ) : null}
+
+        {tab === "rebuild" ? (
+          <div style={adminPanelWrap()}>
+            <div style={adminPanelTitle()}>Rebuild Leaderboards</div>
+            <div style={adminInlineNotice(true)}>
+              Rebuild runs an immediate snapshot for leaderboard daily bonuses and refreshes redeemable totals.
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button style={adminAwardQuickBtn("primary")} onClick={rebuildLeaderboardSnapshot} disabled={snapshotBusy}>
+                {snapshotBusy ? "Rebuilding..." : "Yes, Rebuild Now"}
+              </button>
+              <button style={adminAwardQuickBtn()} onClick={() => setTab("workspace")} disabled={snapshotBusy}>
+                No, Go Back
+              </button>
+            </div>
+            {snapshotMsg ? (
+              <div style={adminInlineNotice(snapshotMsg.includes("rebuilt"))}>{snapshotMsg}</div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {shortcutsOpen ? (
         <div style={adminShortcutsSheet()}>
-          {shortcutLinks.map((item) => (
-            <Link key={item.href} href={item.href} style={adminSheetLink()} onClick={() => setShortcutsOpen(false)}>
-              {item.label}
-            </Link>
-          ))}
+          {shortcutLinks.map((item) =>
+            item.href ? (
+              <Link key={item.label} href={item.href} style={adminSheetLink()} onClick={() => setShortcutsOpen(false)}>
+                {item.label}
+              </Link>
+            ) : (
+              <button
+                key={item.label}
+                type="button"
+                style={{ ...adminSheetLink(), cursor: "pointer", textAlign: "left" }}
+                onClick={() => {
+                  setTab("rebuild");
+                  setShortcutsOpen(false);
+                }}
+              >
+                {item.label}
+              </button>
+            )
+          )}
         </div>
       ) : null}
 
@@ -704,10 +949,31 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
             {rewardCount > 0 ? <span style={adminBadgeBubble()}>{rewardCount}</span> : null}
           </span>
         </button>
+        <button style={adminDockBtn(tab === "award", "award")} onClick={() => setTab("award")}>Award</button>
         <button style={adminDockBtn(tab === "performance", "performance")} onClick={() => setTab("performance")}>Performance</button>
         <button style={adminDockBtn(tab === "classes", "classes")} onClick={() => setTab("classes")}>Classes</button>
+        <button style={adminDockBtn(tab === "roster", "classes")} onClick={() => setTab("roster")}>Roster</button>
         <button style={adminDockBtn(shortcutsOpen, "shortcuts")} onClick={() => setShortcutsOpen((v) => !v)}>Admin Shortcuts</button>
       </div>
+      {snapshotMsg ? (
+        <div
+          style={{
+            position: "fixed",
+            right: 18,
+            bottom: 158,
+            zIndex: 90,
+            borderRadius: 12,
+            border: "1px solid rgba(56,189,248,0.42)",
+            background: "rgba(2,6,23,0.9)",
+            color: "#bae6fd",
+            fontWeight: 900,
+            fontSize: 12,
+            padding: "8px 12px",
+          }}
+        >
+          {snapshotMsg}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -733,30 +999,31 @@ function adminHomeSub(): React.CSSProperties {
 
 function adminLevelUpTitle(): React.CSSProperties {
   return {
-    fontSize: 18,
+    fontSize: 28,
     fontWeight: 1000,
-    letterSpacing: 1.1,
+    letterSpacing: 1.3,
     textTransform: "uppercase",
-    opacity: 0.92,
+    opacity: 0.96,
+    textShadow: "0 10px 24px rgba(0,0,0,0.4)",
   };
 }
 
 function adminTopBar(): React.CSSProperties {
   return {
-    display: "grid",
-    gridTemplateColumns: "1fr",
-    justifyItems: "center",
-    gap: 10,
-    padding: "4px 2px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap",
+    padding: "4px 6px",
   };
 }
 
 function adminTopBrand(): React.CSSProperties {
   return {
-    display: "grid",
-    justifyItems: "center",
-    textAlign: "center",
-    gap: 6,
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
   };
 }
 
@@ -771,9 +1038,11 @@ function adminTopLogo(): React.CSSProperties {
 
 function adminTopRight(): React.CSSProperties {
   return {
-    display: "grid",
+    display: "flex",
     gap: 8,
-    justifyItems: "center",
+    alignItems: "center",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
   };
 }
 
@@ -1014,15 +1283,76 @@ function adminPanelLink(): React.CSSProperties {
   };
 }
 
-function adminInlineNotice(): React.CSSProperties {
+function adminInlineNotice(success = false): React.CSSProperties {
   return {
     padding: "10px 12px",
     borderRadius: 12,
-    border: "1px solid rgba(248,113,113,0.35)",
-    background: "rgba(127,29,29,0.28)",
+    border: success ? "1px solid rgba(74,222,128,0.35)" : "1px solid rgba(248,113,113,0.35)",
+    background: success ? "rgba(21,128,61,0.28)" : "rgba(127,29,29,0.28)",
     color: "white",
     fontWeight: 900,
     fontSize: 12,
+  };
+}
+
+function adminAwardInput(): React.CSSProperties {
+  return {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(148,163,184,0.3)",
+    background: "rgba(2,6,23,0.65)",
+    color: "white",
+    fontWeight: 800,
+    outline: "none",
+  };
+}
+
+function adminAwardStudentBtn(active: boolean): React.CSSProperties {
+  return {
+    borderRadius: 12,
+    border: active ? "1px solid rgba(56,189,248,0.55)" : "1px solid rgba(148,163,184,0.26)",
+    background: active ? "rgba(14,116,144,0.35)" : "rgba(15,23,42,0.62)",
+    color: "white",
+    padding: "9px 10px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+    cursor: "pointer",
+    textAlign: "left",
+  };
+}
+
+function adminAwardQuickBtn(kind: "default" | "primary" = "default"): React.CSSProperties {
+  const primary = kind === "primary";
+  return {
+    borderRadius: 12,
+    border: primary ? "1px solid rgba(56,189,248,0.55)" : "1px solid rgba(148,163,184,0.28)",
+    background: primary
+      ? "linear-gradient(145deg, rgba(14,165,233,0.55), rgba(2,132,199,0.35))"
+      : "linear-gradient(145deg, rgba(30,41,59,0.75), rgba(15,23,42,0.72))",
+    color: "white",
+    fontWeight: 900,
+    letterSpacing: 0.4,
+    padding: "8px 12px",
+    cursor: "pointer",
+    minWidth: 56,
+  };
+}
+
+function adminAwardModeBtn(active = false): React.CSSProperties {
+  return {
+    borderRadius: 12,
+    border: active ? "1px solid rgba(56,189,248,0.55)" : "1px solid rgba(148,163,184,0.26)",
+    background: active
+      ? "linear-gradient(145deg, rgba(14,165,233,0.5), rgba(2,132,199,0.3))"
+      : "linear-gradient(145deg, rgba(30,41,59,0.7), rgba(15,23,42,0.68))",
+    color: "white",
+    fontWeight: 900,
+    letterSpacing: 0.4,
+    padding: "8px 12px",
+    cursor: "pointer",
   };
 }
 
@@ -1086,10 +1416,10 @@ function adminBottomDock(): React.CSSProperties {
 
 function adminDockBtn(
   active = false,
-  tone: "workspace" | "rewards" | "performance" | "classes" | "shortcuts" = "workspace"
+  tone: "workspace" | "rewards" | "award" | "performance" | "classes" | "shortcuts" = "workspace"
 ): React.CSSProperties {
   const toneMap: Record<
-    "workspace" | "rewards" | "performance" | "classes" | "shortcuts",
+    "workspace" | "rewards" | "award" | "performance" | "classes" | "shortcuts",
     { activeBg: string; idleBg: string; activeBorder: string }
   > = {
     workspace: {
@@ -1101,6 +1431,11 @@ function adminDockBtn(
       activeBg: "linear-gradient(140deg, rgba(239,68,68,0.62), rgba(185,28,28,0.35))",
       idleBg: "linear-gradient(140deg, rgba(185,28,28,0.30), rgba(30,41,59,0.84))",
       activeBorder: "rgba(248,113,113,0.75)",
+    },
+    award: {
+      activeBg: "linear-gradient(140deg, rgba(245,158,11,0.62), rgba(180,83,9,0.35))",
+      idleBg: "linear-gradient(140deg, rgba(146,64,14,0.30), rgba(30,41,59,0.84))",
+      activeBorder: "rgba(251,191,36,0.75)",
     },
     performance: {
       activeBg: "linear-gradient(140deg, rgba(34,197,94,0.58), rgba(21,128,61,0.34))",

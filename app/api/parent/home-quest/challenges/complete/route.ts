@@ -88,6 +88,32 @@ export async function POST(req: Request) {
     defaultPoints = Number(match?.points ?? 0);
   }
   let resolvedPoints = Number(challenge?.points_awarded ?? defaultPoints ?? 0);
+
+  // Apply avatar challenge completion bonus (%), rounded to whole number.
+  try {
+    const { data: avatarSettings } = await admin
+      .from("student_avatar_settings")
+      .select("avatar_id")
+      .eq("student_id", student_id)
+      .maybeSingle();
+    const avatarId = String(avatarSettings?.avatar_id ?? "").trim();
+    if (avatarId) {
+      const primary = await admin
+        .from("avatars")
+        .select("challenge_completion_bonus_pct")
+        .eq("id", avatarId)
+        .maybeSingle();
+      let bonusPct = Number(primary.data?.challenge_completion_bonus_pct ?? 0);
+      if (primary.error && String(primary.error.message || "").toLowerCase().includes("challenge_completion_bonus_pct")) {
+        bonusPct = 0;
+      } else if (primary.error) {
+        return NextResponse.json({ ok: false, error: primary.error.message }, { status: 500 });
+      }
+      if (bonusPct > 0 && resolvedPoints > 0) {
+        resolvedPoints = Math.max(0, Math.round(resolvedPoints * (1 + bonusPct / 100)));
+      }
+    }
+  } catch {}
   if (isParentChallenge) {
     resolvedPoints = Math.min(MAX_PARENT_CHALLENGE_POINTS, Math.max(0, resolvedPoints || MAX_PARENT_CHALLENGE_POINTS));
   }

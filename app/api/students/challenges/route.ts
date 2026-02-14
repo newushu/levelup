@@ -42,7 +42,7 @@ export async function GET(req: Request) {
     try {
       const res = await supabase
         .from("challenge_completions")
-        .select("challenge_id,completed_at")
+        .select("challenge_id,completed_at,tier,points_awarded")
         .eq("student_id", studentId)
         .order("completed_at", { ascending: false })
         .limit(2000);

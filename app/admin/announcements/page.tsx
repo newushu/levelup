@@ -52,6 +52,7 @@ function AdminAnnouncementsInner() {
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [section, setSection] = useState<"banner" | "marketing" | "points">("banner");
+  const [kindFilter, setKindFilter] = useState<"all" | "general" | "schedule_change" | "room_change" | "no_classes" | "enrollment_open">("all");
 
   useEffect(() => {
     (async () => {
@@ -226,6 +227,21 @@ function AdminAnnouncementsInner() {
         </div>
       </div>
 
+      <div style={chipRow()}>
+        {[
+          { key: "all", label: "All Types" },
+          { key: "general", label: "General" },
+          { key: "schedule_change", label: "Schedule Change" },
+          { key: "room_change", label: "Room Change" },
+          { key: "no_classes", label: "No Classes" },
+          { key: "enrollment_open", label: "Enrollment Open" },
+        ].map((item) => (
+          <button key={item.key} onClick={() => setKindFilter(item.key as any)} style={chip(kindFilter === item.key)}>
+            {item.label}
+          </button>
+        ))}
+      </div>
+
       <div style={listGrid()}>
         {rows
           .filter((row) => {
@@ -233,14 +249,19 @@ function AdminAnnouncementsInner() {
             if (viewMode === "disabled") return row.status === "inactive";
             return row.status === "deleted";
           })
+          .filter((row) => kindFilter === "all" || String(row.announcement_kind ?? "general") === kindFilter)
           .map((row) => (
-          <div key={row.id} style={card()}>
+          <div key={row.id} style={bannerCard()}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
               <div>
-                <div style={{ fontWeight: 900 }}>{row.title}</div>
-                <div style={{ opacity: 0.7, fontSize: 12 }}>{row.body}</div>
+                <div style={{ fontWeight: 1000, fontSize: 20 }}>{row.title}</div>
+                <div style={{ opacity: 0.85, fontSize: 15, marginTop: 6 }}>{row.body}</div>
+              <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <span style={dateChip("start")}>{row.starts_at ? `Starts: ${new Date(row.starts_at).toLocaleString()}` : "Starts: immediately"}</span>
+                <span style={dateChip("end")}>{row.ends_at ? `Ends: ${new Date(row.ends_at).toLocaleString()}` : "Ends: none"}</span>
+              </div>
               {row.discount_label ? (
-                <div style={{ fontSize: 12, opacity: 0.8 }}>
+                <div style={{ fontSize: 12, opacity: 0.95, marginTop: 8 }}>
                   Discount: {row.discount_label} {row.discount_ends_at ? `(ends ${new Date(row.discount_ends_at).toLocaleString()})` : ""}
                 </div>
               ) : null}
@@ -277,8 +298,7 @@ function AdminAnnouncementsInner() {
                 </button>
               )}
               <div style={{ opacity: 0.6, fontSize: 11 }}>
-                {row.starts_at ? `Starts ${new Date(row.starts_at).toLocaleString()}` : "Starts now"} •{" "}
-                {row.ends_at ? `Ends ${new Date(row.ends_at).toLocaleString()}` : "No end"}
+                Created {new Date(row.created_at).toLocaleString()}
               </div>
             </div>
           </div>
@@ -307,6 +327,30 @@ function card(): React.CSSProperties {
     gap: 8,
     maxWidth: 560,
     width: "100%",
+  };
+}
+
+function bannerCard(): React.CSSProperties {
+  return {
+    borderRadius: 18,
+    padding: 18,
+    border: "1px solid rgba(255,255,255,0.16)",
+    background: "linear-gradient(145deg, rgba(8,10,15,0.86), rgba(15,23,42,0.78))",
+    display: "grid",
+    gap: 10,
+    width: "100%",
+  };
+}
+
+function dateChip(kind: "start" | "end"): React.CSSProperties {
+  const start = kind === "start";
+  return {
+    borderRadius: 999,
+    padding: "5px 10px",
+    border: start ? "1px solid rgba(34,197,94,0.45)" : "1px solid rgba(248,113,113,0.45)",
+    background: start ? "rgba(21,128,61,0.26)" : "rgba(127,29,29,0.26)",
+    fontSize: 12,
+    fontWeight: 900,
   };
 }
 

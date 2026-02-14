@@ -1793,15 +1793,18 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
                 : "Game not started"}
             </div>
             {(siegeState.intermissionActive || siegeState.roundEndActive || siegeTimeUpActive) ? (
-              <div style={siegeCountdownRow()}>
-                {siegeState.roundEndActive ? (
-                  <div style={siegeCountdownBadge("round")}>Round end: {siegeRoundEndRemaining}s</div>
-                ) : null}
-                {siegeState.intermissionActive ? (
-                  <div style={siegeCountdownBadge("intermission")}>Next round in: {siegeIntermissionRemaining}s</div>
-                ) : null}
-                {siegeTimeUpActive ? <div style={siegeTimeUpBadge()}>Time is up</div> : null}
-              </div>
+              <>
+                <div style={siegeCountdownRow()}>
+                  {siegeState.roundEndActive ? (
+                    <div style={siegeCountdownBadge("round")}>Round end: {siegeRoundEndRemaining}s</div>
+                  ) : null}
+                  {siegeState.intermissionActive ? (
+                    <div style={siegeCountdownBadge("intermission")}>Next round in: {siegeIntermissionRemaining}s</div>
+                  ) : null}
+                  {siegeTimeUpActive ? <div style={siegeTimeUpBadge()}>Time is up</div> : null}
+                </div>
+                {renderSiegeCountdownDistribution(siegeState)}
+              </>
             ) : null}
 
             <div style={siegeSettingsGrid()}>
@@ -1885,20 +1888,34 @@ function setupSiegeRound(prev: SiegeState, insideTeam: "A" | "B"): SiegeState {
                 <div style={siegeRosterPreview()}>
                   <div style={siegeRosterCard()}>
                     <div style={siegeRosterTitle()}>{siegeState.teamAName || "Team A"}</div>
-                    <div style={siegeRosterLives()}>
-                      Lives: {siegeState.teamALives}
+                    <div style={siegeRosterCount()}>
+                      {Math.min(siegeState.teamAEliminated, siegeState.teamAPlayers)}/{siegeState.teamAPlayers} eliminated
                     </div>
                     <div style={siegeRosterGrid()}>
                       {renderSiegeMiniPlayers(siegeState.teamAPlayers, siegeState.teamAEliminated)}
                     </div>
+                    <div style={siegeLivesBox()}>
+                      <div style={siegeLivesLabel()}>Lives</div>
+                      <div style={siegeLivesValue()}>
+                        <span style={siegeLivesStar()}>★</span> {siegeState.teamALives}
+                      </div>
+                      <div style={siegeLivesStarsRow()}>{renderSiegeLifeStars(siegeState.teamALives)}</div>
+                    </div>
                   </div>
                   <div style={siegeRosterCard()}>
                     <div style={siegeRosterTitle()}>{siegeState.teamBName || "Team B"}</div>
-                    <div style={siegeRosterLives()}>
-                      Lives: {siegeState.teamBLives}
+                    <div style={siegeRosterCount()}>
+                      {Math.min(siegeState.teamBEliminated, siegeState.teamBPlayers)}/{siegeState.teamBPlayers} eliminated
                     </div>
                     <div style={siegeRosterGrid()}>
                       {renderSiegeMiniPlayers(siegeState.teamBPlayers, siegeState.teamBEliminated)}
+                    </div>
+                    <div style={siegeLivesBox()}>
+                      <div style={siegeLivesLabel()}>Lives</div>
+                      <div style={siegeLivesValue()}>
+                        <span style={siegeLivesStar()}>★</span> {siegeState.teamBLives}
+                      </div>
+                      <div style={siegeLivesStarsRow()}>{renderSiegeLifeStars(siegeState.teamBLives)}</div>
                     </div>
                   </div>
                 </div>
@@ -2407,6 +2424,46 @@ function renderSiegeRoundCards(results: SiegeState["roundResults"], teamAName: s
   return <div style={{ display: "grid", gap: 10 }}>{rows}</div>;
 }
 
+function renderSiegeCountdownDistribution(state: SiegeState) {
+  const latest = [...(state.roundResults ?? [])].sort((a, b) => b.round - a.round)[0];
+  const latestSummary = latest
+    ? `R${latest.round}: ${
+        latest.winner === "A"
+          ? state.teamAName || "Team A"
+          : latest.winner === "B"
+          ? state.teamBName || "Team B"
+          : "Tie"
+      }`
+    : "No rounds decided yet";
+  return (
+    <div style={siegeCountdownScoreWrap()}>
+      <div style={siegeCountdownScoreLabel()}>Score Distribution</div>
+      <div style={siegeCountdownScoreGrid()}>
+        <div style={siegeCountdownScoreCard()}>
+          <div style={siegeCountdownScoreTeam()}>{state.teamAName || "Team A"}</div>
+          <div style={siegeCountdownScoreValue()}>{state.teamAWins}</div>
+        </div>
+        <div style={siegeCountdownScoreDash()}>-</div>
+        <div style={siegeCountdownScoreCard()}>
+          <div style={siegeCountdownScoreTeam()}>{state.teamBName || "Team B"}</div>
+          <div style={siegeCountdownScoreValue()}>{state.teamBWins}</div>
+        </div>
+      </div>
+      <div style={siegeCountdownScoreMeta()}>{latestSummary}</div>
+    </div>
+  );
+}
+
+function renderSiegeLifeStars(lives: number) {
+  const count = Math.max(0, Math.min(12, Number(lives || 0)));
+  if (count === 0) return <span style={{ opacity: 0.65 }}>No lives left</span>;
+  return Array.from({ length: count }).map((_, idx) => (
+    <span key={idx} style={siegeLivesStarItem()}>
+      ★
+    </span>
+  ));
+}
+
 function siegeRoundTeamRow(): React.CSSProperties {
   return { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 };
 }
@@ -2446,8 +2503,39 @@ function siegeRosterTitle(): React.CSSProperties {
   return { fontSize: 11, fontWeight: 900, opacity: 0.8, textTransform: "uppercase", letterSpacing: 0.4 };
 }
 
-function siegeRosterLives(): React.CSSProperties {
-  return { fontSize: 16, fontWeight: 1000 };
+function siegeRosterCount(): React.CSSProperties {
+  return { fontSize: 12, fontWeight: 900, opacity: 0.85 };
+}
+
+function siegeLivesBox(): React.CSSProperties {
+  return {
+    borderRadius: 10,
+    padding: "8px 10px",
+    border: "1px solid rgba(250,204,21,0.7)",
+    background: "linear-gradient(140deg, rgba(250,204,21,0.22), rgba(15,23,42,0.72))",
+    display: "grid",
+    gap: 2,
+  };
+}
+
+function siegeLivesLabel(): React.CSSProperties {
+  return { fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.7, opacity: 0.8 };
+}
+
+function siegeLivesValue(): React.CSSProperties {
+  return { fontSize: 26, fontWeight: 1000, lineHeight: 1, display: "flex", alignItems: "center", gap: 6 };
+}
+
+function siegeLivesStar(): React.CSSProperties {
+  return { color: "rgba(250,204,21,1)", textShadow: "0 0 10px rgba(250,204,21,0.55)" };
+}
+
+function siegeLivesStarsRow(): React.CSSProperties {
+  return { display: "flex", gap: 3, flexWrap: "wrap", minHeight: 18 };
+}
+
+function siegeLivesStarItem(): React.CSSProperties {
+  return { color: "rgba(250,204,21,0.95)", textShadow: "0 0 8px rgba(250,204,21,0.5)", fontSize: 12 };
 }
 
 function siegeStatusMsg(ended: boolean): React.CSSProperties {
@@ -2489,6 +2577,54 @@ function siegeTimeUpBadge(): React.CSSProperties {
     letterSpacing: 1,
     color: "rgba(254,226,226,1)",
   };
+}
+
+function siegeCountdownScoreWrap(): React.CSSProperties {
+  return {
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: "rgba(2,6,23,0.6)",
+    padding: "10px 12px",
+    display: "grid",
+    gap: 6,
+    maxWidth: 460,
+  };
+}
+
+function siegeCountdownScoreLabel(): React.CSSProperties {
+  return { fontSize: 10, fontWeight: 900, letterSpacing: 0.8, textTransform: "uppercase", opacity: 0.85 };
+}
+
+function siegeCountdownScoreGrid(): React.CSSProperties {
+  return { display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 8 };
+}
+
+function siegeCountdownScoreCard(): React.CSSProperties {
+  return {
+    borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: "rgba(15,23,42,0.72)",
+    padding: "6px 8px",
+    display: "grid",
+    gap: 1,
+    justifyItems: "center",
+  };
+}
+
+function siegeCountdownScoreTeam(): React.CSSProperties {
+  return { fontSize: 11, fontWeight: 900, opacity: 0.85 };
+}
+
+function siegeCountdownScoreValue(): React.CSSProperties {
+  return { fontSize: 28, fontWeight: 1000, lineHeight: 1 };
+}
+
+function siegeCountdownScoreDash(): React.CSSProperties {
+  return { fontSize: 20, fontWeight: 900, opacity: 0.75 };
+}
+
+function siegeCountdownScoreMeta(): React.CSSProperties {
+  return { fontSize: 11, opacity: 0.75, fontWeight: 800 };
 }
 
 function siegeRosterGrid(): React.CSSProperties {

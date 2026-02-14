@@ -38,6 +38,7 @@ type AvatarRow = {
   skill_pulse_multiplier?: number | string | null;
   spotlight_multiplier?: number | string | null;
   daily_free_points?: number | string | null;
+  challenge_completion_bonus_pct?: number | string | null;
   zoom_pct?: number | string | null;
   competition_only?: boolean | null;
   competition_discount_pct?: number | string | null;
@@ -479,6 +480,7 @@ export default function MediaVaultAdminPage() {
     skill_pulse_multiplier: 1,
     spotlight_multiplier: 1,
     daily_free_points: 0,
+    challenge_completion_bonus_pct: 0,
     zoom_pct: 100,
     competition_only: false,
     competition_discount_pct: 0,
@@ -828,6 +830,7 @@ export default function MediaVaultAdminPage() {
     const skill_pulse_multiplier = clampMultiplier(Number(row.skill_pulse_multiplier ?? 1));
     const spotlight_multiplier = clampMultiplier(Number(row.spotlight_multiplier ?? 1));
     const daily_free_points = Math.max(0, Math.floor(Number(row.daily_free_points ?? 0)));
+    const challenge_completion_bonus_pct = Math.max(0, Number(row.challenge_completion_bonus_pct ?? 0));
     const zoom_pct = Math.max(50, clampZoom(Number(row.zoom_pct ?? 100)));
     const competition_discount_pct = Math.max(0, Math.min(100, Math.floor(Number(row.competition_discount_pct ?? 0))));
     const res = await fetch("/api/admin/avatars", {
@@ -842,6 +845,7 @@ export default function MediaVaultAdminPage() {
         skill_pulse_multiplier,
         spotlight_multiplier,
         daily_free_points,
+        challenge_completion_bonus_pct,
         zoom_pct,
         competition_discount_pct,
       }),
@@ -864,6 +868,7 @@ export default function MediaVaultAdminPage() {
         skill_pulse_multiplier: 1,
         spotlight_multiplier: 1,
         daily_free_points: 0,
+        challenge_completion_bonus_pct: 0,
         zoom_pct: 100,
         competition_only: false,
         competition_discount_pct: 0,
@@ -2620,7 +2625,7 @@ export default function MediaVaultAdminPage() {
               bonus points. These modifiers apply only at the time points are awarded and do not change past activity.
             </div>
           </div>
-          <div style={formRow({ columns: "repeat(6, minmax(0, 1fr))" })}>
+          <div style={formRow({ columns: "repeat(7, minmax(0, 1fr))" })}>
             <div style={fieldStack()} title="Percent multiplier for Rule Keeper points (100 = normal).">
               <div style={fieldLabel()}>Rule Keeper %</div>
               <input
@@ -2699,6 +2704,20 @@ export default function MediaVaultAdminPage() {
                 onChange={(e) => {
                   const raw = digitsOnly(e.target.value);
                   setNewAvatar((prev) => ({ ...prev, daily_free_points: raw === "" ? null : Number(raw) }));
+                }}
+                style={input()}
+              />
+            </div>
+            <div style={fieldStack()} title="Percent bonus applied to challenge completion points.">
+              <div style={fieldLabel()}>Challenge Bonus %</div>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={newAvatar.challenge_completion_bonus_pct ?? ""}
+                onChange={(e) => {
+                  const raw = digitsOnly(e.target.value);
+                  setNewAvatar((prev) => ({ ...prev, challenge_completion_bonus_pct: raw === "" ? null : Number(raw) }));
                 }}
                 style={input()}
               />
@@ -2821,7 +2840,7 @@ export default function MediaVaultAdminPage() {
                             style={input()}
                           />
                         </div>
-                        <div style={formRow({ columns: "repeat(3, minmax(0, 1fr))" })}>
+                        <div style={formRow({ columns: "repeat(4, minmax(0, 1fr))" })}>
                           <div style={fieldStack()} title="Percent multiplier for Rule Keeper points (100 = normal).">
                             <div style={fieldLabel()}>Rule Keeper %</div>
                             <input
@@ -2934,6 +2953,24 @@ export default function MediaVaultAdminPage() {
                                 setAvatars((prev) =>
                                   prev.map((r) =>
                                     r === row ? { ...r, zoom_pct: raw === "" ? null : Number(raw) } : r
+                                  )
+                                );
+                              }}
+                              style={input()}
+                            />
+                          </div>
+                          <div style={fieldStack()} title="Percent bonus applied to challenge completion points.">
+                            <div style={fieldLabel()}>Challenge Bonus %</div>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={row.challenge_completion_bonus_pct ?? ""}
+                              onChange={(e) => {
+                                const raw = digitsOnly(e.target.value);
+                                setAvatars((prev) =>
+                                  prev.map((r) =>
+                                    r === row ? { ...r, challenge_completion_bonus_pct: raw === "" ? null : Number(raw) } : r
                                   )
                                 );
                               }}

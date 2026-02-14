@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import AuthGate from "../../../components/AuthGate";
 import AvatarRender from "@/components/AvatarRender";
+import StudentWorkspaceTopBar, { studentWorkspaceTopBarStyles } from "@/components/StudentWorkspaceTopBar";
 
 type StudentRow = {
   id: string;
@@ -12,6 +13,7 @@ type StudentRow = {
   points_balance?: number | null;
   avatar_storage_path?: string | null;
   avatar_zoom_pct?: number | null;
+  is_competition_team?: boolean | null;
 };
 
 type EarnedBadge = {
@@ -43,7 +45,9 @@ type PrestigeProgress = Record<string, { progress: number; current: number; targ
 type HighlightsSummary = {
   points_earned: number;
   rule_breaker_count: number;
+  rule_breaker_points: number;
   rule_keeper_count: number;
+  rule_keeper_points: number;
   checkins: number;
   taolu_completed: number;
   skill_completed: number;
@@ -71,6 +75,46 @@ type SkillTrackerRow = {
   repetitions_target: number;
   attempts: number;
 };
+type SeasonSettings = {
+  start_date?: string | null;
+};
+type LeaderboardEntry = {
+  student_id: string;
+  name: string;
+  points: number;
+  level: number;
+  rank?: number;
+};
+type LeaderboardPayload = {
+  total?: LeaderboardEntry[];
+  weekly?: LeaderboardEntry[];
+  lifetime?: LeaderboardEntry[];
+  skill_pulse_today?: LeaderboardEntry[];
+  mvp?: LeaderboardEntry[];
+  [key: string]: LeaderboardEntry[] | undefined;
+};
+type DailyRedeemStatus = {
+  can_redeem: boolean;
+  available_points: number;
+  next_redeem_at: string;
+  cooldown_ms: number;
+  leaderboard_points: number;
+  avatar_points: number;
+  leaderboard_boards: string[];
+  leaderboard_awards?: Array<{ board_key: string; board_points: number; rank: number }>;
+  contribution_chips: string[];
+  avatar_name: string;
+  modifiers: {
+    rule_keeper_multiplier: number;
+    rule_breaker_multiplier: number;
+    spotlight_multiplier: number;
+    skill_pulse_multiplier: number;
+    daily_free_points: number;
+    challenge_completion_bonus_pct: number;
+    base_skill_pulse_points_per_rep: number;
+    skill_pulse_points_per_rep: number;
+  };
+};
 const medalTierOrder = ["bronze", "silver", "gold", "platinum", "diamond", "master"];
 
 async function safeJson(res: Response) {
@@ -93,6 +137,8 @@ function getWeekStartUTC(date = new Date()) {
 
 export default function StudentInfoPage() {
   const [checked, setChecked] = useState(false);
+  const [students, setStudents] = useState<StudentRow[]>([]);
+  const [studentQuery, setStudentQuery] = useState("");
   const [student, setStudent] = useState<StudentRow | null>(null);
   const [earnedBadges, setEarnedBadges] = useState<EarnedBadge[]>([]);
   const [prestigeCatalog, setPrestigeCatalog] = useState<BadgeCatalog[]>([]);
@@ -107,6 +153,34 @@ export default function StudentInfoPage() {
   const [battleTotal, setBattleTotal] = useState(0);
   const [skillCompletedTotal, setSkillCompletedTotal] = useState(0);
   const [mvpBadgeUrl, setMvpBadgeUrl] = useState<string | null>(null);
+  const [recentMvp, setRecentMvp] = useState(false);
+  const [seasonSettings, setSeasonSettings] = useState<SeasonSettings | null>(null);
+  const [leaderboards, setLeaderboards] = useState<LeaderboardPayload | null>(null);
+  const [leaderboardLabels, setLeaderboardLabels] = useState<Record<string, string>>({});
+  const [avatarCatalog, setAvatarCatalog] = useState<
+    Array<{
+      id: string;
+      storage_path: string | null;
+      enabled?: boolean | null;
+      name?: string | null;
+      rule_keeper_multiplier?: number | null;
+      rule_breaker_multiplier?: number | null;
+      skill_pulse_multiplier?: number | null;
+      spotlight_multiplier?: number | null;
+      daily_free_points?: number | null;
+      challenge_completion_bonus_pct?: number | null;
+    }>
+  >([]);
+  const [avatarId, setAvatarId] = useState("");
+  const [avatarBg, setAvatarBg] = useState("rgba(15,23,42,0.75)");
+  const [avatarEffectKey, setAvatarEffectKey] = useState<string | null>(null);
+  const [cornerBorderKey, setCornerBorderKey] = useState<string | null>(null);
+  const [effectCatalog, setEffectCatalog] = useState<Array<{ key: string; config?: any; render_mode?: string | null; z_layer?: string | null; html?: string | null; css?: string | null; js?: string | null }>>([]);
+  const [cornerBorders, setCornerBorders] = useState<Array<{ key: string; image_url?: string | null; render_mode?: string | null; z_layer?: string | null; html?: string | null; css?: string | null; js?: string | null; offset_x?: number | null; offset_y?: number | null; offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null; rotate?: number | null }> | null; enabled?: boolean | null }>>([]);
+  const [dailyRedeem, setDailyRedeem] = useState<DailyRedeemStatus | null>(null);
+  const [redeemBurst, setRedeemBurst] = useState<{ points: number; text: string } | null>(null);
+  const [leaderboardDetailOpen, setLeaderboardDetailOpen] = useState(false);
+  const [redeemingDaily, setRedeemingDaily] = useState(false);
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
@@ -138,69 +212,124 @@ export default function StudentInfoPage() {
         return;
       }
       const list = (listJson.json?.students ?? []) as StudentRow[];
+      setStudents(list);
       let selectedId = "";
       try {
         selectedId = localStorage.getItem("active_student_id") || "";
       } catch {}
       if (!selectedId) {
         setStudent(null);
+        setStudentQuery("");
         setMsg("Please select student.");
         return;
       }
       const selectedStudent = list.find((s) => String(s.id) === String(selectedId));
       if (!selectedStudent?.id) {
         setStudent(null);
+        setStudentQuery("");
         setMsg("Please select student.");
         return;
       }
       setStudent(selectedStudent);
+      setStudentQuery(selectedStudent.name);
+    })();
+  }, [checked]);
 
+  useEffect(() => {
+    (async () => {
+      const [avatarsRes, effectsRes, bordersRes] = await Promise.all([
+        fetch("/api/avatars/list", { cache: "no-store" }),
+        fetch("/api/avatar-effects/list", { cache: "no-store" }),
+        fetch("/api/corner-borders", { cache: "no-store" }),
+      ]);
+      const avatarsJson = await avatarsRes.json().catch(() => ({}));
+      if (avatarsRes.ok) setAvatarCatalog((avatarsJson?.avatars ?? []) as any[]);
+      const effectsJson = await effectsRes.json().catch(() => ({}));
+      if (effectsRes.ok) setEffectCatalog((effectsJson?.effects ?? []) as any[]);
+      const bordersJson = await bordersRes.json().catch(() => ({}));
+      if (bordersRes.ok) setCornerBorders((bordersJson?.borders ?? []) as any[]);
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!student?.id) return;
+    (async () => {
+      const settingsRes = await fetch("/api/avatar/get", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_id: student.id }),
+      });
+      const settingsJson = await settingsRes.json().catch(() => ({}));
+      if (settingsRes.ok) {
+        const s = settingsJson?.settings ?? null;
+        setAvatarId(String(s?.avatar_id ?? "").trim());
+        const bg = String(s?.bg_color ?? "").trim();
+        setAvatarBg(bg || "rgba(15,23,42,0.75)");
+        const effectKey = String(s?.particle_style ?? "").trim();
+        setAvatarEffectKey(effectKey || null);
+        const borderKey = String(s?.corner_border_key ?? "").trim();
+        setCornerBorderKey(borderKey || null);
+      }
+    })();
+  }, [student?.id]);
+
+  useEffect(() => {
+    if (!student?.id) return;
+    (async () => {
+      const studentId = String(student.id);
       const weekStart = getWeekStartUTC();
       const weekStartIso = weekStart.toISOString();
 
-      const [badgesRes, prestigeRes, prestigeProgRes, challengesRes, medalsRes, highlightsRes, attendanceRes, mvpTotalRes, mvpWeekRes, taoluRes, battlesRes, trackersRes, mvpBadgeRes] =
+      const [badgesRes, prestigeRes, prestigeProgRes, challengesRes, medalsRes, highlightsRes, attendanceRes, mvpTotalRes, mvpWeekRes, taoluRes, battlesRes, trackersRes, mvpBadgeRes, dailyStatusRes, seasonRes, leaderboardRes] =
         await Promise.all([
           fetch("/api/students/badges", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ student_id: selectedStudent.id }),
+            body: JSON.stringify({ student_id: studentId }),
           }),
           fetch("/api/achievements/badges", { cache: "no-store" }),
           fetch("/api/students/prestige-progress", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ student_id: selectedStudent.id }),
+            body: JSON.stringify({ student_id: studentId }),
           }),
           fetch("/api/students/challenges", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ student_id: selectedStudent.id }),
+            body: JSON.stringify({ student_id: studentId }),
           }),
           fetch("/api/challenges/medals", { cache: "no-store" }),
           fetch("/api/dashboard/highlights", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ student_id: selectedStudent.id }),
+            body: JSON.stringify({ student_id: studentId }),
           }),
           fetch("/api/students/attendance-summary", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ student_id: selectedStudent.id }),
+            body: JSON.stringify({ student_id: studentId }),
           }),
           fetch("/api/mvp/count", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ student_id: selectedStudent.id }),
+            body: JSON.stringify({ student_id: studentId }),
           }),
           fetch("/api/mvp/count", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ student_id: selectedStudent.id, start_date: weekStartIso }),
+            body: JSON.stringify({ student_id: studentId, start_date: weekStartIso }),
           }),
-          fetch(`/api/taolu/student-summary?student_id=${selectedStudent.id}`, { cache: "no-store" }),
+          fetch(`/api/taolu/student-summary?student_id=${studentId}`, { cache: "no-store" }),
           fetch("/api/skill-tracker/battle/list", { cache: "no-store" }),
-          fetch(`/api/skill-tracker/list?student_id=${selectedStudent.id}`, { cache: "no-store" }),
+          fetch(`/api/skill-tracker/list?student_id=${studentId}`, { cache: "no-store" }),
           fetch("/api/student/mvp-badge", { cache: "no-store" }),
+          fetch("/api/avatar/daily-status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ student_id: studentId }),
+          }),
+          fetch("/api/season-settings", { cache: "no-store" }),
+          fetch("/api/leaderboard", { cache: "no-store" }),
         ]);
 
       const badgesJson = await safeJson(badgesRes);
@@ -240,7 +369,7 @@ export default function StudentInfoPage() {
           const participants = Array.isArray(b.participant_ids) ? b.participant_ids.map(String) : [];
           const fallback = [b.left_student_id, b.right_student_id].filter(Boolean).map((id) => String(id));
           const all = participants.length ? participants : fallback;
-          if (!all.includes(String(selectedStudent.id))) return false;
+          if (!all.includes(studentId)) return false;
           return Boolean(b.settled_at);
         }).length;
         setBattleTotal(count);
@@ -255,15 +384,53 @@ export default function StudentInfoPage() {
 
       const mvpBadgeJson = await safeJson(mvpBadgeRes);
       if (mvpBadgeJson.ok) setMvpBadgeUrl(String(mvpBadgeJson.json?.badge_url ?? "") || null);
+      const dailyStatusJson = await safeJson(dailyStatusRes);
+      if (dailyStatusJson.ok) setDailyRedeem((dailyStatusJson.json?.status ?? null) as DailyRedeemStatus | null);
+      else setDailyRedeem(null);
+      const seasonJson = await safeJson(seasonRes);
+      if (seasonJson.ok) setSeasonSettings((seasonJson.json?.settings ?? null) as SeasonSettings | null);
+      const leaderboardJson = await safeJson(leaderboardRes);
+      if (leaderboardJson.ok) {
+        setLeaderboards((leaderboardJson.json?.leaderboards ?? null) as LeaderboardPayload | null);
+        setLeaderboardLabels((leaderboardJson.json?.leaderboard_labels ?? {}) as Record<string, string>);
+      }
+      const recentStart = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+      const recentMvpRes = await fetch("/api/mvp/count", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_id: student.id, start_date: recentStart }),
+      });
+      const recentMvpJson = await safeJson(recentMvpRes);
+      setRecentMvp(recentMvpJson.ok ? Number(recentMvpJson.json?.count ?? 0) > 0 : false);
     })();
-  }, [checked]);
+  }, [student?.id]);
 
   const avatarSrc = useMemo(() => {
+    const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    if (!base) return null;
+    if (avatarId) {
+      const row = avatarCatalog.find((a) => String(a.id) === String(avatarId));
+      const mapped = String(row?.storage_path ?? "").trim();
+      if (mapped) return `${base}/storage/v1/object/public/avatars/${mapped}`;
+    }
     const path = String(student?.avatar_storage_path ?? "").trim();
     if (!path) return null;
-    const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    return base ? `${base}/storage/v1/object/public/avatars/${path}` : null;
-  }, [student?.avatar_storage_path]);
+    return `${base}/storage/v1/object/public/avatars/${path}`;
+  }, [avatarId, avatarCatalog, student?.avatar_storage_path]);
+
+  const selectedEffect = useMemo(() => {
+    if (!avatarEffectKey) return null;
+    return effectCatalog.find((e) => String(e.key) === String(avatarEffectKey)) ?? { key: avatarEffectKey };
+  }, [avatarEffectKey, effectCatalog]);
+
+  const selectedBorder = useMemo(() => {
+    if (!cornerBorderKey) return null;
+    return cornerBorders.find((b) => String(b.key) === String(cornerBorderKey) && b.enabled !== false) ?? null;
+  }, [cornerBorderKey, cornerBorders]);
+  const selectedAvatarMeta = useMemo(
+    () => avatarCatalog.find((a) => String(a.id) === String(avatarId)) ?? null,
+    [avatarCatalog, avatarId]
+  );
   const avatarZoomPct = Math.max(50, Math.min(200, Number(student?.avatar_zoom_pct ?? 100)));
   const pointsDisplay = Number(student?.points_balance ?? student?.points_total ?? 0);
   const levelDisplay = Number(student?.level ?? 1);
@@ -309,11 +476,143 @@ export default function StudentInfoPage() {
     return { totalSessions, totalSections, deductionsWeek };
   }, [taoluSummary]);
 
+  const weeklySpotlightBasePoints = useMemo(
+    () => (attendance?.awards ?? []).reduce((sum, a) => sum + Math.max(0, Number(a.points_awarded ?? 0)), 0),
+    [attendance]
+  );
+  const currentRuleBasePoints = useMemo(() => {
+    const start = seasonSettings?.start_date ? new Date(`${seasonSettings.start_date}T00:00:00`) : null;
+    if (!start || Number.isNaN(start.getTime())) return 5;
+    const now = new Date();
+    const diffMs = now.getTime() - start.getTime();
+    const week = Math.max(1, Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1);
+    return Math.min(50, Math.max(5, week * 5));
+  }, [seasonSettings?.start_date]);
+  const ruleKeeperBasePoints = currentRuleBasePoints;
+  const ruleBreakerBasePoints = currentRuleBasePoints;
+  const normalizeMultiplier = (value: any, fallback = 1) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const ruleKeeperMultiplier = normalizeMultiplier(
+    dailyRedeem?.modifiers?.rule_keeper_multiplier ?? selectedAvatarMeta?.rule_keeper_multiplier ?? 1,
+    1
+  );
+  const ruleBreakerMultiplier = normalizeMultiplier(
+    dailyRedeem?.modifiers?.rule_breaker_multiplier ?? selectedAvatarMeta?.rule_breaker_multiplier ?? 1,
+    1
+  );
+  const spotlightMultiplier = normalizeMultiplier(
+    dailyRedeem?.modifiers?.spotlight_multiplier ?? selectedAvatarMeta?.spotlight_multiplier ?? 1,
+    1
+  );
+  const challengeBonusPct = Math.max(
+    0,
+    Number(dailyRedeem?.modifiers?.challenge_completion_bonus_pct ?? selectedAvatarMeta?.challenge_completion_bonus_pct ?? 0)
+  );
+  const skillPerRepBase = Math.max(0, Number(dailyRedeem?.modifiers?.base_skill_pulse_points_per_rep ?? 2));
+  const skillPerRepFinal = Math.max(0, Number(dailyRedeem?.modifiers?.skill_pulse_points_per_rep ?? skillPerRepBase));
+  const ruleKeeperFinalPoints = Math.round(ruleKeeperBasePoints * ruleKeeperMultiplier);
+  const ruleBreakerFinalPoints = Math.round(ruleBreakerBasePoints * ruleBreakerMultiplier);
+  const spotlightFinalPoints = Math.round(weeklySpotlightBasePoints * spotlightMultiplier);
+  const ruleKeeperChanged = ruleKeeperFinalPoints !== ruleKeeperBasePoints;
+  const ruleBreakerChanged = ruleBreakerFinalPoints !== ruleBreakerBasePoints;
+  const leaderboardLabelByKey: Record<string, string> = {
+    total: "Total Points",
+    weekly: "Weekly Points",
+    lifetime: "Lifetime Points",
+    skill_pulse_today: "Skill Pulse Today",
+    mvp: "Battle MVP",
+  };
+
+  async function redeemDailyPoints() {
+    if (!student?.id || !dailyRedeem?.can_redeem || redeemingDaily) return;
+    setRedeemingDaily(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/avatar/daily-redeem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_id: student.id }),
+      });
+      const sj = await safeJson(res);
+      if (!sj.ok) {
+        setMsg(String(sj.json?.error ?? "Redeem failed"));
+        return;
+      }
+      const redeemedPts = Number(sj.json?.points ?? 0);
+      setMsg(`✨ Redeemed +${redeemedPts} points`);
+      setRedeemBurst({
+        points: redeemedPts,
+        text: `+${redeemedPts} Redeemed`,
+      });
+      window.setTimeout(() => setRedeemBurst(null), 1350);
+
+      const [listRes, statusRes, leaderboardRes] = await Promise.all([
+        fetch("/api/students/list", { cache: "no-store" }),
+        fetch("/api/avatar/daily-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ student_id: student.id }),
+        }),
+        fetch("/api/leaderboard", { cache: "no-store" }),
+      ]);
+      const listJson = await safeJson(listRes);
+      if (listJson.ok) {
+        const list = (listJson.json?.students ?? []) as StudentRow[];
+        setStudents(list);
+        const selected = list.find((s) => String(s.id) === String(student.id));
+        if (selected) setStudent(selected);
+      }
+      const statusJson = await safeJson(statusRes);
+      if (statusJson.ok) setDailyRedeem((statusJson.json?.status ?? null) as DailyRedeemStatus | null);
+      const leaderboardJson = await safeJson(leaderboardRes);
+      if (leaderboardJson.ok) {
+        setLeaderboards((leaderboardJson.json?.leaderboards ?? null) as LeaderboardPayload | null);
+        setLeaderboardLabels((leaderboardJson.json?.leaderboard_labels ?? {}) as Record<string, string>);
+      }
+    } finally {
+      setRedeemingDaily(false);
+    }
+  }
+
+  function clearSelectedStudent() {
+    setStudent(null);
+    setStudentQuery("");
+    setMsg("Please select student.");
+    try {
+      localStorage.removeItem("active_student_id");
+    } catch {}
+  }
+
+  function selectStudentByName(name: string) {
+    const match = students.find((s) => String(s.name ?? "").toLowerCase() === String(name ?? "").trim().toLowerCase());
+    if (!match) {
+      setMsg("Please select student.");
+      return;
+    }
+    setStudent(match);
+    setStudentQuery(match.name);
+    setMsg("");
+    try {
+      localStorage.setItem("active_student_id", String(match.id));
+    } catch {}
+  }
+
   return (
     <AuthGate>
       <div className="student-info">
         <style>{pageStyles()}</style>
+        <style>{studentWorkspaceTopBarStyles()}</style>
         <div className="student-info__inner">
+          <StudentWorkspaceTopBar
+            student={student}
+            onClearStudent={clearSelectedStudent}
+            onSelectStudent={() => selectStudentByName(studentQuery)}
+            onSelectStudentByName={selectStudentByName}
+            students={students}
+            recentMvp={recentMvp}
+          />
           <section className="student-info__split">
             <aside className="student-info__left">
               <div className="left-card">
@@ -323,13 +622,78 @@ export default function StudentInfoPage() {
                 <div className="left-card__avatar left-card__avatar-wrap">
                   <AvatarRender
                     size={260}
-                    bg="rgba(15,23,42,0.75)"
+                    bg={avatarBg}
                     avatarSrc={avatarSrc}
                     avatarZoomPct={avatarZoomPct}
+                    effect={selectedEffect as any}
+                    border={selectedBorder as any}
                     showImageBorder={false}
                     style={{ borderRadius: 24 }}
+                    contextKey="student_info"
                     fallback={<div className="left-card__avatar-fallback">{initials}</div>}
                   />
+                </div>
+                <div className="modifier-grid">
+                  <div className="modifier-tile modifier-tile--keeper">
+                    <div className="modifier-tile__label">Rule Keeper</div>
+                    <div className="modifier-tile__value">
+                      {ruleKeeperChanged ? <s>+{ruleKeeperBasePoints}</s> : null} +{ruleKeeperFinalPoints}
+                    </div>
+                  </div>
+                  <div className="modifier-tile modifier-tile--breaker">
+                    <div className="modifier-tile__label">Rule Breaker</div>
+                    <div className="modifier-tile__value">
+                      {ruleBreakerChanged ? <s>-{ruleBreakerBasePoints}</s> : null} -{ruleBreakerFinalPoints}
+                    </div>
+                  </div>
+                  <div className="modifier-tile modifier-tile--spotlight">
+                    <div className="modifier-tile__label">Spotlight Stars</div>
+                    <div className="modifier-tile__value">
+                      {spotlightFinalPoints !== weeklySpotlightBasePoints ? <s>{weeklySpotlightBasePoints}</s> : null}
+                      {spotlightFinalPoints}
+                    </div>
+                  </div>
+                  <div className="modifier-tile modifier-tile--skill">
+                    <div className="modifier-tile__label">Skill Pulse / Rep</div>
+                    <div className="modifier-tile__value">
+                      {skillPerRepFinal !== skillPerRepBase ? <s>{skillPerRepBase}</s> : null}
+                      {skillPerRepFinal}
+                    </div>
+                  </div>
+                  <div className="modifier-tile modifier-tile--challenge">
+                    <div className="modifier-tile__label">Challenge Bonus</div>
+                    <div className="modifier-tile__value">{Math.round(challengeBonusPct)}%</div>
+                  </div>
+                  <div className="modifier-tile modifier-tile--daily">
+                    <div className="modifier-tile__label">Free Daily Points</div>
+                    <div className="modifier-tile__value">
+                      +{Math.round(Number(dailyRedeem?.modifiers?.daily_free_points ?? selectedAvatarMeta?.daily_free_points ?? 0))}
+                    </div>
+                  </div>
+                </div>
+                <div className="redeem-card">
+                  <div className="redeem-card__head">
+                    <div className="redeem-card__title">Redeem Points</div>
+                    <div className="redeem-card__pts">+{Math.round(Number(dailyRedeem?.available_points ?? 0))}</div>
+                  </div>
+                  <div className="redeem-card__chips">
+                    {(dailyRedeem?.contribution_chips ?? []).map((chip) => (
+                      <span key={chip} className="redeem-chip">{chip}</span>
+                    ))}
+                  </div>
+                  <button className="redeem-detail-btn" onClick={() => setLeaderboardDetailOpen(true)}>
+                    Leaderboard Details
+                  </button>
+                  <button
+                    className={`redeem-btn ${dailyRedeem?.can_redeem ? "redeem-btn--active" : ""}`}
+                    onClick={redeemDailyPoints}
+                    disabled={!dailyRedeem?.can_redeem || redeemingDaily}
+                  >
+                    {redeemingDaily ? "Redeeming..." : dailyRedeem?.can_redeem ? "Redeem Now" : "Not Ready"}
+                  </button>
+                  {!dailyRedeem?.can_redeem && dailyRedeem?.next_redeem_at ? (
+                    <div className="redeem-next">Next: {new Date(dailyRedeem.next_redeem_at).toLocaleString()}</div>
+                  ) : null}
                 </div>
               </div>
             </aside>
@@ -410,6 +774,14 @@ export default function StudentInfoPage() {
                           const earned = earnedSet.has(String(b.id));
                           const progress = prestigeProgress[String(b.id)];
                           const pct = Math.max(0, Math.min(1, Number(progress?.progress ?? (earned ? 1 : 0))));
+                          const progressPrimary = progress
+                            ? `${Number(progress.current ?? 0).toLocaleString()} / ${Number(progress.target ?? 0).toLocaleString()}`
+                            : earned
+                            ? "Earned"
+                            : "0 / 0";
+                          const progressSecondary = progress?.detail
+                            ? progress.detail
+                            : null;
                           return (
                             <div key={b.id} className={`badge-tile badge-tile--prestige ${earned ? "badge-tile--earned" : "badge-tile--locked"}`}>
                               <div className="badge-tile__img">
@@ -422,9 +794,11 @@ export default function StudentInfoPage() {
                               <div className="badge-progress">
                                 <span className="badge-progress__fill" style={{ width: `${pct * 100}%` }} />
                               </div>
+                              <div className="badge-title" title={b.name ?? ""}>{b.name ?? "Prestige"}</div>
                               <div className="badge-progress__text" title={progress?.detail ?? ""}>
-                                {progress ? `${Number(progress.current ?? 0).toLocaleString()} / ${Number(progress.target ?? 0).toLocaleString()}` : earned ? "Earned" : "0 / 0"}
+                                {progressPrimary}
                               </div>
+                              {progressSecondary ? <div className="badge-progress__detail">{progressSecondary}</div> : null}
                             </div>
                           );
                         })}
@@ -437,7 +811,7 @@ export default function StudentInfoPage() {
                   <div className="block-title">Challenge Medals</div>
                   <div className="medal-row medal-row--vertical">
                     {medalTierOrder.map((tier) => (
-                      <div key={tier} className={`medal-tile ${tier === "gold" || tier === "platinum" || tier === "diamond" ? `medal-tile--sparkle medal-tile--${tier}` : ""}`}>
+                      <div key={tier} className={`medal-tile ${tier === "gold" || tier === "platinum" || tier === "diamond" || tier === "master" ? `medal-tile--sparkle medal-tile--${tier}` : ""}`}>
                         {medalIcons[tier] ? <img src={String(medalIcons[tier])} alt={tier} /> : <span>{tier.slice(0, 1).toUpperCase()}</span>}
                         <div className="medal-count">{medalCounts[tier] ?? 0}</div>
                         <div className="medal-label">{tier}</div>
@@ -452,6 +826,51 @@ export default function StudentInfoPage() {
 
           {msg ? <div className="student-info__note">{msg}</div> : null}
         </div>
+        {redeemBurst ? (
+          <div className="redeem-burst">
+            <div className="redeem-burst__card">{redeemBurst.text}</div>
+          </div>
+        ) : null}
+        {leaderboardDetailOpen ? (
+          <div className="leaderboard-detail-overlay" onClick={() => setLeaderboardDetailOpen(false)}>
+            <div className="leaderboard-detail-panel" onClick={(e) => e.stopPropagation()}>
+              <button className="leaderboard-detail-close" onClick={() => setLeaderboardDetailOpen(false)}>×</button>
+              <div className="leaderboard-detail-title">Top 10 Leaderboard Details</div>
+              {(dailyRedeem?.leaderboard_boards ?? []).length ? (
+                <div className="leaderboard-detail-grid">
+                  {(dailyRedeem?.leaderboard_boards ?? []).map((key) => {
+                    const label = leaderboardLabels[key] ?? leaderboardLabelByKey[key] ?? key;
+                    const rows = (leaderboards?.[key as keyof LeaderboardPayload] ?? []) as LeaderboardEntry[];
+                    const myIndex = rows.findIndex((row) => String(row.student_id) === String(student?.id ?? ""));
+                    return (
+                      <div key={key} className="leaderboard-detail-board">
+                        <div className="leaderboard-detail-board__title">
+                          <span>{label}</span>
+                          <span className="leaderboard-detail-board__rank">
+                            {myIndex >= 0 ? `You: #${myIndex + 1}` : "You: --"}
+                          </span>
+                        </div>
+                        <div className="leaderboard-detail-board__rows">
+                          {rows.slice(0, 10).map((row, idx) => (
+                            <div
+                              key={`${key}-${row.student_id}`}
+                              className={`leaderboard-detail-row ${String(row.student_id) === String(student?.id ?? "") ? "leaderboard-detail-row--me" : ""}`}
+                            >
+                              <span>#{Number(row.rank ?? idx + 1)} {row.name}</span>
+                              <strong>{Math.round(Number(row.points ?? 0))}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="leaderboard-detail-empty">No top-10 leaderboard eligibility right now.</div>
+              )}
+            </div>
+          </div>
+        ) : null}
       </div>
     </AuthGate>
   );
@@ -574,6 +993,289 @@ function pageStyles() {
       font-weight: 900;
       font-size: 36px;
       background: rgba(30,41,59,0.8);
+    }
+
+    .modifier-grid {
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .modifier-tile {
+      border-radius: 14px;
+      border: 1px solid rgba(148,163,184,0.22);
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+      text-align: left;
+      min-height: 92px;
+    }
+
+    .modifier-tile__label {
+      font-size: 13px;
+      font-weight: 1000;
+      letter-spacing: 0.45px;
+      text-transform: uppercase;
+    }
+
+    .modifier-tile__value {
+      font-size: 20px;
+      font-weight: 1000;
+      color: #f8fafc;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      line-height: 1.05;
+      flex-wrap: wrap;
+    }
+
+    .modifier-tile__value s {
+      opacity: 0.6;
+      color: #cbd5e1;
+      font-size: 15px;
+    }
+
+    .modifier-tile--keeper {
+      background: linear-gradient(145deg, rgba(16,185,129,0.22), rgba(6,78,59,0.26));
+      border-color: rgba(16,185,129,0.42);
+    }
+
+    .modifier-tile--breaker {
+      background: linear-gradient(145deg, rgba(239,68,68,0.22), rgba(127,29,29,0.28));
+      border-color: rgba(239,68,68,0.42);
+    }
+
+    .modifier-tile--spotlight {
+      background: linear-gradient(145deg, rgba(251,191,36,0.24), rgba(120,53,15,0.28));
+      border-color: rgba(251,191,36,0.45);
+    }
+
+    .modifier-tile--skill {
+      background: linear-gradient(145deg, rgba(249,115,22,0.24), rgba(124,45,18,0.28));
+      border-color: rgba(249,115,22,0.45);
+    }
+
+    .modifier-tile--challenge {
+      background: linear-gradient(145deg, rgba(59,130,246,0.25), rgba(30,58,138,0.3));
+      border-color: rgba(59,130,246,0.45);
+    }
+
+    .modifier-tile--daily {
+      background: linear-gradient(145deg, rgba(14,165,233,0.25), rgba(15,23,42,0.3));
+      border-color: rgba(14,165,233,0.45);
+    }
+
+    .redeem-card {
+      width: 100%;
+      border-radius: 18px;
+      border: 1px solid rgba(56,189,248,0.35);
+      background: linear-gradient(145deg, rgba(2,132,199,0.18), rgba(15,23,42,0.72));
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      text-align: left;
+    }
+
+    .redeem-card__title {
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      font-weight: 1000;
+      opacity: 0.9;
+    }
+
+    .redeem-card__head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .redeem-card__pts {
+      font-size: 38px;
+      font-weight: 1000;
+      color: #86efac;
+      text-shadow: 0 0 16px rgba(34,197,94,0.28);
+    }
+
+    .redeem-card__chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .redeem-chip {
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 900;
+      border: 1px solid rgba(56,189,248,0.36);
+      background: rgba(56,189,248,0.16);
+      color: #e0f2fe;
+      text-transform: uppercase;
+      letter-spacing: 0.45px;
+    }
+
+    .redeem-detail-btn {
+      border-radius: 10px;
+      border: 1px solid rgba(56,189,248,0.4);
+      background: rgba(56,189,248,0.18);
+      color: #e0f2fe;
+      font-size: 12px;
+      font-weight: 900;
+      padding: 8px 10px;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.45px;
+    }
+
+    .redeem-btn {
+      border-radius: 12px;
+      border: 1px solid rgba(148,163,184,0.3);
+      background: rgba(30,41,59,0.72);
+      color: #cbd5e1;
+      font-size: 13px;
+      font-weight: 1000;
+      padding: 10px 12px;
+      cursor: pointer;
+    }
+
+    .redeem-btn--active {
+      border-color: rgba(34,197,94,0.56);
+      background: linear-gradient(140deg, rgba(34,197,94,0.32), rgba(16,185,129,0.2));
+      color: #ecfdf5;
+      box-shadow: 0 0 22px rgba(34,197,94,0.3);
+      animation: redeemShine 1.8s ease-in-out infinite;
+    }
+
+    .redeem-next {
+      font-size: 11px;
+      color: #94a3b8;
+      font-weight: 800;
+    }
+    .redeem-burst {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      pointer-events: none;
+      z-index: 260;
+    }
+    .redeem-burst__card {
+      padding: 16px 22px;
+      border-radius: 16px;
+      border: 1px solid rgba(34,197,94,0.5);
+      background: linear-gradient(145deg, rgba(34,197,94,0.34), rgba(16,185,129,0.24));
+      color: #ecfdf5;
+      font-weight: 1000;
+      font-size: 28px;
+      text-shadow: 0 0 14px rgba(255,255,255,0.22);
+      box-shadow: 0 18px 44px rgba(16,185,129,0.28);
+      animation: redeemPop 1.2s ease forwards;
+    }
+    .leaderboard-detail-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 240;
+      display: grid;
+      place-items: center;
+      padding: 14px;
+      background: rgba(2,6,23,0.72);
+      backdrop-filter: blur(2px);
+    }
+    .leaderboard-detail-panel {
+      width: min(880px, 95vw);
+      max-height: 86vh;
+      overflow: auto;
+      border-radius: 18px;
+      border: 1px solid rgba(148,163,184,0.28);
+      background: linear-gradient(155deg, rgba(15,23,42,0.98), rgba(2,6,23,0.95));
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+      position: relative;
+    }
+    .leaderboard-detail-close {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,0.35);
+      background: rgba(30,41,59,0.75);
+      color: #f1f5f9;
+      font-size: 20px;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .leaderboard-detail-title {
+      font-size: 20px;
+      font-weight: 1000;
+      letter-spacing: 0.4px;
+      padding-right: 34px;
+    }
+    .leaderboard-detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .leaderboard-detail-board {
+      border-radius: 12px;
+      border: 1px solid rgba(148,163,184,0.24);
+      background: rgba(15,23,42,0.68);
+      padding: 9px;
+      display: grid;
+      gap: 7px;
+    }
+    .leaderboard-detail-board__title {
+      font-size: 12px;
+      font-weight: 1000;
+      text-transform: uppercase;
+      letter-spacing: 0.65px;
+      color: #bae6fd;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .leaderboard-detail-board__rank {
+      font-size: 10px;
+      letter-spacing: 0.35px;
+      text-transform: none;
+      color: #67e8f9;
+      border: 1px solid rgba(103,232,249,0.5);
+      background: rgba(6,182,212,0.2);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-weight: 900;
+    }
+    .leaderboard-detail-board__rows {
+      display: grid;
+      gap: 5px;
+    }
+    .leaderboard-detail-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      border-bottom: 1px solid rgba(148,163,184,0.14);
+      padding-bottom: 4px;
+    }
+    .leaderboard-detail-row--me {
+      border-bottom-color: rgba(56,189,248,0.45);
+      color: #e0f2fe;
+      font-weight: 900;
+      text-shadow: 0 0 10px rgba(56,189,248,0.28);
+    }
+    .leaderboard-detail-row strong {
+      font-weight: 1000;
+      color: #f8fafc;
+    }
+    .leaderboard-detail-empty {
+      font-size: 12px;
+      opacity: 0.74;
     }
 
     .student-info__right {
@@ -786,6 +1488,21 @@ function pageStyles() {
       letter-spacing: 0.6px;
     }
 
+    .badge-title {
+      font-size: 11px;
+      font-weight: 1000;
+      text-transform: uppercase;
+      letter-spacing: 0.65px;
+      color: #e2e8f0;
+    }
+
+    .badge-progress__detail {
+      font-size: 10px;
+      line-height: 1.15;
+      color: #bae6fd;
+      opacity: 0.9;
+    }
+
     .medal-row {
       display: flex;
       gap: 18px;
@@ -849,6 +1566,12 @@ function pageStyles() {
       border-color: rgba(56,189,248,0.62);
     }
 
+    .medal-tile--master {
+      box-shadow: 0 0 24px rgba(244,114,182,0.58), 0 0 44px rgba(190,24,93,0.34);
+      border-color: rgba(244,114,182,0.72);
+      background: radial-gradient(circle at 22% 18%, rgba(244,114,182,0.25), rgba(15,23,42,0.85));
+    }
+
     .medal-tile img {
       width: 54px;
       height: 54px;
@@ -897,6 +1620,12 @@ function pageStyles() {
       .badge-row {
         grid-template-columns: repeat(3, minmax(0, 1fr));
       }
+      .modifier-grid {
+        grid-template-columns: 1fr;
+      }
+      .leaderboard-detail-grid {
+        grid-template-columns: 1fr;
+      }
     }
 
     @media (max-width: 640px) {
@@ -915,6 +1644,18 @@ function pageStyles() {
       0% { transform: scale(0.8) rotate(0deg); opacity: 0.2; }
       50% { transform: scale(1.08) rotate(30deg); opacity: 0.5; }
       100% { transform: scale(0.8) rotate(0deg); opacity: 0.2; }
+    }
+
+    @keyframes redeemShine {
+      0% { box-shadow: 0 0 0 rgba(34,197,94,0); transform: translateY(0); }
+      50% { box-shadow: 0 0 20px rgba(34,197,94,0.42); transform: translateY(-1px); }
+      100% { box-shadow: 0 0 0 rgba(34,197,94,0); transform: translateY(0); }
+    }
+    @keyframes redeemPop {
+      0% { transform: scale(0.9); opacity: 0; }
+      15% { transform: scale(1.05); opacity: 1; }
+      70% { transform: scale(1); opacity: 1; }
+      100% { transform: scale(0.98); opacity: 0; }
     }
   `;
 }

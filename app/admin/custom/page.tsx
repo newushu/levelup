@@ -1,9 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-
-type DockKey = "class" | "performance" | "customization" | "ribbons";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const adminSections = [
   {
@@ -113,6 +111,11 @@ const adminSections = [
         title: "Skill Strike",
         desc: "Configure the card-based Battle Pulse game mode.",
         href: "/admin/custom/skill-strike",
+      },
+      {
+        title: "Classroom Emotes",
+        desc: "Manage emote effects, pricing, and unlock levels.",
+        href: "/admin/custom/emotes",
       },
       {
         title: "Wushu Adventure Quest",
@@ -253,30 +256,6 @@ const adminSections = [
   },
 ];
 
-const operationsCards = [
-  {
-    title: "Rewards Approvals",
-    desc: "Approve or reject student hold requests.",
-    href: "/admin/rewards",
-  },
-];
-
-const ribbonLinks = [
-  { title: "Announcements", href: "/admin/announcements" },
-  { title: "Rewards Approvals", href: "/admin/rewards" },
-  { title: "Parent Pairing", href: "/admin/parent-pairing" },
-  { title: "Parent Messages", href: "/admin/parent-messages" },
-  { title: "To-Do Inbox", href: "/admin/todos" },
-  { title: "Schedule Board", href: "/admin/schedule" },
-];
-
-function sectionDock(title: string): DockKey {
-  if (title === "Insights") return "performance";
-  if (title === "Program Setup" || title === "Passes & Registration" || title === "Camp") return "class";
-  if (title === "Engagement & Rewards") return "ribbons";
-  return "customization";
-}
-
 export default function CustomAdminHome() {
   const [pinOk, setPinOk] = useState(false);
   const [pinSet, setPinSet] = useState<boolean | null>(null);
@@ -286,8 +265,9 @@ export default function CustomAdminHome() {
   const [pinBusy, setPinBusy] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [query, setQuery] = useState("");
-  const [activeDock, setActiveDock] = useState<DockKey>("class");
-  const [ribbonOpen, setRibbonOpen] = useState(false);
+  const [activeCategory, setActiveCategory] = useState("all");
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const categories = useMemo(() => ["all", ...adminSections.map((s) => s.title)], []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -351,6 +331,33 @@ export default function CustomAdminHome() {
         setTodoCount(data.count);
       }
     })();
+  }, [pinOk]);
+
+  useEffect(() => {
+    if (!pinOk || typeof window === "undefined") return;
+    const LOCK_MS = 2 * 60 * 1000;
+    const activityEvents = ["pointerdown", "pointermove", "keydown", "scroll", "touchstart"] as const;
+
+    const relock = () => {
+      window.sessionStorage.setItem("admin_pin_ok", "0");
+      window.sessionStorage.setItem("admin_nfc_ok", "0");
+      setPinOk(false);
+      setPin("");
+      setNfcCode("");
+      setPinMsg("Station locked after inactivity. Re-enter PIN or NFC.");
+    };
+
+    const resetIdle = () => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = setTimeout(relock, LOCK_MS);
+    };
+
+    activityEvents.forEach((name) => window.addEventListener(name, resetIdle, { passive: true }));
+    resetIdle();
+    return () => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      activityEvents.forEach((name) => window.removeEventListener(name, resetIdle));
+    };
   }, [pinOk]);
 
   if (!pinOk) {
@@ -437,10 +444,10 @@ export default function CustomAdminHome() {
   }
   const q = query.trim().toLowerCase();
   const filteredSections = adminSections
+    .filter((section) => activeCategory === "all" || section.title === activeCategory)
     .map((section) => {
       const matchesSection = section.title.toLowerCase().includes(q);
       const cards = section.cards.filter((card) => {
-        if (sectionDock(section.title) !== activeDock) return false;
         if (!q) return true;
         const haystack = `${card.title} ${card.desc} ${section.title}`.toLowerCase();
         return haystack.includes(q) || matchesSection;
@@ -449,11 +456,36 @@ export default function CustomAdminHome() {
     })
     .filter((section) => section.cards.length > 0);
   return (
-    <main style={{ display: "grid", gap: 16, paddingBottom: 110 }}>
-      <style>{dockStyles()}</style>
-      <div style={{ fontSize: 28, fontWeight: 1000 }}>Admin Workspace</div>
+    <main style={{ display: "grid", gap: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 28, fontWeight: 1000 }}>Admin Workspace</div>
+        <Link href="/" style={backBtn()}>
+          Back To Admin Home
+        </Link>
+      </div>
       <div style={{ opacity: 0.75, fontSize: 13 }}>
         Configure your program and manage daily operations.
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {categories.map((name) => {
+          const active = activeCategory === name;
+          return (
+            <button
+              key={name}
+              type="button"
+              onClick={() => setActiveCategory(name)}
+              style={{
+                ...chipBtn(),
+                border: active ? "1px solid rgba(34,197,94,0.45)" : chipBtn().border,
+                background: active
+                  ? "linear-gradient(145deg, rgba(21,128,61,0.46), rgba(22,163,74,0.32))"
+                  : chipBtn().background,
+              }}
+            >
+              {name === "all" ? "All Categories" : name}
+            </button>
+          );
+        })}
       </div>
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
         <input
@@ -507,44 +539,6 @@ export default function CustomAdminHome() {
           </div>
         </section>
       ))}
-
-      {activeDock === "ribbons" ? (
-        <section style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontWeight: 1000, fontSize: 16 }}>Ribbon Workspace</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
-            {operationsCards.map((card) => (
-              <Link key={card.href} href={card.href} style={cardStyle()}>
-                <div style={{ fontWeight: 1000 }}>{card.title}</div>
-                <div style={{ opacity: 0.75, fontSize: 12, marginTop: 6 }}>{card.desc}</div>
-              </Link>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {ribbonOpen ? (
-        <div className="admin-dock-sheet">
-          {ribbonLinks.map((item) => (
-            <Link key={item.href} href={item.href} className="admin-dock-sheet__link" onClick={() => setRibbonOpen(false)}>
-              {item.title}
-            </Link>
-          ))}
-        </div>
-      ) : null}
-      <div className="admin-dock">
-        <button className={`admin-dock__btn ${activeDock === "class" ? "admin-dock__btn--active" : ""}`} onClick={() => { setActiveDock("class"); setRibbonOpen(false); }}>
-          Class
-        </button>
-        <button className={`admin-dock__btn ${activeDock === "performance" ? "admin-dock__btn--active" : ""}`} onClick={() => { setActiveDock("performance"); setRibbonOpen(false); }}>
-          Performance
-        </button>
-        <button className={`admin-dock__btn ${activeDock === "customization" ? "admin-dock__btn--active" : ""}`} onClick={() => { setActiveDock("customization"); setRibbonOpen(false); }}>
-          Customization
-        </button>
-        <button className={`admin-dock__btn ${activeDock === "ribbons" ? "admin-dock__btn--active" : ""}`} onClick={() => { setActiveDock("ribbons"); setRibbonOpen((v) => !v); }}>
-          Ribbons
-        </button>
-      </div>
     </main>
   );
 }
@@ -574,65 +568,30 @@ function badge(): React.CSSProperties {
   };
 }
 
-function dockStyles() {
-  return `
-    .admin-dock {
-      position: fixed;
-      left: 50%;
-      bottom: 14px;
-      transform: translateX(-50%);
-      display: flex;
-      gap: 8px;
-      z-index: 80;
-      border-radius: 16px;
-      border: 1px solid rgba(148,163,184,0.26);
-      background: rgba(2,6,23,0.9);
-      padding: 8px;
-      box-shadow: 0 18px 40px rgba(0,0,0,0.45);
-      backdrop-filter: blur(10px);
-    }
-    .admin-dock__btn {
-      border-radius: 12px;
-      border: 1px solid rgba(148,163,184,0.3);
-      background: rgba(30,41,59,0.78);
-      color: white;
-      font-weight: 900;
-      font-size: 12px;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      padding: 8px 12px;
-      cursor: pointer;
-    }
-    .admin-dock__btn--active {
-      border-color: rgba(56,189,248,0.55);
-      background: rgba(56,189,248,0.24);
-      box-shadow: 0 0 16px rgba(56,189,248,0.24);
-    }
-    .admin-dock-sheet {
-      position: fixed;
-      right: 18px;
-      bottom: 76px;
-      z-index: 81;
-      width: 260px;
-      max-height: 62vh;
-      overflow: auto;
-      display: grid;
-      gap: 8px;
-      border-radius: 16px;
-      border: 1px solid rgba(148,163,184,0.26);
-      background: rgba(2,6,23,0.94);
-      box-shadow: 0 16px 34px rgba(0,0,0,0.45);
-      padding: 10px;
-    }
-    .admin-dock-sheet__link {
-      text-decoration: none;
-      color: white;
-      border-radius: 12px;
-      border: 1px solid rgba(148,163,184,0.24);
-      background: rgba(30,41,59,0.75);
-      padding: 9px 10px;
-      font-weight: 800;
-      font-size: 12px;
-    }
-  `;
+function chipBtn(): React.CSSProperties {
+  return {
+    borderRadius: 999,
+    border: "1px solid rgba(148,163,184,0.4)",
+    background: "rgba(30,41,59,0.7)",
+    color: "white",
+    fontWeight: 900,
+    fontSize: 12,
+    padding: "8px 12px",
+    cursor: "pointer",
+  };
+}
+
+function backBtn(): React.CSSProperties {
+  return {
+    borderRadius: 12,
+    border: "1px solid rgba(56,189,248,0.5)",
+    background: "linear-gradient(145deg, rgba(14,165,233,0.42), rgba(2,132,199,0.28))",
+    color: "white",
+    textDecoration: "none",
+    padding: "9px 12px",
+    fontSize: 12,
+    fontWeight: 900,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  };
 }

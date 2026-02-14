@@ -284,10 +284,23 @@ export async function POST(req: Request) {
     const studentIds = out.map((r: any) => r.student.id);
     if (studentIds.length) {
       const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      const { data: legacyAvatars } = await admin
+      const legacyQuery = await admin
         .from("students")
         .select("id,avatar_storage_path")
         .in("id", studentIds);
+      let legacyAvatars = legacyQuery.data;
+      const isMissingColumn = (err: any, column: string) => {
+        const msg = String(err?.message || "").toLowerCase();
+        const key = column.toLowerCase();
+        return msg.includes(`column "${key}"`) || msg.includes(`.${key}`) || msg.includes(key);
+      };
+      if (legacyQuery.error && isMissingColumn(legacyQuery.error, "avatar_storage_path")) {
+        const fallback = await admin
+          .from("students")
+          .select("id")
+          .in("id", studentIds);
+        legacyAvatars = (fallback.data ?? []).map((row: any) => ({ ...row, avatar_storage_path: null }));
+      }
       const legacyAvatarByStudent = new Map<string, string | null>();
       (legacyAvatars ?? []).forEach((row: any) =>
         legacyAvatarByStudent.set(String(row.id), row.avatar_storage_path ?? null)

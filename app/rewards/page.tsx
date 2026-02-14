@@ -55,7 +55,6 @@ export default function RewardsPage() {
   const [rewards, setRewards] = useState<RewardRow[]>([]);
   const [redeemCounts, setRedeemCounts] = useState<RedeemCounts>({});
   const [pendingCounts, setPendingCounts] = useState<RedeemCounts>({});
-  const [mvpBadgeUrl, setMvpBadgeUrl] = useState<string | null>(null);
   const [requestToast, setRequestToast] = useState<{ open: boolean; label: string }>({ open: false, label: "" });
 
   const activeStudent = useMemo(
@@ -147,9 +146,6 @@ export default function RewardsPage() {
       if (!sj.ok) return setMsg(sj.json?.error || "Failed to load rewards");
       setRewards((sj.json?.rewards ?? []) as RewardRow[]);
 
-      const badgeRes = await fetch("/api/student/mvp-badge", { cache: "no-store" });
-      const badgeData = await safeJson(badgeRes);
-      if (badgeData.ok) setMvpBadgeUrl(String(badgeData.json?.badge_url ?? "") || null);
     })();
   }, []);
 
@@ -244,6 +240,19 @@ export default function RewardsPage() {
     setStudentId("");
     try {
       localStorage.removeItem("active_student_id");
+    } catch {}
+  }
+
+  function selectStudentByName(name: string) {
+    const match = students.find((s) => String(s.name ?? "").toLowerCase() === String(name ?? "").trim().toLowerCase());
+    if (!match) {
+      setMsg("Please select student");
+      return;
+    }
+    setStudentId(match.id);
+    setMsg("");
+    try {
+      localStorage.setItem("active_student_id", String(match.id));
     } catch {}
   }
 
@@ -389,7 +398,12 @@ export default function RewardsPage() {
         </div>
       ) : null}
       {!inStudentWorkspace ? <StudentNavPanel /> : null}
-      <StudentWorkspaceTopBar student={activeStudent} onClearStudent={clearSelectedStudent} badgeUrl={mvpBadgeUrl} />
+      <StudentWorkspaceTopBar
+        student={activeStudent}
+        onClearStudent={clearSelectedStudent}
+        onSelectStudentByName={selectStudentByName}
+        students={students}
+      />
       {!isEmbed && (
         <div style={{ position: "fixed", left: 12, top: 150, width: 320, zIndex: 120, display: isStudentView ? "none" : "grid", gap: 12 }}>
           <StudentTopBar

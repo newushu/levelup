@@ -14,7 +14,7 @@ export async function GET() {
   const { data, error } = await supabase
     .from("avatars")
     .select(
-      "id,name,storage_path,enabled,is_secondary,unlock_level,unlock_points,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,zoom_pct,competition_only,competition_discount_pct"
+      "id,name,storage_path,enabled,is_secondary,unlock_level,unlock_points,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,zoom_pct,competition_only,competition_discount_pct"
     )
     .order("name", { ascending: true });
 
@@ -46,6 +46,7 @@ export async function GET() {
       skill_pulse_multiplier: Number(a.skill_pulse_multiplier ?? 1),
       spotlight_multiplier: Number(a.spotlight_multiplier ?? 1),
       daily_free_points: Number(a.daily_free_points ?? 0),
+      challenge_completion_bonus_pct: Number(a.challenge_completion_bonus_pct ?? 0),
       zoom_pct: Number(a.zoom_pct ?? 100),
       competition_only: !!a.competition_only,
       competition_discount_pct: Number(a.competition_discount_pct ?? 0),

@@ -3061,12 +3061,20 @@ export function DashboardInner() {
   const selectedAvatar = useMemo(() => avatars.find((a) => a.id === selectedAvatarId) ?? null, [avatars, selectedAvatarId]);
   const activeAura = useMemo(() => {
     if (!selectedAvatar) return null;
+    const normalizeMultiplier = (value: any, fallback = 1) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    const normalizePoints = (value: any, fallback = 0) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
     return {
-      ruleKeeper: Number(selectedAvatar.rule_keeper_multiplier ?? 1),
-      ruleBreaker: Number(selectedAvatar.rule_breaker_multiplier ?? 1),
-      skillPulse: Number(selectedAvatar.skill_pulse_multiplier ?? 1),
-      spotlight: Number(selectedAvatar.spotlight_multiplier ?? 1),
-      daily: Number(selectedAvatar.daily_free_points ?? 0),
+      ruleKeeper: normalizeMultiplier(selectedAvatar.rule_keeper_multiplier, 1),
+      ruleBreaker: normalizeMultiplier(selectedAvatar.rule_breaker_multiplier, 1),
+      skillPulse: normalizeMultiplier(selectedAvatar.skill_pulse_multiplier, 1),
+      spotlight: normalizeMultiplier(selectedAvatar.spotlight_multiplier, 1),
+      daily: normalizePoints(selectedAvatar.daily_free_points, 0),
     };
   }, [selectedAvatar]);
   const baseRulePoints = ruleBasePoints();

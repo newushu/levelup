@@ -331,14 +331,20 @@ export default function SiegeSurviveDisplayPage() {
         `}</style>
         {state.intermissionActive && intermissionRemaining > 0 ? (
           <div style={intermissionOverlay()}>
-            <div style={intermissionNumber()}>{intermissionRemaining}</div>
-            <div style={intermissionLabel()}>Next round starting…</div>
+            <div style={overlayStack()}>
+              <div style={intermissionNumber()}>{intermissionRemaining}</div>
+              <div style={intermissionLabel()}>Next round starting…</div>
+              {renderOverlayScoreDistribution(state)}
+            </div>
           </div>
         ) : null}
         {state.roundEndActive && roundEndRemaining > 0 ? (
           <div style={roundEndOverlay()}>
-            <div style={roundEndTitle()}>Round Ended</div>
-            <div style={roundEndSub()}>Get ready…</div>
+            <div style={overlayStack()}>
+              <div style={roundEndTitle()}>Round Ended</div>
+              <div style={roundEndSub()}>Get ready…</div>
+              {renderOverlayScoreDistribution(state)}
+            </div>
           </div>
         ) : null}
         {state.endGameActive && endGameRemaining > 0 ? (
@@ -405,10 +411,16 @@ export default function SiegeSurviveDisplayPage() {
                 {state.insideTeam === "A" ? <div style={roleTagLarge()}>INSIDE</div> : <div style={roleTagMutedLarge()}>OUTSIDE</div>}
               </div>
               <div style={lifeRow()}>
-                <div style={lifePillLarge()}>{state.teamALives} lives</div>
                 <div style={elimsPill()}>
                   {Math.min(state.teamAEliminated, state.teamAPlayers)}/{state.teamAPlayers} eliminated
                 </div>
+              </div>
+              <div style={livesFocusBox()}>
+                <div style={livesFocusLabel()}>Lives</div>
+                <div style={livesFocusValue()}>
+                  <span style={livesFocusStar()}>★</span> {state.teamALives}
+                </div>
+                <div style={livesStarsRow()}>{renderLivesStars(state.teamALives)}</div>
               </div>
               <div style={playerGridWrap(state.insideTeam === "A")}>
                 <div style={playerGrid()}>
@@ -437,10 +449,16 @@ export default function SiegeSurviveDisplayPage() {
                 {state.insideTeam === "B" ? <div style={roleTagLarge()}>INSIDE</div> : <div style={roleTagMutedLarge()}>OUTSIDE</div>}
               </div>
               <div style={lifeRow()}>
-                <div style={lifePillLarge()}>{state.teamBLives} lives</div>
                 <div style={elimsPill()}>
                   {Math.min(state.teamBEliminated, state.teamBPlayers)}/{state.teamBPlayers} eliminated
                 </div>
+              </div>
+              <div style={livesFocusBox()}>
+                <div style={livesFocusLabel()}>Lives</div>
+                <div style={livesFocusValue()}>
+                  <span style={livesFocusStar()}>★</span> {state.teamBLives}
+                </div>
+                <div style={livesStarsRow()}>{renderLivesStars(state.teamBLives)}</div>
               </div>
               <div style={playerGridWrap(state.insideTeam === "B")}>
                 <div style={playerGrid()}>
@@ -487,6 +505,40 @@ function renderPlayers(total: number, eliminated: number) {
   });
 }
 
+function renderLivesStars(lives: number) {
+  const count = Math.max(0, Math.min(12, Number(lives || 0)));
+  if (count <= 0) return <span style={{ opacity: 0.65 }}>No lives left</span>;
+  return Array.from({ length: count }).map((_, idx) => (
+    <span key={idx} style={livesStarItem()}>
+      ★
+    </span>
+  ));
+}
+
+function renderOverlayScoreDistribution(state: SiegeState) {
+  const latest = [...(state.roundResults ?? [])].sort((a, b) => b.round - a.round)[0];
+  const latestSummary = latest
+    ? `R${latest.round}: ${latest.winner === "A" ? state.teamAName || "Team A" : latest.winner === "B" ? state.teamBName || "Team B" : "Tie"}`
+    : "No round result yet";
+  return (
+    <div style={overlayScoreWrap()}>
+      <div style={overlayScoreTitle()}>Score Distribution</div>
+      <div style={overlayScoreGrid()}>
+        <div style={overlayScoreCard()}>
+          <div style={overlayScoreName()}>{state.teamAName || "Team A"}</div>
+          <div style={overlayScoreValue()}>{state.teamAWins}</div>
+        </div>
+        <div style={overlayScoreDash()}>-</div>
+        <div style={overlayScoreCard()}>
+          <div style={overlayScoreName()}>{state.teamBName || "Team B"}</div>
+          <div style={overlayScoreValue()}>{state.teamBWins}</div>
+        </div>
+      </div>
+      <div style={overlayScoreMeta()}>{latestSummary}</div>
+    </div>
+  );
+}
+
 function intermissionOverlay(): React.CSSProperties {
   return {
     position: "fixed",
@@ -497,6 +549,10 @@ function intermissionOverlay(): React.CSSProperties {
     background: "rgba(3,7,18,0.72)",
     backdropFilter: "blur(6px)",
   };
+}
+
+function overlayStack(): React.CSSProperties {
+  return { display: "grid", gap: 8, justifyItems: "center", textAlign: "center", width: "min(900px, 94vw)" };
 }
 
 function intermissionNumber(): React.CSSProperties {
@@ -554,6 +610,66 @@ function roundEndSub(): React.CSSProperties {
     textTransform: "uppercase",
     opacity: 0.75,
   };
+}
+
+function overlayScoreWrap(): React.CSSProperties {
+  return {
+    marginTop: 16,
+    width: "min(760px, 92vw)",
+    borderRadius: 22,
+    padding: "14px 16px",
+    border: "1px solid rgba(255,255,255,0.3)",
+    background: "rgba(15,23,42,0.72)",
+    display: "grid",
+    gap: 8,
+  };
+}
+
+function overlayScoreTitle(): React.CSSProperties {
+  return {
+    fontSize: 12,
+    textTransform: "uppercase",
+    letterSpacing: 1.1,
+    fontWeight: 900,
+    opacity: 0.85,
+  };
+}
+
+function overlayScoreGrid(): React.CSSProperties {
+  return {
+    display: "grid",
+    gridTemplateColumns: "1fr auto 1fr",
+    alignItems: "center",
+    gap: 10,
+  };
+}
+
+function overlayScoreCard(): React.CSSProperties {
+  return {
+    borderRadius: 14,
+    padding: "8px 12px",
+    border: "1px solid rgba(255,255,255,0.25)",
+    background: "rgba(2,6,23,0.65)",
+    display: "grid",
+    gap: 2,
+    justifyItems: "center",
+  };
+}
+
+function overlayScoreName(): React.CSSProperties {
+  return { fontSize: 12, fontWeight: 900, opacity: 0.85 };
+}
+
+function overlayScoreValue(): React.CSSProperties {
+  return { fontSize: 42, fontWeight: 1000, lineHeight: 1 };
+}
+
+function overlayScoreDash(): React.CSSProperties {
+  return { fontSize: 30, fontWeight: 900, opacity: 0.75 };
+}
+
+function overlayScoreMeta(): React.CSSProperties {
+  return { fontSize: 12, opacity: 0.78, fontWeight: 800 };
 }
 
 function endGameOverlay(): React.CSSProperties {
@@ -885,7 +1001,7 @@ function roleTagMutedLarge(): React.CSSProperties {
 }
 
 function lifeRow(): React.CSSProperties {
-  return { display: "flex", gap: 8, flexWrap: "wrap" };
+  return { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" };
 }
 
 function lifePill(): React.CSSProperties {
@@ -908,6 +1024,37 @@ function lifePillLarge(): React.CSSProperties {
     fontSize: 13,
     fontWeight: 1000,
   };
+}
+
+function livesFocusBox(): React.CSSProperties {
+  return {
+    borderRadius: 14,
+    border: "1px solid rgba(250,204,21,0.6)",
+    background: "linear-gradient(140deg, rgba(250,204,21,0.24), rgba(15,23,42,0.72))",
+    padding: "10px 12px",
+    display: "grid",
+    gap: 4,
+  };
+}
+
+function livesFocusLabel(): React.CSSProperties {
+  return { fontSize: 11, fontWeight: 900, opacity: 0.85, letterSpacing: 0.8, textTransform: "uppercase" };
+}
+
+function livesFocusValue(): React.CSSProperties {
+  return { fontSize: 36, lineHeight: 1, fontWeight: 1000, display: "flex", alignItems: "center", gap: 8 };
+}
+
+function livesFocusStar(): React.CSSProperties {
+  return { color: "rgba(250,204,21,1)", textShadow: "0 0 14px rgba(250,204,21,0.55)" };
+}
+
+function livesStarsRow(): React.CSSProperties {
+  return { display: "flex", flexWrap: "wrap", gap: 4, minHeight: 20 };
+}
+
+function livesStarItem(): React.CSSProperties {
+  return { color: "rgba(250,204,21,0.95)", textShadow: "0 0 10px rgba(250,204,21,0.45)", fontSize: 14 };
 }
 
 function elimsPill(): React.CSSProperties {

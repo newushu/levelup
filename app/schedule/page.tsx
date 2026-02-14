@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { loadScheduleConfig, saveScheduleConfig, defaultScheduleConfig } from "../../lib/scheduleConfig";
 
 const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -150,9 +150,8 @@ export default function SchedulePage() {
           ))}
 
           {times.map((t) => (
-            <>
+            <Fragment key={`row-${t}`}>
               <div
-                key={`time-${t}`}
                 style={{
                   padding: "10px 12px",
                   borderRadius: 16,
@@ -177,7 +176,7 @@ export default function SchedulePage() {
                   title={`${loc?.name ?? ""} • ${d} ${t}`}
                 />
               ))}
-            </>
+            </Fragment>
           ))}
         </div>
       </div>
