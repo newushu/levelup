@@ -64,6 +64,9 @@ type TrackerRow = {
   skill_category?: string | null;
   repetitions_target: number;
   points_per_rep?: number;
+  points_per_rep_base?: number;
+  points_per_rep_effective?: number;
+  skill_pulse_multiplier?: number;
   attempts: number;
   successes: number;
   rate: number;
@@ -4208,9 +4211,11 @@ export default function SkillTrackerPage() {
                     const lifetimeAttempts = Number(t.lifetime_attempts ?? 0);
                     const lifetimeSuccesses = Number(t.lifetime_successes ?? 0);
                     const lifetimeRate = lifetimeAttempts ? Math.round((lifetimeSuccesses / lifetimeAttempts) * 100) : 0;
-                    const pointsPerRep = Math.max(1, Number(t.points_per_rep ?? 2));
+                    const pointsPerRepBase = Math.max(1, Number(t.points_per_rep_base ?? t.points_per_rep ?? 2));
+                    const pointsPerRepEffective = Math.max(1, Number(t.points_per_rep_effective ?? t.points_per_rep ?? pointsPerRepBase));
+                    const hasPerRepBoost = pointsPerRepEffective !== pointsPerRepBase;
                     const perfectBonus = done && successesCount === target ? successesCount : 0;
-                    const earnedPoints = done && pointsPerRep > 0 ? successesCount * pointsPerRep + perfectBonus : 0;
+                    const earnedPoints = done && pointsPerRepEffective > 0 ? successesCount * pointsPerRepEffective + perfectBonus : 0;
                     const viewOnly = isSkillUserSource(t) && ["admin", "coach"].includes(viewerRole);
                     const canEdit = !viewOnly;
                     const pendingCount = pendingLogCounts.current.get(t.id) ?? 0;
@@ -4291,6 +4296,13 @@ export default function SkillTrackerPage() {
                             </div>
                             <div style={{ fontSize: 12, opacity: 0.7 }}>
                               Reps {Math.min(attemptsCount, target)}/{target}
+                            </div>
+                            <div style={perRepBadgeWrap()}>
+                              <div style={perRepBadgeLabel()}>PTS/REP</div>
+                              <div style={perRepBadgeMain()}>
+                                {hasPerRepBoost ? <span style={perRepBadgeStrike()}>{pointsPerRepBase}</span> : null}
+                                <span style={perRepBadgeValue()}>{pointsPerRepEffective}</span>
+                              </div>
                             </div>
                             <div style={{ fontSize: 12, opacity: 0.7 }}>
                               Lv {t.student_level ?? 0} • {t.student_points ?? 0} pts
@@ -4460,6 +4472,9 @@ export default function SkillTrackerPage() {
           const lifetimeAttempts = Number(t.lifetime_attempts ?? 0);
           const lifetimeSuccesses = Number(t.lifetime_successes ?? 0);
           const lifetimeRate = lifetimeAttempts ? Math.round((lifetimeSuccesses / lifetimeAttempts) * 100) : 0;
+          const pointsPerRepBase = Math.max(1, Number(t.points_per_rep_base ?? t.points_per_rep ?? 2));
+          const pointsPerRepEffective = Math.max(1, Number(t.points_per_rep_effective ?? t.points_per_rep ?? pointsPerRepBase));
+          const hasPerRepBoost = pointsPerRepEffective !== pointsPerRepBase;
           return (
             <div
               key={t.id}
@@ -4569,6 +4584,15 @@ export default function SkillTrackerPage() {
                     Fail reasons: {t.failure_reasons.join(", ")}
                   </div>
                 ) : null}
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  <div style={perRepBadgeWrap()}>
+                    <div style={perRepBadgeLabel()}>PTS/REP</div>
+                    <div style={perRepBadgeMain()}>
+                      {hasPerRepBoost ? <span style={perRepBadgeStrike()}>{pointsPerRepBase}</span> : null}
+                      <span style={perRepBadgeValue()}>{pointsPerRepEffective}</span>
+                    </div>
+                  </div>
+                </div>
                 <div style={{ display: "flex", justifyContent: "center", alignItems: "baseline", gap: 12, fontWeight: 1000 }}>
                   <div style={{ fontSize: 42, color: "rgba(34,197,94,0.95)", textShadow: "0 0 14px rgba(34,197,94,0.35)" }}>
                     {successesCount}
@@ -7294,6 +7318,57 @@ function pointsEarnedLabel(t: TrackerRow): string {
   const perSuccess = successes === target ? 3 : 2;
   const points = successes * perSuccess;
   return `+${points} pts`;
+}
+
+function perRepBadgeWrap(): React.CSSProperties {
+  return {
+    display: "grid",
+    gap: 2,
+    justifyItems: "center",
+    borderRadius: 14,
+    border: "1px solid rgba(56,189,248,0.45)",
+    background: "linear-gradient(145deg, rgba(2,132,199,0.2), rgba(15,23,42,0.75))",
+    padding: "6px 12px",
+    minWidth: 112,
+  };
+}
+
+function perRepBadgeLabel(): React.CSSProperties {
+  return {
+    fontSize: 10,
+    letterSpacing: "0.1em",
+    fontWeight: 900,
+    opacity: 0.8,
+    textTransform: "uppercase",
+  };
+}
+
+function perRepBadgeMain(): React.CSSProperties {
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    fontWeight: 1000,
+  };
+}
+
+function perRepBadgeStrike(): React.CSSProperties {
+  return {
+    fontSize: 20,
+    opacity: 0.6,
+    textDecoration: "line-through",
+    textDecorationThickness: 2,
+    textDecorationColor: "rgba(248,113,113,0.95)",
+  };
+}
+
+function perRepBadgeValue(): React.CSSProperties {
+  return {
+    fontSize: 36,
+    lineHeight: 1,
+    color: "rgba(125,211,252,0.98)",
+    textShadow: "0 0 16px rgba(56,189,248,0.45)",
+  };
 }
 
 function undoBtn(disabled?: boolean): React.CSSProperties {

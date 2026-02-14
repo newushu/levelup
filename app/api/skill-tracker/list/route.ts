@@ -7,6 +7,7 @@ type TrackerRow = {
   student_id: string;
   skill_id: string;
   repetitions_target: number;
+  points_per_rep?: number | null;
   created_at: string;
   created_by?: string | null;
   students?: { id: string; name: string } | null;
@@ -47,7 +48,7 @@ export async function GET(req: Request) {
     let q = supabase
       .from("skill_trackers")
       .select(
-        "id,student_id,skill_id,repetitions_target,created_at,archived_at,group_id,created_by,created_source,students(id,name,level,points_total,lifetime_points,is_competition_team),tracker_skills(id,name,category,failure_reasons)"
+        "id,student_id,skill_id,repetitions_target,points_per_rep,created_at,archived_at,group_id,created_by,created_source,students(id,name,level,points_total,lifetime_points,is_competition_team),tracker_skills(id,name,category,failure_reasons)"
       )
       .is("archived_at", null)
       .order("created_at", { ascending: false });
@@ -378,10 +379,15 @@ export async function GET(req: Request) {
   if (avatarIds.length) {
     const { data: avatars, error: avErr } = await supabase
       .from("avatars")
-      .select("id,storage_path")
+      .select("id,storage_path,skill_pulse_multiplier")
       .in("id", avatarIds);
     if (avErr) return NextResponse.json({ ok: false, error: avErr.message }, { status: 500 });
-    (avatars ?? []).forEach((a: any) => avatarMap.set(String(a.id), { storage_path: a.storage_path ?? null }));
+    (avatars ?? []).forEach((a: any) =>
+      avatarMap.set(String(a.id), {
+        storage_path: a.storage_path ?? null,
+        skill_pulse_multiplier: Number(a.skill_pulse_multiplier ?? 1),
+      } as any)
+    );
   }
 
   const borderByKey = new Map<string, {
@@ -494,6 +500,7 @@ export async function GET(req: Request) {
   const avatarByStudent = new Map<string, {
     storage_path: string | null;
     bg_color: string | null;
+    skill_pulse_multiplier: number;
     particle_style: string | null;
     corner_border_url: string | null;
     corner_border_render_mode?: string | null;
@@ -508,7 +515,7 @@ export async function GET(req: Request) {
   (avatarSettings ?? []).forEach((s: any) => {
     const id = String(s.student_id ?? "");
     const avatarId = String(s.avatar_id ?? "");
-    const avatar = avatarMap.get(avatarId) ?? { storage_path: null };
+    const avatar = (avatarMap.get(avatarId) as any) ?? { storage_path: null, skill_pulse_multiplier: 1 };
     const effectKey = String(s.particle_style ?? "").trim();
     const effect = effectKey ? effectByKey.get(effectKey) : null;
     const level = effectiveLevelByStudent.get(id) ?? 1;
@@ -531,6 +538,7 @@ export async function GET(req: Request) {
     avatarByStudent.set(id, {
       storage_path: avatar.storage_path ?? null,
       bg_color: s.bg_color ?? null,
+      skill_pulse_multiplier: Number(avatar.skill_pulse_multiplier ?? 1),
       particle_style: effectOk ? effectKey || null : null,
       corner_border_url: borderOk ? border?.image_url ?? null : null,
       corner_border_render_mode: borderOk ? border?.render_mode ?? "image" : null,
@@ -607,6 +615,16 @@ export async function GET(req: Request) {
       skill_name: r.tracker_skills?.name ?? "Skill",
       skill_category: r.tracker_skills?.category ?? "",
       repetitions_target: r.repetitions_target,
+      points_per_rep: Math.max(1, Number((r as any).points_per_rep ?? 2)),
+      points_per_rep_base: Math.max(1, Number((r as any).points_per_rep ?? 2)),
+      points_per_rep_effective: Math.max(
+        1,
+        Math.round(
+          Math.max(1, Number((r as any).points_per_rep ?? 2)) *
+            Number(avatarByStudent.get(String(r.student_id ?? ""))?.skill_pulse_multiplier ?? 1)
+        )
+      ),
+      skill_pulse_multiplier: Number(avatarByStudent.get(String(r.student_id ?? ""))?.skill_pulse_multiplier ?? 1),
       attempts: counts.attempts,
       successes: counts.successes,
       rate,
@@ -662,6 +680,10 @@ export async function GET(req: Request) {
       skill_name: skillMeta?.name ?? "Skill",
       skill_category: skillMeta?.category ?? "",
       repetitions_target: 1,
+      points_per_rep: 2,
+      points_per_rep_base: 2,
+      points_per_rep_effective: Math.max(1, Math.round(2 * Number(avatarByStudent.get(sid)?.skill_pulse_multiplier ?? 1))),
+      skill_pulse_multiplier: Number(avatarByStudent.get(sid)?.skill_pulse_multiplier ?? 1),
       attempts: 0,
       successes: 0,
       rate: 0,

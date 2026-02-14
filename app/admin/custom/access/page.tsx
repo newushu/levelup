@@ -25,7 +25,15 @@ type UserRow = {
   email: string | null;
   username: string | null;
   role: string | null;
+  roles?: string[];
   created_at: string;
+};
+
+type UserEdit = {
+  email: string;
+  username: string;
+  password: string;
+  roles: string[];
 };
 
 const ROLE_OPTIONS = [
@@ -82,6 +90,9 @@ export default function AccessAdminPage() {
   const [routeBaseline, setRouteBaseline] = useState<Record<string, string>>({});
   const [routeDirty, setRouteDirty] = useState<Record<string, boolean>>({});
   const [userQuery, setUserQuery] = useState("");
+  const [userEditOpen, setUserEditOpen] = useState<Record<string, boolean>>({});
+  const [userEdits, setUserEdits] = useState<Record<string, UserEdit>>({});
+  const [userSaving, setUserSaving] = useState<Record<string, boolean>>({});
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditResults, setAuditResults] = useState<null | {
     totals?: {
@@ -132,7 +143,21 @@ export default function AccessAdminPage() {
     const res = await fetch("/api/admin/users/list", { cache: "no-store" });
     const sj = await safeJson(res);
     if (!sj.ok) return setMsg(sj.json?.error || "Failed to load users");
-    setUsers((sj.json?.users ?? []) as UserRow[]);
+    const rows = (sj.json?.users ?? []) as UserRow[];
+    setUsers(rows);
+    setUserEdits((prev) => {
+      const next = { ...prev };
+      rows.forEach((u) => {
+        if (next[u.user_id]) return;
+        next[u.user_id] = {
+          email: String(u.email ?? ""),
+          username: String(u.username ?? ""),
+          password: "",
+          roles: (u.roles?.length ? u.roles : [String(u.role ?? "")]).filter(Boolean),
+        };
+      });
+      return next;
+    });
   }
 
   async function refreshRoutes() {
@@ -284,6 +309,41 @@ export default function AccessAdminPage() {
     await runUserAudit();
   }
 
+  async function saveUser(user: UserRow) {
+    const edit = userEdits[user.user_id];
+    if (!edit) return;
+    if (!edit.email.trim()) return setMsg("Email required.");
+    if (!edit.username.trim()) return setMsg("Username required.");
+    if (!edit.roles.length) return setMsg("Select at least one role.");
+    setMsg("");
+    setUserSaving((prev) => ({ ...prev, [user.user_id]: true }));
+    const res = await fetch("/api/admin/users/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: user.user_id,
+        email: edit.email.trim(),
+        username: edit.username.trim(),
+        password: edit.password.trim() || undefined,
+        roles: edit.roles,
+        primary_role: edit.roles[0],
+      }),
+    });
+    const sj = await safeJson(res);
+    setUserSaving((prev) => ({ ...prev, [user.user_id]: false }));
+    if (!sj.ok) return setMsg(sj.json?.error || "Failed to update user");
+    if (sj.json?.warning) {
+      setMsg(String(sj.json.warning));
+    } else {
+      setMsg("User updated.");
+    }
+    setUserEdits((prev) => ({
+      ...prev,
+      [user.user_id]: { ...(prev[user.user_id] ?? edit), password: "" },
+    }));
+    await refreshUsers();
+  }
+
   async function runUserAudit() {
     setMsg("");
     setAuditLoading(true);
@@ -396,7 +456,7 @@ export default function AccessAdminPage() {
     const q = userQuery.trim().toLowerCase();
     if (!q) return users;
     return users.filter((u) => {
-      const hay = `${u.username ?? ""} ${u.email ?? ""} ${u.role ?? ""}`.toLowerCase();
+      const hay = `${u.username ?? ""} ${u.email ?? ""} ${u.role ?? ""} ${(u.roles ?? []).join(" ")}`.toLowerCase();
       return hay.includes(q);
     });
   }, [users, userQuery]);
@@ -709,12 +769,98 @@ export default function AccessAdminPage() {
                       <div style={{ fontSize: 11, opacity: 0.7 }}>{u.email || "No email"}</div>
                     </div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <div style={roleChip()}>{u.role || "—"}</div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        {(u.roles?.length ? u.roles : [u.role || "—"]).map((r) => (
+                          <div key={`${u.user_id}-${r}`} style={roleChip()}>{r}</div>
+                        ))}
+                      </div>
+                      <button
+                        style={btnGhost()}
+                        onClick={() =>
+                          setUserEditOpen((prev) => ({ ...prev, [u.user_id]: !prev[u.user_id] }))
+                        }
+                      >
+                        {userEditOpen[u.user_id] ? "Close" : "Edit"}
+                      </button>
                       <button style={dangerBtn()} onClick={() => deleteUser(u)}>
                         Delete
                       </button>
                     </div>
                   </div>
+                  {userEditOpen[u.user_id] ? (
+                    <div style={{ marginTop: 8, display: "grid", gap: 10 }}>
+                      <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+                        <label style={fieldLabel()}>
+                          Name
+                          <input
+                            value={userEdits[u.user_id]?.username ?? ""}
+                            onChange={(e) =>
+                              setUserEdits((prev) => ({
+                                ...prev,
+                                [u.user_id]: { ...(prev[u.user_id] ?? { email: "", username: "", password: "", roles: [] }), username: e.target.value },
+                              }))
+                            }
+                            style={input()}
+                          />
+                        </label>
+                        <label style={fieldLabel()}>
+                          Email
+                          <input
+                            value={userEdits[u.user_id]?.email ?? ""}
+                            onChange={(e) =>
+                              setUserEdits((prev) => ({
+                                ...prev,
+                                [u.user_id]: { ...(prev[u.user_id] ?? { email: "", username: "", password: "", roles: [] }), email: e.target.value },
+                              }))
+                            }
+                            style={input()}
+                          />
+                        </label>
+                        <label style={fieldLabel()}>
+                          New Password (optional)
+                          <input
+                            type="password"
+                            value={userEdits[u.user_id]?.password ?? ""}
+                            onChange={(e) =>
+                              setUserEdits((prev) => ({
+                                ...prev,
+                                [u.user_id]: { ...(prev[u.user_id] ?? { email: "", username: "", password: "", roles: [] }), password: e.target.value },
+                              }))
+                            }
+                            style={input()}
+                          />
+                        </label>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {USER_ROLE_OPTIONS.map((opt) => {
+                          const selected = (userEdits[u.user_id]?.roles ?? []).includes(opt.value);
+                          return (
+                            <button
+                              key={`${u.user_id}-${opt.value}`}
+                              type="button"
+                              onClick={() =>
+                                setUserEdits((prev) => {
+                                  const current = prev[u.user_id] ?? { email: "", username: "", password: "", roles: [] };
+                                  const nextRoles = selected
+                                    ? current.roles.filter((r) => r !== opt.value)
+                                    : [...current.roles, opt.value];
+                                  return { ...prev, [u.user_id]: { ...current, roles: nextRoles } };
+                                })
+                              }
+                              style={chip(selected)}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                        <button style={btn()} onClick={() => saveUser(u)} disabled={!!userSaving[u.user_id]}>
+                          {userSaving[u.user_id] ? "Saving..." : "Save User"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ))}
               {!filteredUsers.length ? <div style={{ opacity: 0.6, fontSize: 12 }}>No users found.</div> : null}

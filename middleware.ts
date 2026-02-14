@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -53,11 +54,13 @@ export async function middleware(request: NextRequest) {
     .select("role")
     .eq("user_id", data.user.id);
   const roleList = (roles ?? []).map((r) => String(r.role ?? "").toLowerCase()).filter(Boolean);
+  const roleSet = new Set(roleList);
   const { data: parent } = await supabase
     .from("parents")
     .select("id")
     .eq("auth_user_id", data.user.id)
     .maybeSingle();
+  if (parent?.id) roleSet.add("parent");
   const role = roleList.includes("admin")
     ? "admin"
     : parent?.id || roleList.includes("parent")
@@ -94,9 +97,24 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  const { data: routePerms } = await supabase
-    .from("route_permissions")
-    .select("route_path,allowed_roles");
+  let routePerms: Array<{ route_path: string; allowed_roles: string[] }> = [];
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (serviceKey) {
+    const adminClient = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      serviceKey,
+      { auth: { persistSession: false, autoRefreshToken: false } }
+    );
+    const { data: adminPerms } = await adminClient
+      .from("route_permissions")
+      .select("route_path,allowed_roles");
+    routePerms = (adminPerms ?? []) as Array<{ route_path: string; allowed_roles: string[] }>;
+  } else {
+    const { data: userPerms } = await supabase
+      .from("route_permissions")
+      .select("route_path,allowed_roles");
+    routePerms = (userPerms ?? []) as Array<{ route_path: string; allowed_roles: string[] }>;
+  }
 
   const matchRoute = (path: string, pattern: string) => {
     if (pattern === path) return true;
@@ -110,10 +128,19 @@ export async function middleware(request: NextRequest) {
     }
     return true;
   };
+  const matchRoutePrefix = (path: string, pattern: string) => {
+    if (pattern === "/") return path === "/";
+    if (!pattern || pattern === path) return false;
+    if (!path.startsWith(pattern)) return false;
+    return path.length === pattern.length || path[pattern.length] === "/";
+  };
 
   let matchedPerm: { route_path: string; allowed_roles: string[] } | null = null;
-  if (routePerms?.length) {
-    const matches = routePerms.filter((p: any) => matchRoute(pathname, String(p.route_path ?? "")));
+  if (routePerms.length) {
+    const matches = routePerms.filter((p) => {
+      const pattern = String(p.route_path ?? "");
+      return matchRoute(pathname, pattern) || matchRoutePrefix(pathname, pattern);
+    });
     if (matches.length) {
       matches.sort((a: any, b: any) => String(b.route_path).length - String(a.route_path).length);
       matchedPerm = matches[0];
@@ -122,7 +149,7 @@ export async function middleware(request: NextRequest) {
 
   if (matchedPerm) {
     const allowed = (matchedPerm.allowed_roles ?? []).map((r: any) => String(r).toLowerCase());
-    const hasAccess = role === "admin" || allowed.includes(role);
+    const hasAccess = roleSet.has("admin") || allowed.some((r) => roleSet.has(r));
     if (!hasAccess) {
       const url = request.nextUrl.clone();
       url.pathname = "/";
@@ -131,13 +158,13 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  if (pathname.startsWith("/admin") && role !== "admin") {
+  if (pathname.startsWith("/admin") && !roleSet.has("admin")) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return NextResponse.redirect(url);
   }
 
-  if ((pathname.startsWith("/coach") || pathname.startsWith("/classroom")) && !["admin", "coach"].includes(role)) {
+  if ((pathname.startsWith("/coach") || pathname.startsWith("/classroom")) && !["admin", "coach", "classroom"].some((r) => roleSet.has(r))) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return NextResponse.redirect(url);
