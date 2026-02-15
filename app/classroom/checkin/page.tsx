@@ -68,6 +68,12 @@ type ClassEmote = {
   key: string;
   label: string;
   emoji: string;
+  image_url?: string | null;
+  html?: string;
+  css?: string;
+  js?: string;
+  scale?: number;
+  duration_ms?: number;
 };
 type SuggestedRow = {
   id: string;
@@ -82,6 +88,7 @@ type RedeemStatusLite = {
   can_redeem: boolean;
   available_points: number;
 };
+type RecipientRow = { id: string; name: string };
 
 function toLocalDateKey(value: Date) {
   const year = value.getFullYear();
@@ -167,6 +174,34 @@ function safeAccentColor(input?: string | null) {
   return "#38bdf8";
 }
 
+function buildEmoteSrcDoc(html?: string, css?: string, js?: string) {
+  const bodyHtml = String(html ?? "");
+  const styleCss = String(css ?? "");
+  const scriptJs = String(js ?? "");
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+    }
+    * { box-sizing: border-box; }
+  </style>
+  <style>${styleCss}</style>
+</head>
+<body>
+  ${bodyHtml}
+  ${scriptJs ? `<script>${scriptJs}<\/script>` : ""}
+</body>
+</html>`;
+}
+
 function renderAvatarModel(row: {
   avatar_storage_path?: string | null;
   avatar_bg?: string | null;
@@ -216,6 +251,7 @@ export default function ClassroomCheckinPage() {
   const [rosterLoading, setRosterLoading] = useState(false);
   const [suggestedRows, setSuggestedRows] = useState<SuggestedRow[]>([]);
   const [redeemByStudent, setRedeemByStudent] = useState<Record<string, RedeemStatusLite>>({});
+  const [recentRedeemedByStudent, setRecentRedeemedByStudent] = useState<Record<string, number>>({});
   const [msg, setMsg] = useState("");
   const [okMsg, setOkMsg] = useState("");
   const [overlayOpen, setOverlayOpen] = useState(false);
@@ -223,13 +259,81 @@ export default function ClassroomCheckinPage() {
   const [emotes, setEmotes] = useState<ClassEmote[]>([]);
   const [senderName, setSenderName] = useState("");
   const [recipientName, setRecipientName] = useState("");
+  const [recipientRows, setRecipientRows] = useState<RecipientRow[]>([]);
+  const [recipientSearching, setRecipientSearching] = useState(false);
+  const [uncheckingIds, setUncheckingIds] = useState<Record<string, boolean>>({});
   const [selectedEmoteId, setSelectedEmoteId] = useState("");
   const [emotePopup, setEmotePopup] = useState<null | {
     message: string;
-    emote: { label: string; emoji: string; image_url?: string | null; html?: string; css?: string; js?: string };
+    emote: { label: string; emoji: string; image_url?: string | null; html?: string; css?: string; js?: string; scale?: number; duration_ms?: number };
   }>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const easternTodayRef = useRef(selectedDate);
+  const redeemByStudentRef = useRef<Record<string, RedeemStatusLite>>({});
+  const redeemFetchInFlightRef = useRef<Set<string>>(new Set());
+  const emotePopupTimerRef = useRef<number | null>(null);
+  const recipientTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    redeemByStudentRef.current = redeemByStudent;
+  }, [redeemByStudent]);
+
+  useEffect(() => {
+    return () => {
+      if (emotePopupTimerRef.current) window.clearTimeout(emotePopupTimerRef.current);
+      if (recipientTimerRef.current) clearTimeout(recipientTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sendOpen) {
+      setRecipientRows([]);
+      setRecipientSearching(false);
+      if (recipientTimerRef.current) clearTimeout(recipientTimerRef.current);
+      return;
+    }
+    const q = recipientName.trim();
+    if (!q) {
+      setRecipientRows([]);
+      setRecipientSearching(false);
+      if (recipientTimerRef.current) clearTimeout(recipientTimerRef.current);
+      return;
+    }
+    if (recipientTimerRef.current) clearTimeout(recipientTimerRef.current);
+    recipientTimerRef.current = setTimeout(async () => {
+      setRecipientSearching(true);
+      const res = await fetch("/api/students/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q }),
+      });
+      const sj = await safeJson(res);
+      setRecipientSearching(false);
+      if (!sj.ok) return;
+      setRecipientRows(((sj.json?.students ?? []) as RecipientRow[]).slice(0, 8));
+    }, 180);
+  }, [sendOpen, recipientName]);
+
+  async function loadRedeemStatuses(studentIds: string[]) {
+    const uniqueIds = Array.from(new Set(studentIds.map((id) => String(id).trim()).filter(Boolean)));
+    if (!uniqueIds.length) return;
+    const pendingIds = uniqueIds.filter(
+      (id) => !redeemByStudentRef.current[id] && !redeemFetchInFlightRef.current.has(id)
+    );
+    if (!pendingIds.length) return;
+    pendingIds.forEach((id) => redeemFetchInFlightRef.current.add(id));
+    const res = await fetch("/api/avatar/daily-status-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ student_ids: pendingIds }),
+    });
+    const sj = await safeJson(res);
+    pendingIds.forEach((id) => redeemFetchInFlightRef.current.delete(id));
+    if (!sj.ok) return;
+    const map = (sj.json?.statuses ?? {}) as Record<string, RedeemStatusLite>;
+    if (!map || typeof map !== "object") return;
+    setRedeemByStudent((prev) => ({ ...prev, ...map }));
+  }
 
   useEffect(() => {
     (async () => {
@@ -314,8 +418,11 @@ export default function ClassroomCheckinPage() {
     });
     const sj = await safeJson(res);
     if (sj.ok) {
-      setRoster((sj.json?.roster ?? []) as RosterRow[]);
-      const unique = new Set(((sj.json?.roster ?? []) as any[]).map((r) => String(r?.student?.id ?? "")).filter(Boolean));
+      const nextRoster = (sj.json?.roster ?? []) as RosterRow[];
+      setRoster(nextRoster);
+      const ids = nextRoster.map((r) => String(r?.student?.id ?? "")).filter(Boolean);
+      await loadRedeemStatuses(ids);
+      const unique = new Set(ids);
       setClassCounts((prev) => ({ ...prev, [id]: unique.size }));
     }
     setRosterLoading(false);
@@ -334,7 +441,9 @@ export default function ClassroomCheckinPage() {
     });
     const sj = await safeJson(res);
     if (!sj.ok) return setSuggestedRows([]);
-    setSuggestedRows((sj.json?.suggestions ?? []) as SuggestedRow[]);
+    const suggestions = (sj.json?.suggestions ?? []) as SuggestedRow[];
+    setSuggestedRows(suggestions);
+    await loadRedeemStatuses(suggestions.map((s) => String(s.id)));
   }
 
   useEffect(() => {
@@ -354,21 +463,8 @@ export default function ClassroomCheckinPage() {
         ...roster.map((r) => String(r.student?.id ?? "")),
       ].filter(Boolean))
     );
-    if (!ids.length) {
-      setRedeemByStudent({});
-      return;
-    }
-    (async () => {
-      const res = await fetch("/api/avatar/daily-status-batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ student_ids: ids }),
-      });
-      const sj = await safeJson(res);
-      if (!sj.ok) return;
-      const map = (sj.json?.statuses ?? {}) as Record<string, RedeemStatusLite>;
-      setRedeemByStudent(map);
-    })();
+    if (!ids.length) return;
+    loadRedeemStatuses(ids);
   }, [suggestedRows, searchRows, roster]);
 
   useEffect(() => {
@@ -388,7 +484,9 @@ export default function ClassroomCheckinPage() {
       });
       const sj = await safeJson(res);
       if (sj.ok) {
-        setSearchRows((sj.json?.students ?? []) as StudentRow[]);
+        const students = (sj.json?.students ?? []) as StudentRow[];
+        setSearchRows(students);
+        await loadRedeemStatuses(students.map((s) => String(s.id)));
         setMsg("");
       } else {
         setSearchRows([]);
@@ -426,6 +524,7 @@ export default function ClassroomCheckinPage() {
     setQuery("");
     setSearchRows([]);
     if (sj.json?.emote_popup) {
+      const popupDuration = Math.max(500, Math.min(20000, Number(sj.json?.emote_popup?.emote?.duration_ms ?? 3000) || 3000));
       setEmotePopup({
         message: String(sj.json?.emote_popup?.message ?? ""),
         emote: {
@@ -435,9 +534,12 @@ export default function ClassroomCheckinPage() {
           html: String(sj.json?.emote_popup?.emote?.html ?? ""),
           css: String(sj.json?.emote_popup?.emote?.css ?? ""),
           js: String(sj.json?.emote_popup?.emote?.js ?? ""),
+          scale: Math.max(0.2, Math.min(4, Number(sj.json?.emote_popup?.emote?.scale ?? 1) || 1)),
+          duration_ms: popupDuration,
         },
       });
-      window.setTimeout(() => setEmotePopup(null), 4200);
+      if (emotePopupTimerRef.current) window.clearTimeout(emotePopupTimerRef.current);
+      emotePopupTimerRef.current = window.setTimeout(() => setEmotePopup(null), popupDuration);
     }
     await loadRoster(instanceId);
     await loadSuggested(activeCard);
@@ -456,6 +558,7 @@ export default function ClassroomCheckinPage() {
     const points = Math.max(0, Number(sj.json?.points ?? status.available_points ?? 0));
     setOkMsg(`✨ ${student.name} redeemed +${points} pts`);
     setMsg("");
+    setRecentRedeemedByStudent((prev) => ({ ...prev, [String(student.id)]: points }));
     setRedeemByStudent((prev) => ({
       ...prev,
       [student.id]: { can_redeem: false, available_points: 0 },
@@ -463,16 +566,31 @@ export default function ClassroomCheckinPage() {
   }
 
   async function uncheckStudent(row: RosterRow) {
+    if (uncheckingIds[row.checkin_id]) return;
+    const previousRoster = roster;
+    const optimisticRoster = previousRoster.filter((r) => r.checkin_id !== row.checkin_id);
+    setUncheckingIds((prev) => ({ ...prev, [row.checkin_id]: true }));
+    setRoster(optimisticRoster);
+    setClassCounts((prev) => ({ ...prev, [instanceId]: Math.max(0, (prev[instanceId] ?? previousRoster.length) - 1) }));
     const res = await fetch("/api/checkin/remove", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ checkin_id: row.checkin_id, instance_id: instanceId }),
     });
     const sj = await safeJson(res);
-    if (!sj.ok) return setMsg(String(sj.json?.error ?? "Uncheck failed"));
+    setUncheckingIds((prev) => {
+      const next = { ...prev };
+      delete next[row.checkin_id];
+      return next;
+    });
+    if (!sj.ok) {
+      setRoster(previousRoster);
+      setClassCounts((prev) => ({ ...prev, [instanceId]: previousRoster.length }));
+      return setMsg(String(sj.json?.error ?? "Uncheck failed"));
+    }
     setOkMsg(`Removed ${row.student.name} from roster`);
-    await loadRoster(instanceId);
     await loadSuggested(activeCard);
+    loadRoster(instanceId);
   }
 
   async function sendEmote() {
@@ -493,6 +611,7 @@ export default function ClassroomCheckinPage() {
     setSendOpen(false);
     setSenderName("");
     setRecipientName("");
+    setRecipientRows([]);
     setOkMsg("Emote sent");
   }
 
@@ -748,14 +867,17 @@ export default function ClassroomCheckinPage() {
           animation: overlayIn 140ms ease;
         }
         .overlay-panel {
-          width: min(1520px, calc(100vw - 16px)); max-height: calc(100vh - 10px); overflow: auto;
+          width: min(1240px, calc(100vw - 18px));
+          min-height: min(860px, calc(100vh - 20px));
+          max-height: calc(100vh - 10px);
+          overflow: auto;
           border-radius: 22px; border: 1px solid rgba(148,163,184,0.32);
           background: linear-gradient(160deg, rgba(248,250,252,0.98), rgba(239,246,255,0.98));
           box-shadow: 0 22px 52px rgba(15,23,42,0.24);
-          padding: 16px;
+          padding: 18px;
         }
         .checkin-panel {
-          border-radius: 20px; border: 1px solid rgba(148,163,184,0.32); background: rgba(255,255,255,0.78); padding: 12px; display: grid; gap: 10px;
+          border-radius: 20px; border: 1px solid rgba(148,163,184,0.32); background: rgba(255,255,255,0.78); padding: 16px; display: grid; gap: 12px;
         }
         .suggested-row {
           display: grid;
@@ -778,8 +900,8 @@ export default function ClassroomCheckinPage() {
           background: linear-gradient(140deg, rgba(16,185,129,0.16), rgba(21,128,61,0.08));
           box-shadow: 0 10px 20px rgba(6,78,59,0.14);
         }
-        .input-box { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(148,163,184,0.35); background: rgba(255,255,255,0.92); color: #0f172a; }
-        .search-list { display: grid; gap: 6px; max-height: 220px; overflow: auto; }
+        .input-box { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(148,163,184,0.35); background: rgba(255,255,255,0.92); color: #0f172a; font-size: 22px; font-weight: 900; }
+        .search-list { display: grid; gap: 8px; max-height: 280px; overflow: auto; }
         .search-row {
           border-radius: 12px; border: 1px solid rgba(148,163,184,0.26); background: rgba(255,255,255,0.92); padding: 8px 10px;
           display: flex; justify-content: space-between; align-items: center; gap: 10px;
@@ -797,10 +919,22 @@ export default function ClassroomCheckinPage() {
           animation: redeemMiniGlow 1.9s ease-in-out infinite;
           white-space: nowrap;
         }
-        .roster-grid { display: grid; gap: 8px; max-height: 360px; overflow: auto; }
+        .roster-grid { display: grid; gap: 10px; max-height: 520px; overflow: auto; }
         .roster-pill {
-          border-radius: 10px; border: 1px solid rgba(148,163,184,0.25); background: rgba(255,255,255,0.92); padding: 7px 9px;
-          font-size: 14px; font-weight: 800; display: flex; align-items: center; gap: 10px;
+          border-radius: 12px; border: 1px solid rgba(148,163,184,0.25); background: rgba(255,255,255,0.92); padding: 10px 12px;
+          font-size: 16px; font-weight: 900; display: flex; align-items: center; gap: 12px;
+        }
+        .redeemed-row-chip {
+          border-radius: 999px;
+          border: 1px solid rgba(16,185,129,0.52);
+          background: linear-gradient(140deg, rgba(16,185,129,0.2), rgba(34,197,94,0.16));
+          color: #065f46;
+          font-size: 11px;
+          font-weight: 1000;
+          letter-spacing: 0.03em;
+          padding: 4px 8px;
+          white-space: nowrap;
+          box-shadow: 0 0 12px rgba(16,185,129,0.26);
         }
         .welcome-chip {
           display: inline-flex; gap: 8px; align-items: center; justify-content: center; text-align: center; padding: 7px 11px; border-radius: 999px;
@@ -921,10 +1055,10 @@ export default function ClassroomCheckinPage() {
       {overlayOpen && activeCard ? (
         <div className="overlay-wrap" onClick={() => setOverlayOpen(false)}>
           <div className="overlay-panel gentle-fade" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
               <div style={{ display: "grid", gap: 2 }}>
-                <div style={{ fontSize: 22, fontWeight: 1000, color: "#0f172a" }}>{activeCard.name}</div>
-                <div style={{ fontSize: 13, opacity: 0.75, color: "#0f172a" }}>
+                <div style={{ fontSize: 26, fontWeight: 1000, color: "#0f172a" }}>{activeCard.name}</div>
+                <div style={{ fontSize: 15, opacity: 0.75, color: "#0f172a" }}>
                   {activeCard.time} • {activeCard.instructors.join(", ")} • {classCounts[activeCard.id] ?? 0} checked in
                 </div>
               </div>
@@ -934,7 +1068,7 @@ export default function ClassroomCheckinPage() {
             </div>
 
             <div className="checkin-panel">
-              <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.08fr 0.92fr", gap: 14 }}>
                 <div style={{ display: "grid", gap: 8 }}>
                   <div style={{ fontWeight: 1000, fontSize: 17, color: "#0f172a" }}>
                     Suggested (top 5 + swipe for more)
@@ -947,7 +1081,7 @@ export default function ClassroomCheckinPage() {
                         </button>
                         {redeemByStudent[s.id]?.can_redeem ? (
                           <button className="redeem-mini" onClick={() => redeemStudentDaily({ id: s.id, name: s.name })}>
-                            Redeem +{Math.round(Number(redeemByStudent[s.id]?.available_points ?? 0))}
+                            Daily Redeem +{Math.round(Number(redeemByStudent[s.id]?.available_points ?? 0))}
                           </button>
                         ) : null}
                       </div>
@@ -962,7 +1096,7 @@ export default function ClassroomCheckinPage() {
                           </button>
                           {redeemByStudent[s.id]?.can_redeem ? (
                             <button className="redeem-mini" onClick={() => redeemStudentDaily({ id: s.id, name: s.name })}>
-                              Redeem +{Math.round(Number(redeemByStudent[s.id]?.available_points ?? 0))}
+                              Daily Redeem +{Math.round(Number(redeemByStudent[s.id]?.available_points ?? 0))}
                             </button>
                           ) : null}
                         </div>
@@ -985,27 +1119,27 @@ export default function ClassroomCheckinPage() {
                             const avatar = renderAvatarModel(s);
                             return (
                               <AvatarRender
-                                size={32}
+                                size={46}
                                 bg={avatar.bg}
                                 avatarSrc={avatar.src || undefined}
                                 border={avatar.border}
                                 effect={avatar.effect}
                                 showImageBorder={true}
                                 contextKey="classroom_checkin"
-                                style={{ borderRadius: 999 }}
+                                style={{ borderRadius: 10 }}
                                 fallback={<span style={{ fontSize: 10, opacity: 0.7 }}>{s.name.slice(0, 1)}</span>}
                               />
                             );
                           })()}
                           <div>
-                            <div style={{ fontWeight: 900, color: "#0f172a" }}>{s.name}</div>
-                            <div style={{ fontSize: 11, opacity: 0.75, color: "#334155" }}>Lv {s.level} • {s.points_total} pts</div>
+                            <div style={{ fontWeight: 1000, fontSize: 16, color: "#0f172a" }}>{s.name}</div>
+                            <div style={{ fontSize: 13, opacity: 0.75, color: "#334155" }}>Lv {s.level} • {s.points_total} pts</div>
                           </div>
                         </div>
                         <button className="suggested-chip" onClick={() => checkIn({ id: s.id, name: s.name })}>Check In</button>
                         {redeemByStudent[s.id]?.can_redeem ? (
                           <button className="redeem-mini" onClick={() => redeemStudentDaily({ id: s.id, name: s.name })}>
-                            Redeem +{Math.round(Number(redeemByStudent[s.id]?.available_points ?? 0))}
+                            Daily Redeem +{Math.round(Number(redeemByStudent[s.id]?.available_points ?? 0))}
                           </button>
                         ) : null}
                       </div>
@@ -1036,20 +1170,30 @@ export default function ClassroomCheckinPage() {
                           const avatar = renderAvatarModel(row.student);
                           return (
                         <AvatarRender
-                          size={34}
+                          size={56}
                           bg={avatar.bg}
                           avatarSrc={avatar.src || undefined}
                           border={avatar.border}
                           effect={avatar.effect}
                           showImageBorder={true}
                           contextKey="classroom_checkin"
-                          style={{ borderRadius: 999 }}
+                          style={{ borderRadius: 12 }}
                           fallback={<span style={{ fontSize: 10, opacity: 0.7 }}>{row.student.name.slice(0, 1)}</span>}
                         />
                           );
                         })()}
-                        <span style={{ color: "#0f172a" }}>{row.student.name}</span>
-                        <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.75, color: "#334155" }}>
+                        <span style={{ color: "#0f172a", fontSize: 17 }}>{row.student.name}</span>
+                        {recentRedeemedByStudent[String(row.student.id)] ? (
+                          <span className="redeemed-row-chip">
+                            Just redeemed +{Math.round(Number(recentRedeemedByStudent[String(row.student.id)] ?? 0))} pts
+                          </span>
+                        ) : null}
+                        {redeemByStudent[String(row.student.id)]?.can_redeem ? (
+                          <button className="redeem-mini" onClick={() => redeemStudentDaily({ id: row.student.id, name: row.student.name })}>
+                            Daily Redeem +{Math.round(Number(redeemByStudent[String(row.student.id)]?.available_points ?? 0))}
+                          </button>
+                        ) : null}
+                        <span style={{ marginLeft: "auto", fontSize: 13, opacity: 0.8, color: "#334155", fontWeight: 900 }}>
                           Lv {row.student.level} • {row.student.points_total} pts
                         </span>
                         <button
@@ -1057,8 +1201,9 @@ export default function ClassroomCheckinPage() {
                           className="suggested-chip"
                           style={{ marginLeft: 8, background: "rgba(239,68,68,0.12)", borderColor: "rgba(239,68,68,0.35)", color: "#991b1b" }}
                           onClick={() => uncheckStudent(row)}
+                          disabled={!!uncheckingIds[row.checkin_id]}
                         >
-                          Uncheck
+                          {uncheckingIds[row.checkin_id] ? "Removing..." : "Uncheck"}
                         </button>
                       </div>
                     ))}
@@ -1078,6 +1223,25 @@ export default function ClassroomCheckinPage() {
             <div style={{ display: "grid", gap: 10 }}>
               <input className="input-box" placeholder="Sender name" value={senderName} onChange={(e) => setSenderName(e.target.value)} />
               <input className="input-box" placeholder="Recipient name" value={recipientName} onChange={(e) => setRecipientName(e.target.value)} />
+              {recipientName.trim() ? (
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ fontSize: 12, opacity: 0.72, color: "#0f172a" }}>
+                    {recipientSearching ? "Finding students..." : recipientRows.length ? "Suggested recipients" : "No student matches"}
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {recipientRows.map((r) => (
+                      <button
+                        key={r.id}
+                        type="button"
+                        className="suggested-chip"
+                        onClick={() => setRecipientName(String(r.name ?? ""))}
+                      >
+                        {r.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                 {emotes.map((e) => (
                   <button
@@ -1100,14 +1264,58 @@ export default function ClassroomCheckinPage() {
         </div>
       ) : null}
       {emotePopup ? (
-        <div className="overlay-wrap" onClick={() => setEmotePopup(null)}>
-          <div className="overlay-panel gentle-fade" style={{ width: "min(720px, calc(100vw - 20px))", maxHeight: "unset", textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontSize: 44, lineHeight: 1 }}>{emotePopup.emote.emoji}</div>
-            <div style={{ fontSize: 22, fontWeight: 1000, color: "#0f172a", marginTop: 8 }}>{emotePopup.emote.label}</div>
-            {emotePopup.emote.image_url ? (
-              <img src={String(emotePopup.emote.image_url)} alt={emotePopup.emote.label} style={{ width: 140, height: 140, objectFit: "contain", margin: "10px auto" }} />
-            ) : null}
-            <div style={{ fontWeight: 900, color: "#075985", fontSize: 16 }}>{emotePopup.message}</div>
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 130,
+            pointerEvents: "none",
+            display: "grid",
+            placeItems: "center",
+          }}
+        >
+          <div
+            className="gentle-fade"
+            style={{
+              width: 280,
+              height: 280,
+              transform: `scale(${Math.max(0.2, Math.min(4, Number(emotePopup.emote.scale ?? 1) || 1))})`,
+              transformOrigin: "center center",
+              background: "transparent",
+            }}
+          >
+            {String(emotePopup.emote.html ?? "").trim() || String(emotePopup.emote.css ?? "").trim() || String(emotePopup.emote.js ?? "").trim() ? (
+              <iframe
+                title="checkin-emote"
+                srcDoc={buildEmoteSrcDoc(emotePopup.emote.html, emotePopup.emote.css, emotePopup.emote.js)}
+                sandbox="allow-scripts"
+                style={{ width: "100%", height: "100%", border: "none", background: "transparent", pointerEvents: "none" }}
+              />
+            ) : emotePopup.emote.image_url ? (
+              <img src={String(emotePopup.emote.image_url)} alt={emotePopup.emote.label} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+            ) : (
+              <div style={{ fontSize: 120, lineHeight: "280px", textAlign: "center" }}>{emotePopup.emote.emoji}</div>
+            )}
+          </div>
+          <div
+            className="gentle-fade"
+            style={{
+              position: "fixed",
+              left: "50%",
+              bottom: "8vh",
+              transform: "translateX(-50%)",
+              padding: "10px 16px",
+              borderRadius: 999,
+              fontWeight: 900,
+              color: "#bae6fd",
+              fontSize: 16,
+              background: "rgba(2,6,23,0.78)",
+              border: "1px solid rgba(186,230,253,0.32)",
+              textAlign: "center",
+              maxWidth: "min(92vw, 900px)",
+            }}
+          >
+            {emotePopup.message}
           </div>
         </div>
       ) : null}

@@ -85,6 +85,7 @@ type AvatarChoice = {
   skill_pulse_multiplier?: number | null;
   spotlight_multiplier?: number | null;
   daily_free_points?: number | null;
+  mvp_bonus_pct?: number | null;
   zoom_pct?: number | null;
   competition_only?: boolean | null;
   competition_discount_pct?: number | null;
@@ -3075,6 +3076,7 @@ export function DashboardInner() {
       skillPulse: normalizeMultiplier(selectedAvatar.skill_pulse_multiplier, 1),
       spotlight: normalizeMultiplier(selectedAvatar.spotlight_multiplier, 1),
       daily: normalizePoints(selectedAvatar.daily_free_points, 0),
+      mvpBonusPct: normalizePoints(selectedAvatar.mvp_bonus_pct, 0),
     };
   }, [selectedAvatar]);
   const baseRulePoints = ruleBasePoints();
@@ -3083,13 +3085,15 @@ export function DashboardInner() {
   const auraSkillPulseMultiplier = Math.max(1, Math.ceil(activeAura?.skillPulse ?? 1));
   const auraSpotlightMultiplier = Math.max(1, Math.ceil(activeAura?.spotlight ?? 1));
   const auraDailyPoints = Math.ceil(activeAura?.daily ?? 0);
+  const auraMvpBonusPct = Math.max(0, Math.round(Number(activeAura?.mvpBonusPct ?? 0)));
   const hasAuraModifier = Boolean(
     activeAura &&
       ((activeAura.ruleKeeper ?? 1) !== 1 ||
         (activeAura.ruleBreaker ?? 1) !== 1 ||
         (activeAura.skillPulse ?? 1) !== 1 ||
         (activeAura.spotlight ?? 1) !== 1 ||
-        (activeAura.daily ?? 0) > 0)
+        (activeAura.daily ?? 0) > 0 ||
+        (activeAura.mvpBonusPct ?? 0) > 0)
   );
   const dailyBonusNext = useMemo(() => {
     const base = avatarSettings?.avatar_daily_granted_at || avatarSettings?.avatar_set_at;
@@ -3814,6 +3818,11 @@ function flashCardPlateUnlock(key: string, points: number) {
                                 {dailyBonusNext.ready ? (dailyClaimBusy ? "Claiming..." : "Redeem") : "Locked"}
                               </button>
                             ) : null}
+                          </div>
+                          <div style={auraTile("rgba(250,204,21,0.85)", auraMvpBonusPct > 0)}>
+                            <div style={auraTileLabel()}>MVP Bonus</div>
+                            <div style={auraTileValue()}>{auraMvpBonusPct}%</div>
+                            <div style={auraTileNote()}>Adds bonus on MVP extra points</div>
                           </div>
                         </div>
                       </div>

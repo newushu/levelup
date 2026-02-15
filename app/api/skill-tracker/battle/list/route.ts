@@ -204,14 +204,19 @@ export async function GET(req: Request) {
   const plateKeys = Array.from(
     new Set((settings ?? []).map((s: any) => String(s.card_plate_key ?? "").trim()).filter(Boolean))
   );
-  const avatarMap = new Map<string, { storage_path: string | null }>();
+  const avatarMap = new Map<string, { storage_path: string | null; mvp_bonus_pct: number }>();
   if (avatarIds.length) {
     const { data: avatars, error: avErr } = await supabase
       .from("avatars")
-      .select("id,storage_path")
+      .select("id,storage_path,mvp_bonus_pct")
       .in("id", avatarIds);
     if (avErr) return NextResponse.json({ ok: false, error: avErr.message }, { status: 500 });
-    (avatars ?? []).forEach((a: any) => avatarMap.set(String(a.id), { storage_path: a.storage_path ?? null }));
+    (avatars ?? []).forEach((a: any) =>
+      avatarMap.set(String(a.id), {
+        storage_path: a.storage_path ?? null,
+        mvp_bonus_pct: Math.max(0, Number(a.mvp_bonus_pct ?? 0)),
+      })
+    );
   }
 
   const borderByKey = new Map<string, {
@@ -336,12 +341,13 @@ export async function GET(req: Request) {
       corner_border_offset_y?: number | null;
       corner_border_offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null }> | null;
       card_plate_url: string | null;
+      mvp_bonus_pct: number;
     }
   >();
   (settings ?? []).forEach((s: any) => {
     const id = String(s.student_id ?? "");
     const avatarId = String(s.avatar_id ?? "");
-    const avatar = avatarMap.get(avatarId) ?? { storage_path: null };
+    const avatar = avatarMap.get(avatarId) ?? { storage_path: null, mvp_bonus_pct: 0 };
     const effectKey = String(s.particle_style ?? "").trim();
     const effect = effectKey ? effectByKey.get(effectKey) : null;
     const level = studentById.get(id)?.level ?? 1;
@@ -374,6 +380,7 @@ export async function GET(req: Request) {
       corner_border_offset_y: borderOk ? Number(border?.offset_y ?? 0) : 0,
       corner_border_offsets_by_context: borderOk ? (border?.offsets_by_context ?? {}) : {},
       card_plate_url: plateOk ? plate?.image_url ?? null : null,
+      mvp_bonus_pct: avatar.mvp_bonus_pct ?? 0,
     });
   });
 
@@ -396,6 +403,7 @@ export async function GET(req: Request) {
         particle_style: null,
         corner_border_url: null,
         card_plate_url: null,
+        mvp_bonus_pct: 0,
       };
       return {
         id: pid,
@@ -414,6 +422,7 @@ export async function GET(req: Request) {
         corner_border_offset_y: avatar.corner_border_offset_y ?? 0,
         corner_border_offsets_by_context: avatar.corner_border_offsets_by_context ?? {},
         card_plate_url: avatar.card_plate_url ?? null,
+        mvp_bonus_pct: Math.max(0, Number(avatar.mvp_bonus_pct ?? 0)),
         attempts,
         successes,
         attempts_list: list.map((x) => x.success),
@@ -444,8 +453,8 @@ export async function GET(req: Request) {
     const rightRate30 = rightHist30.attempts ? Math.round((rightHist30.successes / rightHist30.attempts) * 100) : 0;
     const leftStudent = studentById.get(leftId) ?? { name: "Student", level: 0, points_total: 0 };
     const rightStudent = studentById.get(rightId) ?? { name: "Student", level: 0, points_total: 0 };
-    const left_avatar = avatarByStudent.get(leftId) ?? { storage_path: null, bg_color: null, particle_style: null, corner_border_url: null, card_plate_url: null };
-    const right_avatar = avatarByStudent.get(rightId) ?? { storage_path: null, bg_color: null, particle_style: null, corner_border_url: null, card_plate_url: null };
+    const left_avatar = avatarByStudent.get(leftId) ?? { storage_path: null, bg_color: null, particle_style: null, corner_border_url: null, card_plate_url: null, mvp_bonus_pct: 0 };
+    const right_avatar = avatarByStudent.get(rightId) ?? { storage_path: null, bg_color: null, particle_style: null, corner_border_url: null, card_plate_url: null, mvp_bonus_pct: 0 };
     let mvpIds =
       (r.battle_mode ?? "duel") === "teams" || (r.battle_mode ?? "duel") === "lanes" ? mvpByBattle.get(r.id) ?? [] : [];
     const fallbackTeamA = Array.isArray(r.team_a_ids) && r.team_a_ids.length ? r.team_a_ids.map(String) : participants.slice(0, Math.max(1, Math.ceil(participants.length / 2)));
@@ -482,7 +491,15 @@ export async function GET(req: Request) {
     }
 
     const computePointsDelta = () => {
-      if (!r.settled_at) return new Map<string, number>();
+      if (!r.settled_at) {
+        const zeroMap = new Map<string, number>();
+        participants.forEach((id) => zeroMap.set(id, 0));
+        return {
+          pointsDeltaById: zeroMap,
+          basePointsDeltaById: new Map(zeroMap),
+          mvpBonusPointsById: new Map(zeroMap),
+        };
+      }
       const battleMode = r.battle_mode ?? "duel";
       const target = Math.max(1, Number(r.repetitions_target ?? 1));
       const pointsPerRep = Math.max(3, Number(r.wager_pct ?? 5));
@@ -527,9 +544,14 @@ export async function GET(req: Request) {
         payoutTotal = wagerAmount > 0 ? wagerAmount * participants.length : lead * pointsPerRep;
       }
       const pointsDeltaById = new Map<string, number>();
+      const basePointsDeltaById = new Map<string, number>();
+      const mvpBonusPointsById = new Map<string, number>();
+      const mvpBonusPctById = new Map<string, number>(participantDetails.map((p) => [p.id, Math.max(0, Number((p as any).mvp_bonus_pct ?? 0))]));
       participants.forEach((id) => pointsDeltaById.set(id, 0));
+      participants.forEach((id) => basePointsDeltaById.set(id, 0));
+      participants.forEach((id) => mvpBonusPointsById.set(id, 0));
       if (!winnerIds.length && payoutTotal <= 0 && !mvpIds.length) {
-        return pointsDeltaById;
+        return { pointsDeltaById, basePointsDeltaById, mvpBonusPointsById };
       }
 
       const baseWinById = new Map<string, number>();
@@ -541,10 +563,12 @@ export async function GET(req: Request) {
           const netShare = Math.max(0, share - wagerAmount);
           participants.forEach((id) => {
             pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) - wagerAmount);
+            basePointsDeltaById.set(id, (basePointsDeltaById.get(id) ?? 0) - wagerAmount);
             lossById.set(id, wagerAmount);
           });
           winnerIds.forEach((id) => {
             if (share > 0) pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + share);
+            if (share > 0) basePointsDeltaById.set(id, (basePointsDeltaById.get(id) ?? 0) + share);
             baseWinById.set(id, share);
             netWinById.set(id, netShare);
           });
@@ -597,6 +621,7 @@ export async function GET(req: Request) {
           });
           loserDebits.forEach((debit, id) => {
             pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) - debit);
+            basePointsDeltaById.set(id, (basePointsDeltaById.get(id) ?? 0) - debit);
             lossById.set(id, debit);
           });
           winnerIds.forEach((id) => {
@@ -604,11 +629,22 @@ export async function GET(req: Request) {
             const payout = Math.max(0, baseWin + extra);
             if (payout <= 0) return;
             pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + payout);
+            basePointsDeltaById.set(id, (basePointsDeltaById.get(id) ?? 0) + payout);
             baseWinById.set(id, payout);
             netWinById.set(id, payout);
           });
         }
       }
+
+      const addMvpAward = (id: string, baseAward: number) => {
+        const base = Math.max(0, Math.round(Number(baseAward ?? 0)));
+        if (base <= 0) return;
+        const pct = Math.max(0, Number(mvpBonusPctById.get(id) ?? 0));
+        const bonus = Math.max(0, Math.round(base * (pct / 100)));
+        pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + base + bonus);
+        basePointsDeltaById.set(id, (basePointsDeltaById.get(id) ?? 0) + base);
+        mvpBonusPointsById.set(id, (mvpBonusPointsById.get(id) ?? 0) + bonus);
+      };
 
       mvpIds.forEach((id) => {
         const baseWin = baseWinById.get(id) ?? 0;
@@ -616,46 +652,50 @@ export async function GET(req: Request) {
         if (battleMode === "teams") {
           if (!winnerIds.length) return;
           if (winnerIds.includes(id) && netWin > 0) {
-            pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + netWin);
+            addMvpAward(id, netWin);
             return;
           }
           if (winnerIds.length && !winnerIds.includes(id)) {
             const refund = lossById.get(id) ?? 0;
-            if (refund > 0) pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + refund);
+            const refundCap = Math.max(0, Math.min(refund, 50));
+            if (refundCap > 0) {
+              pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + refundCap);
+              basePointsDeltaById.set(id, (basePointsDeltaById.get(id) ?? 0) + refundCap);
+            }
             return;
           }
         }
         if (battleMode === "lanes") {
           if (!winnerIds.length) {
-            pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + 10);
+            addMvpAward(id, 10);
             return;
           }
           if (winnerIds.includes(id) && netWin > 0) {
-            pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + netWin);
+            addMvpAward(id, netWin);
             return;
           }
           if (winnerIds.length && !winnerIds.includes(id)) {
             const refund = lossById.get(id) ?? 0;
-            if (refund > 0) pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + refund);
+            addMvpAward(id, refund);
             return;
           }
         }
         if (!winnerIds.length) {
-          pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + 10);
+          addMvpAward(id, 10);
           return;
         }
         if (baseWin > 0) {
-          pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + baseWin);
+          addMvpAward(id, baseWin);
           return;
         }
         if (winnerIds.length && !winnerIds.includes(id)) {
-          pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + 10);
+          addMvpAward(id, 10);
         }
       });
-      return pointsDeltaById;
+      return { pointsDeltaById, basePointsDeltaById, mvpBonusPointsById };
     };
 
-    const pointsDeltaById = computePointsDelta();
+    const { pointsDeltaById, basePointsDeltaById, mvpBonusPointsById } = computePointsDelta();
 
     return {
       id: r.id,
@@ -724,6 +764,8 @@ export async function GET(req: Request) {
       winner_id: r.winner_id ?? null,
       mvp_ids: mvpIds,
       points_delta_by_id: Object.fromEntries(pointsDeltaById.entries()),
+      points_delta_base_by_id: Object.fromEntries(basePointsDeltaById.entries()),
+      mvp_bonus_points_by_id: Object.fromEntries(mvpBonusPointsById.entries()),
     };
   });
 

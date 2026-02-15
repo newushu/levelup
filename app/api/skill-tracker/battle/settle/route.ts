@@ -134,6 +134,35 @@ export async function POST(req: Request) {
     if (insMvp.error) return NextResponse.json({ ok: false, error: insMvp.error.message }, { status: 500 });
   }
 
+  const mvpBonusPctByStudent = new Map<string, number>();
+  if (mvpIds.length) {
+    const { data: avatarSettings, error: asErr } = await supabase
+      .from("student_avatar_settings")
+      .select("student_id,avatar_id")
+      .in("student_id", mvpIds);
+    if (asErr) return NextResponse.json({ ok: false, error: asErr.message }, { status: 500 });
+    const avatarIds = Array.from(
+      new Set((avatarSettings ?? []).map((row: any) => String(row.avatar_id ?? "").trim()).filter(Boolean))
+    );
+    const pctByAvatarId = new Map<string, number>();
+    if (avatarIds.length) {
+      const { data: avatarRows, error: avErr } = await supabase
+        .from("avatars")
+        .select("id,mvp_bonus_pct")
+        .in("id", avatarIds);
+      if (avErr) return NextResponse.json({ ok: false, error: avErr.message }, { status: 500 });
+      (avatarRows ?? []).forEach((row: any) => {
+        pctByAvatarId.set(String(row.id ?? ""), Math.max(0, Number(row.mvp_bonus_pct ?? 0)));
+      });
+    }
+    (avatarSettings ?? []).forEach((row: any) => {
+      const sid = String(row.student_id ?? "");
+      const aid = String(row.avatar_id ?? "");
+      if (!sid || !aid) return;
+      mvpBonusPctByStudent.set(sid, pctByAvatarId.get(aid) ?? 0);
+    });
+  }
+
   let limitReached = false;
   if (isSkillUser) {
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -316,6 +345,21 @@ export async function POST(req: Request) {
 
   if (!limitReached && mvpIds.length) {
     const mvpRows: Array<{ student_id: string; points: number; note: string; category: string; created_by: string }> = [];
+    const buildMvpAward = (studentId: string, basePoints: number, baseNote: string, category: string) => {
+      const base = Math.max(0, Math.round(Number(basePoints ?? 0)));
+      if (base <= 0) return;
+      const pct = Math.max(0, Number(mvpBonusPctByStudent.get(studentId) ?? 0));
+      const bonus = Math.max(0, Math.round(base * (pct / 100)));
+      const total = base + bonus;
+      const note = bonus > 0 ? `${baseNote} (+${bonus} MVP modifier)` : baseNote;
+      mvpRows.push({
+        student_id: studentId,
+        points: total,
+        note,
+        category,
+        created_by: u.user.id,
+      });
+    };
     mvpIds.forEach((pid) => {
       const baseWin = baseWinById.get(pid) ?? 0;
       const netWin = netWinById.get(pid) ?? baseWin;
@@ -324,23 +368,16 @@ export async function POST(req: Request) {
         if (!winnerIds.length) return;
         if (isWinner) {
           const bonus = Math.max(0, netWin);
-          if (bonus > 0) {
-            mvpRows.push({
-              student_id: pid,
-              points: bonus,
-              note: `Battle Pulse MVP bonus (+${bonus})`,
-              category: "manual",
-              created_by: u.user.id,
-            });
-          }
+          buildMvpAward(pid, bonus, `Battle Pulse MVP bonus (+${bonus})`, "manual");
           return;
         }
         const refund = lossById.get(pid) ?? 0;
-        if (refund > 0) {
+        const refundCap = Math.max(0, Math.min(refund, 50));
+        if (refundCap > 0) {
           mvpRows.push({
             student_id: pid,
-            points: refund,
-            note: `Battle Pulse MVP refund (+${refund})`,
+            points: refundCap,
+            note: `Battle Pulse MVP protection (+${refundCap})`,
             category: "manual",
             created_by: u.user.id,
           });
@@ -349,65 +386,27 @@ export async function POST(req: Request) {
       }
       if (battle?.battle_mode === "lanes") {
         if (!winnerIds.length) {
-          mvpRows.push({
-            student_id: pid,
-            points: 10,
-            note: "Skill Lanes MVP tie (+10)",
-            category: "system",
-            created_by: u.user.id,
-          });
+          buildMvpAward(pid, 10, "Skill Lanes MVP tie (+10)", "system");
           return;
         }
         if (isWinner && netWin > 0) {
-          mvpRows.push({
-            student_id: pid,
-            points: netWin,
-            note: `Skill Lanes MVP bonus (+${netWin})`,
-            category: "system",
-            created_by: u.user.id,
-          });
+          buildMvpAward(pid, netWin, `Skill Lanes MVP bonus (+${netWin})`, "system");
         } else if (!isWinner) {
           const refund = lossById.get(pid) ?? 0;
-          if (refund > 0) {
-            mvpRows.push({
-              student_id: pid,
-              points: refund,
-              note: `Skill Lanes MVP refund (+${refund}) (non-lifetime)`,
-              category: "system",
-              created_by: u.user.id,
-            });
-          }
+          buildMvpAward(pid, refund, `Skill Lanes MVP refund (+${refund}) (non-lifetime)`, "system");
         }
         return;
       }
       if (!winnerIds.length) {
-        mvpRows.push({
-          student_id: pid,
-          points: 10,
-          note: "Battle Pulse MVP tie (+10)",
-          category: "manual",
-          created_by: u.user.id,
-        });
+        buildMvpAward(pid, 10, "Battle Pulse MVP tie (+10)", "manual");
         return;
       }
       if (baseWin > 0) {
-        mvpRows.push({
-          student_id: pid,
-          points: baseWin,
-          note: `Battle Pulse MVP bonus (+${baseWin})`,
-          category: "manual",
-          created_by: u.user.id,
-        });
+        buildMvpAward(pid, baseWin, `Battle Pulse MVP bonus (+${baseWin})`, "manual");
         return;
       }
       if (winnerIds.length && !winnerIds.includes(pid)) {
-        mvpRows.push({
-          student_id: pid,
-          points: 10,
-          note: "Battle Pulse MVP consolation (+10)",
-          category: "manual",
-          created_by: u.user.id,
-        });
+        buildMvpAward(pid, 10, "Battle Pulse MVP consolation (+10)", "manual");
       }
     });
 

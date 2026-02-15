@@ -7,6 +7,8 @@ create table if not exists public.class_emotes (
   html text,
   css text,
   js text,
+  scale numeric(6,2) not null default 1,
+  duration_ms integer not null default 3000,
   points_cost integer not null default 0,
   unlock_level integer not null default 1,
   enabled boolean not null default true,

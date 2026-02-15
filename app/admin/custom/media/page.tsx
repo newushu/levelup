@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AvatarEffectParticles from "@/components/AvatarEffectParticles";
 
 type SoundEffectRow = {
@@ -39,9 +39,12 @@ type AvatarRow = {
   spotlight_multiplier?: number | string | null;
   daily_free_points?: number | string | null;
   challenge_completion_bonus_pct?: number | string | null;
+  mvp_bonus_pct?: number | string | null;
   zoom_pct?: number | string | null;
   competition_only?: boolean | null;
   competition_discount_pct?: number | string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 type AvatarEffectRow = {
@@ -481,6 +484,7 @@ export default function MediaVaultAdminPage() {
     spotlight_multiplier: 1,
     daily_free_points: 0,
     challenge_completion_bonus_pct: 0,
+    mvp_bonus_pct: 0,
     zoom_pct: 100,
     competition_only: false,
     competition_discount_pct: 0,
@@ -518,6 +522,7 @@ export default function MediaVaultAdminPage() {
   const [avatarPickerTarget, setAvatarPickerTarget] = useState<{ type: "new" | "row"; id?: string } | null>(null);
   const [avatarBucketFiles, setAvatarBucketFiles] = useState<{ path: string; public_url: string }[]>([]);
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarBulkUploading, setAvatarBulkUploading] = useState(false);
   const [avatarUploadProgress, setAvatarUploadProgress] = useState<number | null>(null);
   const [avatarUploadStatus, setAvatarUploadStatus] = useState("");
   const [avatarUploadTargetId, setAvatarUploadTargetId] = useState<string>("new");
@@ -757,6 +762,25 @@ export default function MediaVaultAdminPage() {
     if (avatars[0]?.id) setCornerPreviewAvatarId(String(avatars[0].id));
   }, [avatars, cornerPreviewAvatarId]);
 
+  const recentWindowMs = 7 * 24 * 60 * 60 * 1000;
+  const recentCutoffMs = Date.now() - recentWindowMs;
+  const isRecentDate = useCallback(
+    (value?: string | null) => {
+      if (!value) return false;
+      const ts = Date.parse(value);
+      return Number.isFinite(ts) && ts >= recentCutoffMs;
+    },
+    [recentCutoffMs]
+  );
+  const hasRecentUpload = useCallback((row: AvatarRow) => isRecentDate(row.created_at), [isRecentDate]);
+  const hasRecentUpdate = useCallback((row: AvatarRow) => {
+    const createdTs = Date.parse(String(row.created_at ?? ""));
+    const updatedTs = Date.parse(String(row.updated_at ?? ""));
+    if (!Number.isFinite(updatedTs) || updatedTs < recentCutoffMs) return false;
+    if (!Number.isFinite(createdTs)) return true;
+    return updatedTs - createdTs > 60 * 1000;
+  }, [recentCutoffMs]);
+
   function stopPreviewAudio() {
     const audio = previewAudioRef.current;
     if (!audio) return;
@@ -831,6 +855,7 @@ export default function MediaVaultAdminPage() {
     const spotlight_multiplier = clampMultiplier(Number(row.spotlight_multiplier ?? 1));
     const daily_free_points = Math.max(0, Math.floor(Number(row.daily_free_points ?? 0)));
     const challenge_completion_bonus_pct = Math.max(0, Number(row.challenge_completion_bonus_pct ?? 0));
+    const mvp_bonus_pct = Math.max(0, Number(row.mvp_bonus_pct ?? 0));
     const zoom_pct = Math.max(50, clampZoom(Number(row.zoom_pct ?? 100)));
     const competition_discount_pct = Math.max(0, Math.min(100, Math.floor(Number(row.competition_discount_pct ?? 0))));
     const res = await fetch("/api/admin/avatars", {
@@ -846,6 +871,7 @@ export default function MediaVaultAdminPage() {
         spotlight_multiplier,
         daily_free_points,
         challenge_completion_bonus_pct,
+        mvp_bonus_pct,
         zoom_pct,
         competition_discount_pct,
       }),
@@ -869,6 +895,7 @@ export default function MediaVaultAdminPage() {
         spotlight_multiplier: 1,
         daily_free_points: 0,
         challenge_completion_bonus_pct: 0,
+        mvp_bonus_pct: 0,
         zoom_pct: 100,
         competition_only: false,
         competition_discount_pct: 0,
@@ -1136,6 +1163,27 @@ export default function MediaVaultAdminPage() {
       setAvatarUploadProgress(null);
       setAvatarUploadStatus("");
     }, 1200);
+  }
+
+  async function uploadAvatarBulk(files: FileList | null) {
+    if (!files || !files.length) return;
+    setAvatarBulkUploading(true);
+    setMsg("");
+    try {
+      const data = new FormData();
+      data.append("bulk", "1");
+      Array.from(files).forEach((file) => data.append("files", file));
+      const res = await fetch("/api/admin/avatars/upload", { method: "POST", body: data });
+      const sj = await safeJson(res);
+      if (!sj.ok) throw new Error(sj.json?.error || "Failed to bulk upload avatars");
+      const createdCount = Array.isArray(sj.json?.created) ? sj.json.created.length : 0;
+      setMsg(createdCount > 0 ? `Uploaded ${createdCount} avatars. Review and enable when ready.` : "Bulk upload complete.");
+      await loadAll();
+    } catch (err: any) {
+      setMsg(err?.message ?? "Failed to bulk upload avatars");
+    } finally {
+      setAvatarBulkUploading(false);
+    }
   }
 
   async function uploadSound(file: File | null, targetKey: string) {
@@ -2534,7 +2582,7 @@ export default function MediaVaultAdminPage() {
           Toggle which avatars students can select, and flag limited secondary avatars.
         </div>
         <div style={{ display: "grid", gap: 10 }}>
-          <div style={formRow({ columns: "repeat(7, minmax(0, 1fr))" })}>
+          <div style={formRow({ columns: "repeat(8, minmax(0, 1fr))" })}>
             <div style={fieldStack()}>
               <div style={fieldLabel()}>Avatar Name</div>
               <input
@@ -2588,6 +2636,14 @@ export default function MediaVaultAdminPage() {
               onChange={(e) => uploadAvatar(e.target.files?.[0] ?? null, { type: "new" })}
               style={fileInput()}
             />
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={(e) => uploadAvatarBulk(e.target.files)}
+              style={fileInput()}
+              disabled={avatarBulkUploading}
+            />
             {avatarUploadProgress !== null && avatarUploadTargetId === "new" ? (
               <div style={uploadStatus()}>
                 <div style={uploadText()}>{avatarUploadStatus}</div>
@@ -2596,6 +2652,7 @@ export default function MediaVaultAdminPage() {
                 </div>
               </div>
             ) : null}
+            {avatarBulkUploading ? <div style={uploadText()}>Bulk uploading...</div> : null}
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <label style={checkboxWrap()}>
                 <input
@@ -2625,7 +2682,7 @@ export default function MediaVaultAdminPage() {
               bonus points. These modifiers apply only at the time points are awarded and do not change past activity.
             </div>
           </div>
-          <div style={formRow({ columns: "repeat(7, minmax(0, 1fr))" })}>
+          <div style={formRow({ columns: "repeat(8, minmax(0, 1fr))" })}>
             <div style={fieldStack()} title="Percent multiplier for Rule Keeper points (100 = normal).">
               <div style={fieldLabel()}>Rule Keeper %</div>
               <input
@@ -2722,6 +2779,20 @@ export default function MediaVaultAdminPage() {
                 style={input()}
               />
             </div>
+            <div style={fieldStack()} title="Percent bonus applied only to MVP bonus points in Battle Pulse modes.">
+              <div style={fieldLabel()}>MVP Bonus %</div>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={newAvatar.mvp_bonus_pct ?? ""}
+                onChange={(e) => {
+                  const raw = digitsOnly(e.target.value);
+                  setNewAvatar((prev) => ({ ...prev, mvp_bonus_pct: raw === "" ? null : Number(raw) }));
+                }}
+                style={input()}
+              />
+            </div>
             <div style={fieldStack()} title="Avatar image zoom percent in displays (100 = normal).">
               <div style={fieldLabel()}>Avatar Zoom %</div>
               <input
@@ -2787,6 +2858,14 @@ export default function MediaVaultAdminPage() {
                         </div>
                         <div style={{ fontSize: 12, opacity: 0.8 }}>
                           Used by {avatarUsage[row.id ?? ""]?.count ?? 0} students
+                        </div>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {hasRecentUpload(row) ? (
+                            <span style={{ ...pillChip(), borderColor: "rgba(251,191,36,0.6)", color: "#fde68a" }}>Uploaded recently</span>
+                          ) : null}
+                          {hasRecentUpdate(row) ? (
+                            <span style={{ ...pillChip(), borderColor: "rgba(34,197,94,0.6)", color: "#86efac" }}>Updated recently</span>
+                          ) : null}
                         </div>
                         <div style={fieldStack()}>
                           <div style={fieldLabel()}>Avatar Name</div>
@@ -2902,7 +2981,7 @@ export default function MediaVaultAdminPage() {
                             />
                           </div>
                         </div>
-                        <div style={formRow({ columns: "repeat(3, minmax(0, 1fr))" })}>
+                        <div style={formRow({ columns: "repeat(4, minmax(0, 1fr))" })}>
                           <div style={fieldStack()} title="Percent multiplier for Spotlight Stars points (100 = normal).">
                             <div style={fieldLabel()}>Spotlight Stars %</div>
                             <input
@@ -2954,6 +3033,22 @@ export default function MediaVaultAdminPage() {
                                   prev.map((r) =>
                                     r === row ? { ...r, zoom_pct: raw === "" ? null : Number(raw) } : r
                                   )
+                                );
+                              }}
+                              style={input()}
+                            />
+                          </div>
+                          <div style={fieldStack()} title="Percent bonus applied only to MVP bonus points in Battle Pulse modes.">
+                            <div style={fieldLabel()}>MVP Bonus %</div>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={row.mvp_bonus_pct ?? ""}
+                              onChange={(e) => {
+                                const raw = digitsOnly(e.target.value);
+                                setAvatars((prev) =>
+                                  prev.map((r) => (r === row ? { ...r, mvp_bonus_pct: raw === "" ? null : Number(raw) } : r))
                                 );
                               }}
                               style={input()}
@@ -3583,6 +3678,18 @@ function libraryRow(): React.CSSProperties {
     borderRadius: 12,
     border: "1px solid rgba(255,255,255,0.12)",
     background: "rgba(15,23,42,0.6)",
+  };
+}
+
+function pillChip(): React.CSSProperties {
+  return {
+    borderRadius: 999,
+    padding: "2px 8px",
+    border: "1px solid rgba(255,255,255,0.24)",
+    background: "rgba(15,23,42,0.7)",
+    fontSize: 11,
+    fontWeight: 900,
+    letterSpacing: 0.2,
   };
 }
 

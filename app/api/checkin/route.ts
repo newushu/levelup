@@ -325,7 +325,7 @@ export async function POST(req: Request) {
 
     const { data: emote } = await admin
       .from("class_emotes")
-      .select("label,emoji,image_url,html,css,js")
+      .select("label,emoji,image_url,html,css,js,scale,duration_ms")
       .eq("id", queued.emote_id)
       .maybeSingle();
 
@@ -334,7 +334,7 @@ export async function POST(req: Request) {
     return {
       sender_name: String(queued.sender_name ?? "Someone"),
       recipient_name: String(queued.recipient_name ?? fullName),
-      message: `${String(queued.sender_name ?? "Someone")} sends you ${String(emote?.label ?? "an emote")}, welcome to class.`,
+      message: `${String(queued.sender_name ?? "Someone")} sent you ${String(emote?.label ?? "an emote")}, welcome to class.`,
       emote: {
         label: String(emote?.label ?? "Emote"),
         emoji: String(emote?.emoji ?? "✨"),
@@ -342,6 +342,8 @@ export async function POST(req: Request) {
         html: String(emote?.html ?? ""),
         css: String(emote?.css ?? ""),
         js: String(emote?.js ?? ""),
+        scale: Math.max(0.2, Math.min(4, Number(emote?.scale ?? 1) || 1)),
+        duration_ms: Math.max(500, Math.min(20000, Number(emote?.duration_ms ?? 3000) || 3000)),
       },
     };
   };

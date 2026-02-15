@@ -38,6 +38,7 @@ export async function POST(req: Request) {
   const goals = String(body?.goals ?? "").trim() || null;
   const notes = String(body?.notes ?? "").trim() || null;
   const enrollment_info = body?.enrollment_info ?? null;
+  const is_competition_team = body?.is_competition_team === true;
 
   const admin = supabaseAdmin();
   const { data, error } = await admin
@@ -46,6 +47,7 @@ export async function POST(req: Request) {
       name,
       first_name,
       last_name,
+      is_competition_team,
       email,
       phone,
       emergency_contact,
@@ -53,7 +55,7 @@ export async function POST(req: Request) {
       notes,
       enrollment_info,
     })
-    .select("id,name,first_name,last_name,email,phone,emergency_contact,goals,notes,enrollment_info")
+    .select("id,name,first_name,last_name,is_competition_team,level,points_total,email,phone,emergency_contact,goals,notes,enrollment_info")
     .single();
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

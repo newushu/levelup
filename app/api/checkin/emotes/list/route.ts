@@ -20,7 +20,7 @@ export async function GET() {
 
   const { data, error } = await admin
     .from("class_emotes")
-    .select("id,emote_key,label,emoji,image_url,html,css,js,points_cost,unlock_level,enabled")
+    .select("id,emote_key,label,emoji,image_url,html,css,js,scale,duration_ms,points_cost,unlock_level,enabled")
     .eq("enabled", true)
     .order("is_default", { ascending: false })
     .order("label", { ascending: true });
@@ -37,6 +37,8 @@ export async function GET() {
       html: row.html ?? "",
       css: row.css ?? "",
       js: row.js ?? "",
+      scale: Number(row.scale ?? 1),
+      duration_ms: Number(row.duration_ms ?? 3000),
       points_cost: Number(row.points_cost ?? 0),
       unlock_level: Number(row.unlock_level ?? 1),
     })),

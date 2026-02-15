@@ -384,7 +384,7 @@ function HomeInner() {
 }
 
 function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
-  const [tab, setTab] = useState<"workspace" | "rewards" | "performance" | "classes" | "award" | "roster" | "rebuild">("workspace");
+  const [tab, setTab] = useState<"workspace" | "rewards" | "performance" | "classes" | "award" | "roster" | "camp" | "rebuild">("workspace");
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [activeCardIdx, setActiveCardIdx] = useState(0);
@@ -447,6 +447,13 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
       href: "/admin/custom/emotes",
       tone: "rose" as const,
       icon: "EM",
+    },
+    {
+      title: "Camp Display",
+      subtitle: "Manage camp settings and choose students shown on camp display",
+      href: "/admin/custom/camp-display",
+      tone: "violet" as const,
+      icon: "CMP",
     },
     {
       title: "Rebuild Leaderboards",
@@ -648,12 +655,19 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
     { label: "User Access Manager", href: "/admin/custom/access" },
     { label: "Parent Relationships", href: "/admin/parent-relationships" },
   ];
+  const campLinks = [
+    { label: "Camp Settings", href: "/admin/custom/camp" },
+    { label: "Camp Display Roster", href: "/admin/custom/camp-display" },
+    { label: "Camp Hub", href: "/camp" },
+    { label: "Camp Display", href: "/display/camp" },
+  ];
   const shortcutLinks = [
-    { label: "Announcements", href: "/admin/announcements" },
-    { label: "Parent Pairing", href: "/admin/parent-pairing" },
-    { label: "Parent Messages", href: "/admin/parent-messages" },
-    { label: "Admin Workspace", href: "/admin/custom" },
-    { label: "Rebuild Leaderboards", tab: "rebuild" as const },
+    { label: "⚙️ Admin Settings & Configuration", href: "/admin/custom" },
+    { label: "🏕️ Camp Settings", href: "/admin/custom/camp" },
+    { label: "📣 Announcements", href: "/admin/announcements" },
+    { label: "👨‍👩‍👧 Parent Pairing", href: "/admin/parent-pairing" },
+    { label: "💬 Parent Messages", href: "/admin/parent-messages" },
+    { label: "🛠️ Rebuild Leaderboards", tab: "rebuild" as const },
   ];
   const ruleKeeper = awardTypes.find((t) => String(t.name ?? "").toLowerCase().includes("rule keeper"));
   const ruleBreaker = awardTypes.find((t) => String(t.name ?? "").toLowerCase().includes("rule breaker"));
@@ -896,6 +910,19 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
           </div>
         ) : null}
 
+        {tab === "camp" ? (
+          <div style={adminPanelWrap()}>
+            <div style={adminPanelTitle()}>Camp</div>
+            <div style={adminPanelGrid()}>
+              {campLinks.map((item) => (
+                <Link key={item.href} href={item.href} style={adminPanelLink()}>
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         {tab === "rebuild" ? (
           <div style={adminPanelWrap()}>
             <div style={adminPanelTitle()}>Rebuild Leaderboards</div>
@@ -953,7 +980,8 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
         <button style={adminDockBtn(tab === "performance", "performance")} onClick={() => setTab("performance")}>Performance</button>
         <button style={adminDockBtn(tab === "classes", "classes")} onClick={() => setTab("classes")}>Classes</button>
         <button style={adminDockBtn(tab === "roster", "classes")} onClick={() => setTab("roster")}>Roster</button>
-        <button style={adminDockBtn(shortcutsOpen, "shortcuts")} onClick={() => setShortcutsOpen((v) => !v)}>Admin Shortcuts</button>
+        <button style={adminDockBtn(tab === "camp", "classes")} onClick={() => setTab("camp")}>Camp</button>
+        <button style={adminDockBtn(shortcutsOpen, "shortcuts")} onClick={() => setShortcutsOpen((v) => !v)}>⚙️ Shortcuts</button>
       </div>
       {snapshotMsg ? (
         <div

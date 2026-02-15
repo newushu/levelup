@@ -263,6 +263,29 @@ export default function CampAdminSettingsPage() {
     <main style={{ padding: 18, maxWidth: 1100, margin: "0 auto" }}>
       <div style={{ fontSize: 28, fontWeight: 1000 }}>Camp Settings</div>
       <div style={{ opacity: 0.7, marginTop: 6 }}>Manage camp points, leaders, and access.</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+        <a href="/admin/custom/camp-display" style={quickLink()}>
+          Camp Display Roster
+        </a>
+        <a href="/admin/custom/camp-factions" style={quickLink()}>
+          Camp Factions
+        </a>
+        <a href="/display/camp" style={quickLink()}>
+          Open Camp Display
+        </a>
+        <a href="/camp/classroom" style={quickLink()}>
+          Camp Classroom
+        </a>
+        <a href="/display/camp?screen=1" style={quickLink()}>
+          Display 1
+        </a>
+        <a href="/display/camp?screen=2" style={quickLink()}>
+          Display 2
+        </a>
+        <a href="/display/camp?screen=3" style={quickLink()}>
+          Display 3
+        </a>
+      </div>
       {msg ? <div style={{ color: "#fbbf24", marginTop: 8 }}>{msg}</div> : null}
 
       <section style={card()}>
@@ -618,6 +641,20 @@ function chip(): React.CSSProperties {
     background: "rgba(255,255,255,0.08)",
     color: "white",
     fontWeight: 700,
+  };
+}
+
+function quickLink(): React.CSSProperties {
+  return {
+    borderRadius: 10,
+    border: "1px solid rgba(56,189,248,0.45)",
+    background: "rgba(14,165,233,0.16)",
+    color: "white",
+    textDecoration: "none",
+    fontWeight: 900,
+    padding: "8px 12px",
+    display: "inline-flex",
+    alignItems: "center",
   };
 }
 

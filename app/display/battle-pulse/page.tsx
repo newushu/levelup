@@ -7,6 +7,8 @@ import { fadeOutGlobalMusic, playGlobalMusic, playGlobalSfx, setGlobalSounds } f
 import { supabaseClient } from "@/lib/supabase/client";
 import AvatarRender from "@/components/AvatarRender";
 
+const ENABLE_BATTLE_FX = false;
+
 type SoundEffect = {
   key: string;
   audio_url: string | null;
@@ -188,6 +190,14 @@ function effectTypesFor(effect: BattlePulseEffect) {
     .split(",")
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
+}
+
+function formatPointsDelta(value: number | null | undefined) {
+  const rounded = Math.round(Number(value ?? 0));
+  const abs = Math.abs(rounded).toLocaleString();
+  if (rounded > 0) return `+${abs}`;
+  if (rounded < 0) return `-${abs}`;
+  return "0";
 }
 
 function flashTypeToEffectType(type: string) {
@@ -418,7 +428,7 @@ export default function BattlePulseDisplay() {
     };
     const scheduleRefresh = () => {
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
-      refreshTimer.current = setTimeout(load, 200);
+      refreshTimer.current = setTimeout(load, 40);
     };
     const supabase = supabaseClient();
     let channel: ReturnType<typeof supabase.channel> | null = null;
@@ -443,7 +453,7 @@ export default function BattlePulseDisplay() {
       scheduleRefresh();
     });
     load();
-    timer = setInterval(load, 12000);
+    timer = setInterval(load, 2500);
     return () => {
       mounted = false;
       if (timer) clearInterval(timer);
@@ -453,13 +463,25 @@ export default function BattlePulseDisplay() {
     };
   }, [authOk, displayEnabled]);
 
+  const hasSkillStrikeActive = useMemo(
+    () =>
+      battles.some(
+        (b) => String(b.battle_mode ?? "duel") === "lanes" && !isBattleDisplayDone(b)
+      ),
+    [battles]
+  );
+
+  const maxDisplaySlots = hasSkillStrikeActive ? 1 : 2;
+
   const displayCards = useMemo(() => {
-    const list: DisplayCard[] = battles.slice(0, 3).map((b) => ({ ...b, kind: "battle" as const }));
-    while (list.length < 3) {
+    const list: DisplayCard[] = battles
+      .slice(0, maxDisplaySlots)
+      .map((b) => ({ ...b, kind: "battle" as const }));
+    while (list.length < maxDisplaySlots) {
       list.push({ kind: "placeholder", id: `placeholder-${list.length}` });
     }
     return list as DisplayCard[];
-  }, [battles]);
+  }, [battles, maxDisplaySlots]);
 
   const hasActiveBattles = useMemo(
     () => battles.some((b) => !isBattleDisplayDone(b)),
@@ -522,7 +544,10 @@ export default function BattlePulseDisplay() {
           Battle Pulse
         </a>
       </nav>
-      <section className="battle-grid">
+      <section
+        className="battle-grid"
+        style={{ gridTemplateColumns: `repeat(${Math.max(1, maxDisplaySlots)}, minmax(0, 1fr))` }}
+      >
         <div className="battle-grid-lines" />
         <div className="battle-grid-clash" />
         {displayCards.map((card, index) =>
@@ -530,7 +555,11 @@ export default function BattlePulseDisplay() {
             <div key={card.id} className="battle-card placeholder">
               <div className="battle-card-inner">
                 <div className="battle-card-title">Awaiting Battle</div>
-                <div className="battle-card-sub">Queue another pulse to fill this slot.</div>
+                <div className="battle-card-sub">
+                  {maxDisplaySlots === 1
+                    ? "Skill Strike active. Display focused on one battle."
+                    : "Queue another pulse to fill this slot."}
+                </div>
                 <div className="battle-vs-glow">VS</div>
               </div>
             </div>
@@ -1136,6 +1165,7 @@ function BattleCard({
   };
 
   const triggerAttackFx = (id: string, type: string) => {
+    if (!ENABLE_BATTLE_FX) return;
     const at = now();
     attackFxAtRef.current.set(id, at);
     lastEffectAtGlobalRef.current = Math.max(lastEffectAtGlobalRef.current, at);
@@ -1158,6 +1188,7 @@ function BattleCard({
   };
 
   const triggerTeamAttackFx = (side: "top" | "bottom", type: string) => {
+    if (!ENABLE_BATTLE_FX) return;
     const at = now();
     teamAttackFxAtRef.current = { ...teamAttackFxAtRef.current, [side]: at };
     lastEffectAtGlobalRef.current = Math.max(lastEffectAtGlobalRef.current, at);
@@ -1180,6 +1211,7 @@ function BattleCard({
   };
 
   const triggerDrainFx = (id: string) => {
+    if (!ENABLE_BATTLE_FX) return;
     const startTimer = drainFxStartTimers.current.get(id);
     if (startTimer) clearTimeout(startTimer);
     drainFxStartTimers.current.set(
@@ -1206,6 +1238,7 @@ function BattleCard({
   };
 
   const triggerTeamDrainFx = (side: "top" | "bottom") => {
+    if (!ENABLE_BATTLE_FX) return;
     const startTimer = teamDrainFxStartTimers.current.get(side);
     if (startTimer) clearTimeout(startTimer);
     teamDrainFxStartTimers.current.set(
@@ -1636,7 +1669,7 @@ function BattleCard({
                   </div>
                 ) : null}
                 {teamHit.top ? <div key={`team-hit-top-${teamHit.top}`} className="battle-team-hit" /> : null}
-                {teamAttackFx.top && teamTopEffect ? (
+                {ENABLE_BATTLE_FX && teamAttackFx.top && teamTopEffect ? (
                   <div
                     key={`team-fx-top-${teamAttackFx.top.at}`}
                     className="battle-team-attack-fx"
@@ -1647,7 +1680,7 @@ function BattleCard({
                     <BattleAttackFx effect={teamTopEffect} hitAt={teamAttackFx.top.at} />
                   </div>
                 ) : null}
-                {teamDrainFx.top && teamTopDrainEffect ? (
+                {ENABLE_BATTLE_FX && teamDrainFx.top && teamTopDrainEffect ? (
                   <div
                     key={`team-drain-top-${teamDrainFx.top}`}
                     className="battle-team-drain-fx"
@@ -1700,6 +1733,20 @@ function BattleCard({
                   <div className="battle-vs-sparks" />
                   <div className="battle-clash-line" />
                 </div>
+                <div className="battle-rep-center">
+                  <SegmentedRepBar
+                    label="TEAM A"
+                    filled={teamASuccesses}
+                    total={Math.max(1, target * Math.max(1, teamA.length))}
+                    tone="top"
+                  />
+                  <SegmentedRepBar
+                    label="TEAM B"
+                    filled={teamBSuccesses}
+                    total={Math.max(1, target * Math.max(1, teamB.length))}
+                    tone="bottom"
+                  />
+                </div>
               </div>
               <div
                 className={`battle-team-row bottom${teamHit.bottom ? " hit" : ""}${winnerIsBottomTeam ? " winner" : ""}${winnerReveal && winnerIsBottomTeam ? " reveal" : ""}${
@@ -1720,7 +1767,7 @@ function BattleCard({
                   </div>
                 ) : null}
                 {teamHit.bottom ? <div key={`team-hit-bottom-${teamHit.bottom}`} className="battle-team-hit" /> : null}
-                {teamAttackFx.bottom && teamBottomEffect ? (
+                {ENABLE_BATTLE_FX && teamAttackFx.bottom && teamBottomEffect ? (
                   <div
                     key={`team-fx-bottom-${teamAttackFx.bottom.at}`}
                     className="battle-team-attack-fx"
@@ -1731,7 +1778,7 @@ function BattleCard({
                     <BattleAttackFx effect={teamBottomEffect} hitAt={teamAttackFx.bottom.at} />
                   </div>
                 ) : null}
-                {teamDrainFx.bottom && teamBottomDrainEffect ? (
+                {ENABLE_BATTLE_FX && teamDrainFx.bottom && teamBottomDrainEffect ? (
                   <div
                     key={`team-drain-bottom-${teamDrainFx.bottom}`}
                     className="battle-team-drain-fx"
@@ -2028,7 +2075,7 @@ function BattleCard({
 
         .battle-team-hp {
           grid-column: 1 / -1;
-          height: 12px;
+          height: 18px;
           border-radius: 999px;
           background: rgba(15, 23, 42, 0.6);
           border: 1px solid rgba(255, 255, 255, 0.18);
@@ -2046,6 +2093,13 @@ function BattleCard({
         .battle-team-mid {
           display: grid;
           place-items: center;
+          gap: 12px;
+        }
+
+        .battle-rep-center {
+          width: min(260px, 100%);
+          display: grid;
+          gap: 8px;
         }
 
         .battle-vs-core {
@@ -2376,7 +2430,7 @@ function BattleSlot({
       {winnerReveal && isWinner ? <div className="battle-winner-badge">Winner</div> : null}
       {isMvp ? <div className="battle-mvp-badge">MVP</div> : null}
       <div className="battle-avatar" style={{ width: size, height: size }}>
-        {attackFx && attackEffect ? (
+        {ENABLE_BATTLE_FX && attackFx && attackEffect ? (
           <div
             key={`fx-${attackFx.at}`}
             className="battle-attack-fx"
@@ -2387,7 +2441,7 @@ function BattleSlot({
             <BattleAttackFx effect={attackEffect} hitAt={attackFx.at} />
           </div>
         ) : null}
-        {drainFxAt && drainEffect ? (
+        {ENABLE_BATTLE_FX && drainFxAt && drainEffect ? (
           <div
             key={`drain-${drainFxAt}`}
             className="battle-drain-fx"
@@ -2434,7 +2488,7 @@ function BattleSlot({
         <span className="battle-name-text">{participant.name}</span>
         {showPoints ? (
           <span className={`battle-points ${pointsDelta && pointsDelta > 0 ? "win" : pointsDelta && pointsDelta < 0 ? "lose" : ""}`}>
-            {pointsDelta && pointsDelta > 0 ? `+${pointsDelta}` : `${pointsDelta ?? 0}`} pts
+            {formatPointsDelta(pointsDelta)} pts
           </span>
         ) : null}
       </div>
@@ -2667,9 +2721,9 @@ function BattleSlot({
         }
 
         .battle-points {
-          font-size: 12px;
+          font-size: 16px;
           font-weight: 900;
-          padding: 4px 10px;
+          padding: 6px 12px;
           border-radius: 999px;
           border: 1px solid rgba(255, 255, 255, 0.2);
           background: rgba(15, 23, 42, 0.7);
@@ -2828,6 +2882,61 @@ function EmptySlot({ label }: { label: string }) {
           letter-spacing: 1px;
         }
       `}</style>
+    </div>
+  );
+}
+
+function SegmentedRepBar({
+  label,
+  filled,
+  total,
+  tone,
+}: {
+  label: string;
+  filled: number;
+  total: number;
+  tone: "top" | "bottom";
+}) {
+  const safeTotal = Math.max(1, Math.round(Number(total ?? 1)));
+  const safeFilled = Math.max(0, Math.min(safeTotal, Math.round(Number(filled ?? 0))));
+  const segments = Array.from({ length: safeTotal });
+  const fillColor = tone === "top" ? "rgba(56,189,248,0.95)" : "rgba(248,113,113,0.95)";
+  const baseColor = tone === "top" ? "rgba(56,189,248,0.2)" : "rgba(248,113,113,0.2)";
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 4,
+        width: "100%",
+        padding: "6px 8px",
+        borderRadius: 12,
+        border: "1px solid rgba(255,255,255,0.18)",
+        background: "rgba(2,6,23,0.65)",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 900, letterSpacing: 0.6 }}>
+        <span>{label}</span>
+        <span>
+          {safeFilled}/{safeTotal}
+        </span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${safeTotal}, minmax(0, 1fr))`, gap: 2 }}>
+        {segments.map((_, idx) => {
+          const on = idx < safeFilled;
+          return (
+            <span
+              key={`${label}-${idx}`}
+              style={{
+                height: 14,
+                borderRadius: 3,
+                border: "1px solid rgba(255,255,255,0.16)",
+                background: on ? fillColor : baseColor,
+                boxShadow: on ? `0 0 10px ${fillColor}` : "none",
+              }}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }

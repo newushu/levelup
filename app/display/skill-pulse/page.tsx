@@ -109,6 +109,14 @@ async function safeJson(res: Response) {
   }
 }
 
+function formatPointsDelta(value: number | null | undefined) {
+  const rounded = Math.round(Number(value ?? 0));
+  const abs = Math.abs(rounded).toLocaleString();
+  if (rounded > 0) return `+${abs}`;
+  if (rounded < 0) return `-${abs}`;
+  return "0";
+}
+
 export default function SkillPulseDisplayPage() {
   const [trackers, setTrackers] = useState<TrackerRow[]>([]);
   const [battles, setBattles] = useState<BattleRow[]>([]);
@@ -993,9 +1001,9 @@ export default function SkillPulseDisplayPage() {
           background: rgba(239,68,68,0.85);
         }
         .battle-points {
-          font-size: 16px;
+          font-size: 20px;
           font-weight: 900;
-          padding: 4px 8px;
+          padding: 6px 12px;
           border-radius: 999px;
           border: 1px solid rgba(255,255,255,0.2);
           background: rgba(15,23,42,0.6);
@@ -1771,7 +1779,7 @@ export default function SkillPulseDisplayPage() {
                                       <div className="battle-winner-name">{p.name}</div>
                                       {battleDone ? (
                                         <div className="battle-winner-points">
-                                          {pointsDeltaById.get(p.id) ?? 0} pts
+                                          {formatPointsDelta(pointsDeltaById.get(p.id) ?? 0)} pts
                                         </div>
                                       ) : null}
                                     </div>
@@ -1796,7 +1804,7 @@ export default function SkillPulseDisplayPage() {
                                       {winnerName ? <div className="battle-winner-name">{winnerName}</div> : null}
                                       {battleDone ? (
                                         <div className="battle-winner-points">
-                                          {pointsDeltaById.get(winnerIds[0] ?? "") ?? 0} pts
+                                          {formatPointsDelta(pointsDeltaById.get(winnerIds[0] ?? "") ?? 0)} pts
                                         </div>
                                       ) : null}
                                     </div>
@@ -1826,7 +1834,7 @@ export default function SkillPulseDisplayPage() {
                                   {winnerName ? <div className="battle-winner-name">{winnerName}</div> : null}
                                   {battleDone ? (
                                     <div className="battle-winner-points">
-                                      {pointsDeltaById.get(winnerParticipant?.id ?? "") ?? 0} pts
+                                      {formatPointsDelta(pointsDeltaById.get(winnerParticipant?.id ?? "") ?? 0)} pts
                                     </div>
                                   ) : null}
                                 </div>
@@ -1894,7 +1902,7 @@ export default function SkillPulseDisplayPage() {
                                           </div>
                                           {battleDone && delta !== 0 ? (
                                             <div className={`battle-points ${delta > 0 ? "win" : "lose"}`}>
-                                              {delta > 0 ? `+${delta}` : delta}
+                                              {formatPointsDelta(delta)}
                                             </div>
                                           ) : null}
                                         </div>
@@ -1949,7 +1957,7 @@ export default function SkillPulseDisplayPage() {
                                           </div>
                                           {battleDone && delta !== 0 ? (
                                             <div className={`battle-points ${delta > 0 ? "win" : "lose"}`}>
-                                              {delta > 0 ? `+${delta}` : delta}
+                                              {formatPointsDelta(delta)}
                                             </div>
                                           ) : null}
                                         </div>
@@ -2000,7 +2008,7 @@ export default function SkillPulseDisplayPage() {
                                               </div>
                                               {battleDone && delta !== 0 ? (
                                                 <div className={`battle-points ${delta > 0 ? "win" : "lose"}`}>
-                                                  {delta > 0 ? `+${delta}` : delta}
+                                                  {formatPointsDelta(delta)}
                                                 </div>
                                               ) : null}
                                             </div>
@@ -2041,7 +2049,7 @@ export default function SkillPulseDisplayPage() {
                                               </div>
                                               {battleDone && delta !== 0 ? (
                                                 <div className={`battle-points ${delta > 0 ? "win" : "lose"}`}>
-                                                  {delta > 0 ? `+${delta}` : delta}
+                                                  {formatPointsDelta(delta)}
                                                 </div>
                                               ) : null}
                                             </div>
@@ -2091,7 +2099,7 @@ export default function SkillPulseDisplayPage() {
                                       </div>
                                       {battleDone && delta !== 0 ? (
                                         <div className={`battle-points ${delta > 0 ? "win" : "lose"}`}>
-                                          {delta > 0 ? `+${delta}` : delta}
+                                          {formatPointsDelta(delta)}
                                         </div>
                                       ) : null}
                                     </div>
@@ -2128,7 +2136,7 @@ export default function SkillPulseDisplayPage() {
                                     </div>
                                     {battleDone && (pointsDeltaById.get(participants[2].id) ?? 0) !== 0 ? (
                                       <div className={`battle-points ${(pointsDeltaById.get(participants[2].id) ?? 0) > 0 ? "win" : "lose"}`}>
-                                        {(pointsDeltaById.get(participants[2].id) ?? 0) > 0 ? `+${pointsDeltaById.get(participants[2].id)}` : pointsDeltaById.get(participants[2].id)}
+                                        {formatPointsDelta(pointsDeltaById.get(participants[2].id) ?? 0)}
                                       </div>
                                     ) : null}
                                   </div>
@@ -2173,7 +2181,7 @@ export default function SkillPulseDisplayPage() {
                                       </div>
                                       {battleDone && delta !== 0 ? (
                                         <div className={`battle-points ${delta > 0 ? "win" : "lose"}`}>
-                                          {delta > 0 ? `+${delta}` : delta}
+                                          {formatPointsDelta(delta)}
                                         </div>
                                       ) : null}
                                     </div>
@@ -2196,7 +2204,7 @@ export default function SkillPulseDisplayPage() {
                               </div>
                               {battleDone && (pointsDeltaById.get(item.left_student_id) ?? 0) !== 0 ? (
                                 <div className={`battle-points ${(pointsDeltaById.get(item.left_student_id) ?? 0) > 0 ? "win" : "lose"}`}>
-                                  {(pointsDeltaById.get(item.left_student_id) ?? 0) > 0 ? `+${pointsDeltaById.get(item.left_student_id)}` : pointsDeltaById.get(item.left_student_id)}
+                                  {formatPointsDelta(pointsDeltaById.get(item.left_student_id) ?? 0)}
                                 </div>
                               ) : null}
                             </div>
@@ -2241,7 +2249,7 @@ export default function SkillPulseDisplayPage() {
                               </div>
                               {battleDone && (pointsDeltaById.get(item.right_student_id) ?? 0) !== 0 ? (
                                 <div className={`battle-points ${(pointsDeltaById.get(item.right_student_id) ?? 0) > 0 ? "win" : "lose"}`}>
-                                  {(pointsDeltaById.get(item.right_student_id) ?? 0) > 0 ? `+${pointsDeltaById.get(item.right_student_id)}` : pointsDeltaById.get(item.right_student_id)}
+                                  {formatPointsDelta(pointsDeltaById.get(item.right_student_id) ?? 0)}
                                 </div>
                               ) : null}
                             </div>

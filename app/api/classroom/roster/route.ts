@@ -314,14 +314,31 @@ export async function POST(req: Request) {
       const avatarIds = Array.from(
         new Set((settings ?? []).map((s: any) => String(s.avatar_id ?? "").trim()).filter(Boolean))
       );
-      const avatarMap = new Map<string, { storage_path: string | null }>();
+      const avatarMap = new Map<
+        string,
+        {
+          storage_path: string | null;
+          rule_keeper_multiplier: number | null;
+          rule_breaker_multiplier: number | null;
+        }
+      >();
       if (avatarIds.length) {
         const { data: avatars, error: aErr } = await admin
           .from("avatars")
-          .select("id,storage_path")
+          .select("id,storage_path,rule_keeper_multiplier,rule_breaker_multiplier")
           .in("id", avatarIds);
         if (aErr) return NextResponse.json({ ok: false, error: aErr.message, step: "load_avatars" }, { status: 500 });
-        (avatars ?? []).forEach((a: any) => avatarMap.set(String(a.id), { storage_path: a.storage_path ?? null }));
+        (avatars ?? []).forEach((a: any) =>
+          avatarMap.set(String(a.id), {
+            storage_path: a.storage_path ?? null,
+            rule_keeper_multiplier: Number.isFinite(Number(a.rule_keeper_multiplier))
+              ? Number(a.rule_keeper_multiplier)
+              : 1,
+            rule_breaker_multiplier: Number.isFinite(Number(a.rule_breaker_multiplier))
+              ? Number(a.rule_breaker_multiplier)
+              : 1,
+          })
+        );
       }
 
     const borderKeys = Array.from(
@@ -449,6 +466,8 @@ export async function POST(req: Request) {
         corner_border_offset_y?: number | null;
         corner_border_offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null }> | null;
         card_plate_url: string | null;
+        rule_keeper_multiplier: number | null;
+        rule_breaker_multiplier: number | null;
       }
     >();
     const emptyAvatar = {
@@ -464,11 +483,17 @@ export async function POST(req: Request) {
       corner_border_offset_y: 0,
       corner_border_offsets_by_context: {},
       card_plate_url: null,
+      rule_keeper_multiplier: 1,
+      rule_breaker_multiplier: 1,
     };
     (settings ?? []).forEach((s: any) => {
       const id = String(s.student_id ?? "");
       const avatarId = String(s.avatar_id ?? "");
-      const avatar = avatarMap.get(avatarId) ?? { storage_path: null };
+      const avatar = avatarMap.get(avatarId) ?? {
+        storage_path: null,
+        rule_keeper_multiplier: 1,
+        rule_breaker_multiplier: 1,
+      };
       const legacyPath = legacyAvatarByStudent.get(id) ?? null;
       const borderKey = String(s.corner_border_key ?? "").trim();
       const border = borderKey ? borderByKey.get(borderKey) : null;
@@ -502,6 +527,12 @@ export async function POST(req: Request) {
         corner_border_offset_y: borderOk ? Number(border?.offset_y ?? 0) : 0,
         corner_border_offsets_by_context: borderOk ? (border?.offsets_by_context ?? {}) : {},
         card_plate_url: plateOk ? plate?.image_url ?? null : null,
+        rule_keeper_multiplier: Number.isFinite(Number(avatar.rule_keeper_multiplier))
+          ? Number(avatar.rule_keeper_multiplier)
+          : 1,
+        rule_breaker_multiplier: Number.isFinite(Number(avatar.rule_breaker_multiplier))
+          ? Number(avatar.rule_breaker_multiplier)
+          : 1,
       });
     });
 
@@ -520,6 +551,12 @@ export async function POST(req: Request) {
       row.student.corner_border_offset_y = avatar.corner_border_offset_y ?? 0;
       row.student.corner_border_offsets_by_context = avatar.corner_border_offsets_by_context ?? {};
       row.student.card_plate_url = avatar.card_plate_url;
+      row.student.rule_keeper_multiplier = Number.isFinite(Number(avatar.rule_keeper_multiplier))
+        ? Number(avatar.rule_keeper_multiplier)
+        : 1;
+      row.student.rule_breaker_multiplier = Number.isFinite(Number(avatar.rule_breaker_multiplier))
+        ? Number(avatar.rule_breaker_multiplier)
+        : 1;
     });
 
     const { data: badgeRowsInitial, error: badgeErr } = await admin

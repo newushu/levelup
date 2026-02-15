@@ -252,6 +252,11 @@ const adminSections = [
         desc: "Manage camp points, leaders, PIN access, and quick links.",
         href: "/admin/custom/camp",
       },
+      {
+        title: "Camp Display Roster",
+        desc: "Choose students and role labels shown on the camp display board.",
+        href: "/admin/custom/camp-display",
+      },
     ],
   },
 ];

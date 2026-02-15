@@ -40,7 +40,7 @@ export async function POST(req: Request) {
     points,
     points_base: Math.max(0, Number(status.avatar_points ?? 0)),
     points_multiplier: 1,
-    note: `Daily Redeem +${points} (${status.avatar_points} avatar + ${status.leaderboard_points} leaderboard)`,
+    note: `Daily Redeem +${points} (${status.avatar_points} avatar + ${status.leaderboard_points} leaderboard + ${Number(status.camp_role_points ?? 0)} camp role)`,
     category: "redeem_daily",
   });
 
@@ -73,6 +73,7 @@ export async function POST(req: Request) {
     avatar_name: String(status.avatar_name ?? "Avatar"),
     avatar_points: Number(status.avatar_points ?? 0),
     leaderboard_points: Number(status.leaderboard_points ?? 0),
+    camp_role_points: Number(status.camp_role_points ?? 0),
     contribution_chips: status.contribution_chips ?? [],
     leaderboard_boards: status.leaderboard_boards ?? [],
     granted_at: now.toISOString(),

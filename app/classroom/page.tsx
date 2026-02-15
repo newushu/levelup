@@ -70,6 +70,8 @@ type RosterRow = {
     corner_border_offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null }> | null;
     card_plate_url?: string | null;
     prestige_badges?: string[];
+    rule_keeper_multiplier?: number | null;
+    rule_breaker_multiplier?: number | null;
   };
   badgeCount: number;
   challengeCount: number;
@@ -726,8 +728,26 @@ export default function ClassroomPage() {
     return Math.min(50, Math.max(5, week * 5));
   }
 
-  function ruleKeeperBonus() {
-    return ruleBreakerPenalty();
+  function normalizedMultiplier(value?: number | null) {
+    const n = Number(value ?? 1);
+    if (!Number.isFinite(n) || n <= 0) return 1;
+    return n;
+  }
+
+  function applyRuleMultiplier(basePoints: number, multiplier?: number | null) {
+    return Math.round(Math.abs(basePoints) * normalizedMultiplier(multiplier));
+  }
+
+  function ruleBreakerPenaltyForStudent(student?: RosterRow["student"]) {
+    const week = currentWeek();
+    const base = Math.min(50, Math.max(5, week * 5));
+    return applyRuleMultiplier(base, student?.rule_breaker_multiplier);
+  }
+
+  function ruleKeeperBonusForStudent(student?: RosterRow["student"]) {
+    const week = currentWeek();
+    const base = Math.min(50, Math.max(5, week * 5));
+    return applyRuleMultiplier(base, student?.rule_keeper_multiplier);
   }
 
   function weekRangeLabel(weekNumber: number) {
@@ -796,7 +816,7 @@ export default function ClassroomPage() {
     if (viewerRole === "classroom") {
       return setMsg("Classroom mode cannot award points.");
     }
-    const bonus = ruleKeeperBonus();
+    const bonus = ruleBreakerPenalty();
     const week = currentWeek();
     setFlash((p) => ({ ...p, [studentId]: "green" }));
     setTimeout(() => setFlash((p) => ({ ...p, [studentId]: "" })), 420);
@@ -1594,7 +1614,7 @@ export default function ClassroomPage() {
                             title={ruleTooltipText()}
                             style={btnSmallRule()}
                           >
-                            Rule Breaker -{ruleBreakerPenalty()}
+                            Rule Breaker -{ruleBreakerPenaltyForStudent(s)}
                           </button>
                           <button
                             onClick={(e) => {
@@ -1604,7 +1624,7 @@ export default function ClassroomPage() {
                             title={ruleTooltipText()}
                             style={btnSmallReward()}
                           >
-                            Rule Keeper +{ruleKeeperBonus()}
+                            Rule Keeper +{ruleKeeperBonusForStudent(s)}
                           </button>
                         </div>
                       ) : null}

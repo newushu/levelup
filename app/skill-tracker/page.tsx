@@ -98,6 +98,15 @@ type BattleRow = {
     avatar_path?: string | null;
     avatar_bg?: string | null;
     avatar_effect?: string | null;
+    corner_border_url?: string | null;
+    corner_border_render_mode?: string | null;
+    corner_border_html?: string | null;
+    corner_border_css?: string | null;
+    corner_border_js?: string | null;
+    corner_border_offset_x?: number | null;
+    corner_border_offset_y?: number | null;
+    corner_border_offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null }> | null;
+    card_plate_url?: string | null;
     attempts?: number;
     successes?: number;
     attempts_list?: boolean[];
@@ -107,6 +116,7 @@ type BattleRow = {
     history_last30_attempts?: number;
     history_last30_successes?: number;
     history_last30_rate?: number;
+    mvp_bonus_pct?: number;
   }>;
   left_student_id: string;
   right_student_id: string;
@@ -122,6 +132,24 @@ type BattleRow = {
   right_avatar_bg?: string | null;
   left_avatar_effect?: string | null;
   right_avatar_effect?: string | null;
+  left_corner_border_url?: string | null;
+  left_corner_border_render_mode?: string | null;
+  left_corner_border_html?: string | null;
+  left_corner_border_css?: string | null;
+  left_corner_border_js?: string | null;
+  left_corner_border_offset_x?: number | null;
+  left_corner_border_offset_y?: number | null;
+  left_corner_border_offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null }> | null;
+  right_corner_border_url?: string | null;
+  right_corner_border_render_mode?: string | null;
+  right_corner_border_html?: string | null;
+  right_corner_border_css?: string | null;
+  right_corner_border_js?: string | null;
+  right_corner_border_offset_x?: number | null;
+  right_corner_border_offset_y?: number | null;
+  right_corner_border_offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null }> | null;
+  left_card_plate_url?: string | null;
+  right_card_plate_url?: string | null;
   skill_id: string;
   skill_name: string;
   repetitions_target: number;
@@ -149,6 +177,8 @@ type BattleRow = {
   winner_id?: string | null;
   mvp_ids?: string[];
   points_delta_by_id?: Record<string, number>;
+  points_delta_base_by_id?: Record<string, number>;
+  mvp_bonus_points_by_id?: Record<string, number>;
 };
 
 type HistoryLog = {
@@ -518,9 +548,7 @@ export default function SkillTrackerPage() {
     }
     const nextBattles = (sj.json?.battles ?? []) as BattleRow[];
     setBattles(nextBattles);
-    if (!isTabletRouteRef.current) {
-      queueAutoSettle(nextBattles);
-    }
+    queueAutoSettle(nextBattles);
     if (students.length) {
       refreshMvpCounts(students.map((s) => s.id));
     }
@@ -744,6 +772,79 @@ export default function SkillTrackerPage() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <span>{s.name}</span>
         <span style={{ fontSize: 11, fontWeight: 900, color: "#facc15" }}>MVP: {mvpCount}</span>
+      </div>
+    );
+  }
+
+  function renderBattleAvatar(
+    p: {
+      id: string;
+      name: string;
+      avatar_path?: string | null;
+      avatar_bg?: string | null;
+      avatar_effect?: string | null;
+      corner_border_url?: string | null;
+      corner_border_render_mode?: string | null;
+      corner_border_html?: string | null;
+      corner_border_css?: string | null;
+      corner_border_js?: string | null;
+      corner_border_offset_x?: number | null;
+      corner_border_offset_y?: number | null;
+      corner_border_offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null }> | null;
+      card_plate_url?: string | null;
+    },
+    size = 58
+  ) {
+    const avatarPath = p.avatar_path ?? "";
+    const avatarBg = p.avatar_bg ?? "rgba(0,0,0,0.4)";
+    const avatarEffect = p.avatar_effect ?? null;
+    const avatarSrc = avatarPath
+      ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/avatars/${avatarPath}`
+      : "";
+    const effectConfig = effectConfigByKey[avatarEffect ?? ""]?.config;
+    const borderAsset =
+      p.corner_border_url || p.corner_border_html || p.corner_border_css || p.corner_border_js
+        ? {
+            render_mode: p.corner_border_render_mode ?? "image",
+            image_url: p.corner_border_url ?? null,
+            html: p.corner_border_html ?? null,
+            css: p.corner_border_css ?? null,
+            js: p.corner_border_js ?? null,
+            offset_x: p.corner_border_offset_x ?? 0,
+            offset_y: p.corner_border_offset_y ?? 0,
+            offsets_by_context: p.corner_border_offsets_by_context ?? {},
+          }
+        : null;
+
+    return (
+      <div
+        style={{
+          position: "relative",
+          width: size,
+          height: size,
+          borderRadius: 12,
+          background:
+            "linear-gradient(135deg, rgba(15,23,42,0.95), rgba(30,64,175,0.35) 55%, rgba(16,185,129,0.25))",
+          border: "1px solid rgba(148,163,184,0.28)",
+          boxShadow: "0 12px 24px rgba(0,0,0,0.35), inset 0 0 12px rgba(59,130,246,0.22)",
+          overflow: "visible",
+          padding: 4,
+          flexShrink: 0,
+        }}
+      >
+        {p.card_plate_url ? <img src={p.card_plate_url} alt="" style={cardPlateStyle(plateOffsets)} /> : null}
+        <AvatarRender
+          size={size}
+          bg={avatarBg}
+          avatarSrc={avatarSrc}
+          border={borderAsset}
+          effect={avatarEffect ? { key: avatarEffect, config: effectConfig } : null}
+          cornerOffsets={cornerOffsets}
+          contextKey={avatarContextKey}
+          bleed={14}
+          style={{ borderRadius: 10 }}
+          fallback={<span style={{ fontSize: 14, opacity: 0.7 }}>{p.name.slice(0, 1)}</span>}
+        />
       </div>
     );
   }
@@ -1381,6 +1482,11 @@ export default function SkillTrackerPage() {
       await refreshFeed();
       setFlash(null);
       setMsg(sj.json?.error || "Failed to log battle attempt");
+      return;
+    }
+    if (sj.json?.ready_to_settle === true) {
+      await settleBattle(battleId);
+      setFlash(null);
       return;
     }
     if (nextInflight === 0) {
@@ -2590,7 +2696,7 @@ export default function SkillTrackerPage() {
                       Categories: {laneCats.join(", ") || "—"} • Reps {b.repetitions_target}
                     </div>
                     <div style={{ textAlign: "center", fontSize: 11, opacity: 0.55 }}>
-                      Points delta: {pointsDeltaSummary || "—"}
+                      Settled chips under each player show point changes/modifiers.
                     </div>
                     {!isTabletMode ? (
                       <details style={debugDetails()}>
@@ -2693,7 +2799,6 @@ export default function SkillTrackerPage() {
                           const doneP = attemptsList.length >= b.repetitions_target;
                           const remainingP = Math.max(0, Number(b.repetitions_target ?? 0) - attemptsList.length);
                           const delta = pointsDeltaById.get(p.id) ?? 0;
-                          const beforePoints = p.points !== undefined && p.points !== null ? Number(p.points ?? 0) - delta : null;
                           const pulseActive =
                             laneSuccessPulse?.battleId === b.id &&
                             laneSuccessPulse?.playerId === p.id &&
@@ -2707,50 +2812,26 @@ export default function SkillTrackerPage() {
                               className={`lane-player ${currentTurnId === p.id ? "lane-player-active" : ""}`}
                               style={{ position: "relative" }}
                             >
-                              {isSettled ? (
-                                <div style={netPointsOverlayContainer()}>
-                                  <div style={netPointsChangeChip(delta)}>
-                                    <span>{formatPointsValue(beforePoints)}</span>
-                                    <span>{delta >= 0 ? "▲" : "▼"}</span>
-                                    <span>{formatPointsValue(p.points)}</span>
-                                  </div>
-                                  <div style={netDeltaChip(delta)}>{formatNetDelta(delta)}</div>
-                                </div>
-                              ) : null}
                               <div className="lane-player-header">
                                 <div className="lane-player-name">
+                                  {renderBattleAvatar(p, 56)}
                                   {p.name}
                                   {laneMvpIds.includes(p.id) ? <span className="lane-mvp-chip">MVP</span> : null}
                                 </div>
-                                <div className="lane-player-level">Lv {p.level ?? 0} • {p.points ?? 0} pts</div>
-                                <div className="lane-player-remaining">Remaining: {remainingP}</div>
                               </div>
-                              {done && delta !== 0 ? (
-                                <div className={`lane-points-chip ${delta > 0 ? "lane-points-win" : "lane-points-loss"}`}>
-                                  <span className="lane-points-before">{beforePoints}</span>
-                                  <span className="lane-points-arrow">{delta > 0 ? "▲" : "▼"}</span>
-                                  <span className="lane-points-after">{p.points ?? 0}</span>
+                              <div className="lane-chip-stack">
+                                <div className="lane-chip-row">
+                                  <div className="lane-info-chip">Lv {p.level ?? 0} • {formatPointsDisplay(p.points)} pts</div>
+                                  <div className="lane-info-chip">Remaining: {remainingP}</div>
+                                  <div className="lane-player-cat" style={{ color, borderColor: color }}>
+                                    {catLabel}
+                                  </div>
                                 </div>
-                              ) : null}
-                              <div className="lane-player-cat" style={{ color, borderColor: color }}>
-                                {catLabel}
+                                {isSettled ? <div className="lane-chip-row">{renderBattleSettledDeltaChip(b, p.id)}</div> : null}
+                                <div className="lane-chip-row">
+                                  <div className="lane-skill-chip">Next: {skillName}</div>
+                                </div>
                               </div>
-                              <div className="lane-player-skill">Next: {skillName}</div>
-                              {done ? (
-                                <div
-                                  className="lane-player-points"
-                                  style={{
-                                    borderColor: (pointsDeltaById.get(p.id) ?? 0) >= 0 ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.5)",
-                                    background:
-                                      (pointsDeltaById.get(p.id) ?? 0) >= 0 ? "rgba(34,197,94,0.18)" : "rgba(239,68,68,0.18)",
-                                    color:
-                                      (pointsDeltaById.get(p.id) ?? 0) >= 0 ? "rgba(34,197,94,0.95)" : "rgba(239,68,68,0.95)",
-                                  }}
-                                >
-                                  {(pointsDeltaById.get(p.id) ?? 0) >= 0 ? "+" : ""}
-                                  {pointsDeltaById.get(p.id) ?? 0} pts
-                                </div>
-                              ) : null}
                               {currentTurnId === p.id ? <div className="lane-turn">YOUR TURN</div> : null}
                               <div className="lane-controls">
                                 <button
@@ -2830,7 +2911,6 @@ export default function SkillTrackerPage() {
                           const doneP = attemptsList.length >= b.repetitions_target;
                           const remainingP = Math.max(0, Number(b.repetitions_target ?? 0) - attemptsList.length);
                           const delta = pointsDeltaById.get(p.id) ?? 0;
-                          const beforePoints = p.points !== undefined && p.points !== null ? Number(p.points ?? 0) - delta : null;
                           const pulseActive =
                             laneSuccessPulse?.battleId === b.id &&
                             laneSuccessPulse?.playerId === p.id &&
@@ -2844,50 +2924,26 @@ export default function SkillTrackerPage() {
                               className={`lane-player ${currentTurnId === p.id ? "lane-player-active" : ""}`}
                               style={{ position: "relative" }}
                             >
-                              {isSettled ? (
-                                <div style={netPointsOverlayContainer()}>
-                                  <div style={netPointsChangeChip(delta)}>
-                                    <span>{formatPointsValue(beforePoints)}</span>
-                                    <span>{delta >= 0 ? "▲" : "▼"}</span>
-                                    <span>{formatPointsValue(p.points)}</span>
-                                  </div>
-                                  <div style={netDeltaChip(delta)}>{formatNetDelta(delta)}</div>
-                                </div>
-                              ) : null}
                               <div className="lane-player-header">
                                 <div className="lane-player-name">
+                                  {renderBattleAvatar(p, 56)}
                                   {p.name}
                                   {laneMvpIds.includes(p.id) ? <span className="lane-mvp-chip">MVP</span> : null}
                                 </div>
-                                <div className="lane-player-level">Lv {p.level ?? 0} • {p.points ?? 0} pts</div>
-                                <div className="lane-player-remaining">Remaining: {remainingP}</div>
                               </div>
-                              {done && delta !== 0 ? (
-                                <div className={`lane-points-chip ${delta > 0 ? "lane-points-win" : "lane-points-loss"}`}>
-                                  <span className="lane-points-before">{beforePoints}</span>
-                                  <span className="lane-points-arrow">{delta > 0 ? "▲" : "▼"}</span>
-                                  <span className="lane-points-after">{p.points ?? 0}</span>
+                              <div className="lane-chip-stack">
+                                <div className="lane-chip-row">
+                                  <div className="lane-info-chip">Lv {p.level ?? 0} • {formatPointsDisplay(p.points)} pts</div>
+                                  <div className="lane-info-chip">Remaining: {remainingP}</div>
+                                  <div className="lane-player-cat" style={{ color, borderColor: color }}>
+                                    {catLabel}
+                                  </div>
                                 </div>
-                              ) : null}
-                              <div className="lane-player-cat" style={{ color, borderColor: color }}>
-                                {catLabel}
+                                {isSettled ? <div className="lane-chip-row">{renderBattleSettledDeltaChip(b, p.id)}</div> : null}
+                                <div className="lane-chip-row">
+                                  <div className="lane-skill-chip">Next: {skillName}</div>
+                                </div>
                               </div>
-                              <div className="lane-player-skill">Next: {skillName}</div>
-                              {done ? (
-                                <div
-                                  className="lane-player-points"
-                                  style={{
-                                    borderColor: (pointsDeltaById.get(p.id) ?? 0) >= 0 ? "rgba(34,197,94,0.5)" : "rgba(239,68,68,0.5)",
-                                    background:
-                                      (pointsDeltaById.get(p.id) ?? 0) >= 0 ? "rgba(34,197,94,0.18)" : "rgba(239,68,68,0.18)",
-                                    color:
-                                      (pointsDeltaById.get(p.id) ?? 0) >= 0 ? "rgba(34,197,94,0.95)" : "rgba(239,68,68,0.95)",
-                                  }}
-                                >
-                                  {(pointsDeltaById.get(p.id) ?? 0) >= 0 ? "+" : ""}
-                                  {pointsDeltaById.get(p.id) ?? 0} pts
-                                </div>
-                              ) : null}
                               {currentTurnId === p.id ? <div className="lane-turn">YOUR TURN</div> : null}
                               <div className="lane-controls">
                                 <button
@@ -2969,23 +3025,15 @@ export default function SkillTrackerPage() {
                                 >
                                   <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", justifyContent: "space-between", gap: 8 }}>
                                     <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                      {renderBattleAvatar(p, 54)}
                                       {p.name}
                                       {mvpIds.includes(p.id) ? <span style={mvpChip()}>MVP</span> : null}
                                     </span>
-                                    <span style={{ fontSize: 11, opacity: 0.7 }}>
-                                      Lv {p.level ?? 0} • {p.points ?? 0} pts
+                                    <span style={{ fontSize: 13, opacity: 0.8 }}>
+                                      Lv {p.level ?? 0} • {formatPointsDisplay(p.points)} pts
                                     </span>
                                   </div>
-                                  {isSettled ? (
-                                    <div style={netPointsRow()}>
-                                      <div style={netPointsChangeChip(delta)}>
-                                        <span>{formatPointsValue((p.points ?? 0) - delta)}</span>
-                                        <span>{delta >= 0 ? "▲" : "▼"}</span>
-                                        <span>{formatPointsValue(p.points)}</span>
-                                      </div>
-                                      <div style={netDeltaChip(delta)}>{formatNetDelta(delta)}</div>
-                                    </div>
-                                  ) : null}
+                                  {isSettled ? <div style={{ marginTop: 8 }}>{renderBattleSettledDeltaChip(b, p.id)}</div> : null}
                                   {currentTurnId === p.id ? <div style={turnBadge()}>YOUR TURN</div> : null}
                                   <div style={{ fontSize: 11, opacity: 0.7 }}>{team.label}</div>
                                   {renderBattleScore(stats.successesCount, stats.attemptsCount)}
@@ -3093,23 +3141,15 @@ export default function SkillTrackerPage() {
                             >
                               <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", justifyContent: "space-between", gap: 8 }}>
                                 <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  {renderBattleAvatar(p, 54)}
                                   {p.name}
                                   {mvpIds.includes(p.id) ? <span style={mvpChip()}>MVP</span> : null}
                                 </span>
-                                <span style={{ fontSize: 11, opacity: 0.7 }}>
-                                  Lv {p.level ?? 0} • {p.points ?? 0} pts
+                                <span style={{ fontSize: 13, opacity: 0.8 }}>
+                                  Lv {p.level ?? 0} • {formatPointsDisplay(p.points)} pts
                                 </span>
                               </div>
-                              {isSettled ? (
-                                <div style={netPointsRow()}>
-                                  <div style={netPointsChangeChip(delta)}>
-                                    <span>{formatPointsValue((p.points ?? 0) - delta)}</span>
-                                    <span>{delta >= 0 ? "▲" : "▼"}</span>
-                                    <span>{formatPointsValue(p.points)}</span>
-                                  </div>
-                                  <div style={netDeltaChip(delta)}>{formatNetDelta(delta)}</div>
-                                </div>
-                              ) : null}
+                              {isSettled ? <div style={{ marginTop: 8 }}>{renderBattleSettledDeltaChip(b, p.id)}</div> : null}
                               {currentTurnId === p.id ? <div style={turnBadge()}>YOUR TURN</div> : null}
                               <div style={{ fontSize: 11, opacity: 0.7 }}>Team A</div>
                               {renderBattleScore(stats.successesCount, stats.attemptsCount)}
@@ -3197,23 +3237,15 @@ export default function SkillTrackerPage() {
                             >
                               <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", justifyContent: "space-between", gap: 8 }}>
                                 <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  {renderBattleAvatar(p, 54)}
                                   {p.name}
                                   {mvpIds.includes(p.id) ? <span style={mvpChip()}>MVP</span> : null}
                                 </span>
-                                <span style={{ fontSize: 11, opacity: 0.7 }}>
-                                  Lv {p.level ?? 0} • {p.points ?? 0} pts
+                                <span style={{ fontSize: 13, opacity: 0.8 }}>
+                                  Lv {p.level ?? 0} • {formatPointsDisplay(p.points)} pts
                                 </span>
                               </div>
-                              {isSettled ? (
-                                <div style={netPointsRow(true)}>
-                                  <div style={netPointsChangeChip(delta)}>
-                                    <span>{formatPointsValue((p.points ?? 0) - delta)}</span>
-                                    <span>{delta >= 0 ? "▲" : "▼"}</span>
-                                    <span>{formatPointsValue(p.points)}</span>
-                                  </div>
-                                  <div style={netDeltaChip(delta)}>{formatNetDelta(delta)}</div>
-                                </div>
-                              ) : null}
+                              {isSettled ? <div style={{ marginTop: 8 }}>{renderBattleSettledDeltaChip(b, p.id)}</div> : null}
                               {currentTurnId === p.id ? <div style={turnBadge()}>YOUR TURN</div> : null}
                               <div style={{ fontSize: 11, opacity: 0.7 }}>Team B</div>
                               {renderBattleScore(stats.successesCount, stats.attemptsCount)}
@@ -3408,7 +3440,7 @@ export default function SkillTrackerPage() {
                     style={{ position: "absolute", inset: 0 }}
                   />
                 </div>
-                <div style={{ ...battleCardContent(), ...(done ? { opacity: 0.55 } : null) }}>
+                <div style={{ ...battleCardContent() }}>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -3542,12 +3574,13 @@ export default function SkillTrackerPage() {
                             return (
                               <div key={p.id} className="ffa-card">
                                 <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", justifyContent: "space-between", gap: 8 }}>
-                                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                    {p.name}
-                                    {mvpIds.includes(p.id) ? <span style={mvpChip()}>MVP</span> : null}
-                                  </span>
-                                  <span style={{ fontSize: 11, opacity: 0.7 }}>
-                                    Lv {p.level ?? 0} • {p.points ?? 0} pts
+                                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  {renderBattleAvatar(p, 54)}
+                                  {p.name}
+                                  {mvpIds.includes(p.id) ? <span style={mvpChip()}>MVP</span> : null}
+                                </span>
+                                  <span style={{ fontSize: 13, opacity: 0.8 }}>
+                                    Lv {p.level ?? 0} • {formatPointsDisplay(p.points)} pts
                                   </span>
                                 </div>
                                 {renderBattleScore(stats.successesCount, stats.attemptsCount)}
@@ -3638,9 +3671,12 @@ export default function SkillTrackerPage() {
                             return (
                               <div key={p.id} className="ffa-card" style={currentTurnId === p.id ? turnHighlightCard("ffa") : undefined}>
                                 <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", justifyContent: "space-between" }}>
-                                  <span>{p.name}</span>
-                                  <span style={{ fontSize: 11, opacity: 0.7 }}>
-                                    Lv {p.level ?? 0} • {p.points ?? 0} pts
+                                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    {renderBattleAvatar(p, 54)}
+                                    {p.name}
+                                  </span>
+                                  <span style={{ fontSize: 13, opacity: 0.8 }}>
+                                    Lv {p.level ?? 0} • {formatPointsDisplay(p.points)} pts
                                   </span>
                                 </div>
                                 {currentTurnId === p.id ? <div style={turnBadge()}>YOUR TURN</div> : null}
@@ -3736,22 +3772,16 @@ export default function SkillTrackerPage() {
                             ...(currentTurnId === p.id ? turnHighlightCard("ffa") : null),
                           }}
                         >
-                          {isSettled ? (
-                            <div style={netPointsOverlayContainer()}>
-                              <div style={netPointsChangeChip(delta)}>
-                                <span>{formatPointsValue((p.points ?? 0) - delta)}</span>
-                                <span>{delta >= 0 ? "▲" : "▼"}</span>
-                                <span>{formatPointsValue(p.points)}</span>
-                              </div>
-                              <div style={netDeltaChip(delta)}>{formatNetDelta(delta)}</div>
-                            </div>
-                          ) : null}
                           <div style={{ fontWeight: 1000, fontSize: 18, display: "flex", justifyContent: "space-between" }}>
-                            <span>{p.name}</span>
-                            <span style={{ fontSize: 11, opacity: 0.7 }}>
-                              Lv {p.level ?? 0} • {p.points ?? 0} pts
+                            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              {renderBattleAvatar(p, 54)}
+                              {p.name}
+                            </span>
+                            <span style={{ fontSize: 13, opacity: 0.8 }}>
+                              Lv {p.level ?? 0} • {formatPointsDisplay(p.points)} pts
                             </span>
                           </div>
+                          {isSettled ? <div style={{ marginTop: 8 }}>{renderBattleSettledDeltaChip(b, p.id)}</div> : null}
                           {currentTurnId === p.id ? <div style={turnBadge()}>YOUR TURN</div> : null}
                           {renderBattleScore(stats.successesCount, stats.attemptsCount)}
                           {done && delta !== 0 ? (
@@ -3821,7 +3851,7 @@ export default function SkillTrackerPage() {
                     )}
                   </div>
 
-                  {done ? (
+                  {done && b.battle_mode !== "teams" ? (
                     <div style={battleCompletedOverlay()}>
                       <div>Completed</div>
                       {b.battle_mode === "teams" ? (
@@ -3876,11 +3906,6 @@ export default function SkillTrackerPage() {
           const rightHistLabel = rightHistAttempts ? `${rightHistSuccesses}/${rightHistAttempts} • ${rightHistRate}%` : "0/0 • 0%";
           const leftHist30Attempts = b.left_history_last30_attempts ?? 0;
           const rightHist30Attempts = b.right_history_last30_attempts ?? 0;
-          const duelPointsDeltaById = new Map<string, number>(
-            Object.entries(b.points_delta_by_id ?? {}).map(([key, value]) => [String(key), Number(value)])
-          );
-          const leftDelta = duelPointsDeltaById.get(b.left_student_id) ?? 0;
-          const rightDelta = duelPointsDeltaById.get(b.right_student_id) ?? 0;
           const leftHist30Successes = b.left_history_last30_successes ?? 0;
           const rightHist30Successes = b.right_history_last30_successes ?? 0;
           const leftHist30Rate = b.left_history_last30_rate ?? (leftHist30Attempts ? Math.round((leftHist30Successes / leftHist30Attempts) * 100) : 0);
@@ -3932,7 +3957,7 @@ export default function SkillTrackerPage() {
                   style={{ position: "absolute", inset: 0 }}
                 />
               </div>
-              <div style={{ ...battleCardContent(), ...(done ? { opacity: 0.55 } : null) }}>
+              <div style={{ ...battleCardContent() }}>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -3947,18 +3972,31 @@ export default function SkillTrackerPage() {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 140px 1fr", alignItems: "center", gap: 14 }}>
                 <div style={{ display: "grid", gap: 8 }}>
                   <div style={{ fontWeight: 1000, fontSize: 24, textShadow: "0 0 16px rgba(59,130,246,0.35)" }}>
-                    {b.left_name} <span style={{ fontSize: 13, opacity: 0.75 }}>Lv {b.left_level ?? 0} • {b.left_points ?? 0} pts</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      {renderBattleAvatar(
+                        {
+                          id: b.left_student_id,
+                          name: b.left_name,
+                          avatar_path: b.left_avatar_path,
+                          avatar_bg: b.left_avatar_bg,
+                          avatar_effect: b.left_avatar_effect,
+                          corner_border_url: b.left_corner_border_url,
+                          corner_border_render_mode: b.left_corner_border_render_mode,
+                          corner_border_html: b.left_corner_border_html,
+                          corner_border_css: b.left_corner_border_css,
+                          corner_border_js: b.left_corner_border_js,
+                          corner_border_offset_x: b.left_corner_border_offset_x,
+                          corner_border_offset_y: b.left_corner_border_offset_y,
+                          corner_border_offsets_by_context: b.left_corner_border_offsets_by_context,
+                          card_plate_url: b.left_card_plate_url,
+                        },
+                        56
+                      )}
+                      {b.left_name}
+                    </span>{" "}
+                    <span style={{ fontSize: 15, opacity: 0.82 }}>Lv {b.left_level ?? 0} • {formatPointsDisplay(b.left_points)} pts</span>
                   </div>
-                  {isSettled ? (
-                    <div style={netPointsRow()}>
-                      <div style={netPointsChangeChip(leftDelta)}>
-                        <span>{formatPointsValue((b.left_points ?? 0) - leftDelta)}</span>
-                        <span>{leftDelta >= 0 ? "▲" : "▼"}</span>
-                        <span>{formatPointsValue(b.left_points)}</span>
-                      </div>
-                      <div style={netDeltaChip(leftDelta)}>{formatNetDelta(leftDelta)}</div>
-                    </div>
-                  ) : null}
+                  {isSettled ? <div style={{ marginTop: 8 }}>{renderBattleSettledDeltaChip(b, b.left_student_id)}</div> : null}
                   {currentTurnId === b.left_student_id ? <div style={turnBadge()}>YOUR TURN</div> : null}
                   <div style={{ display: "inline-flex", alignItems: "baseline", gap: 6, fontWeight: 1000 }}>
                     <div style={{ fontSize: 30, color: "rgba(34,197,94,0.95)", textShadow: "0 0 12px rgba(34,197,94,0.35)" }}>
@@ -4085,18 +4123,31 @@ export default function SkillTrackerPage() {
 
                 <div style={{ display: "grid", gap: 8, justifyItems: "end" }}>
                   <div style={{ fontWeight: 1000, fontSize: 24, textShadow: "0 0 16px rgba(239,68,68,0.35)" }}>
-                    {b.right_name} <span style={{ fontSize: 13, opacity: 0.75 }}>Lv {b.right_level ?? 0} • {b.right_points ?? 0} pts</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      {renderBattleAvatar(
+                        {
+                          id: b.right_student_id,
+                          name: b.right_name,
+                          avatar_path: b.right_avatar_path,
+                          avatar_bg: b.right_avatar_bg,
+                          avatar_effect: b.right_avatar_effect,
+                          corner_border_url: b.right_corner_border_url,
+                          corner_border_render_mode: b.right_corner_border_render_mode,
+                          corner_border_html: b.right_corner_border_html,
+                          corner_border_css: b.right_corner_border_css,
+                          corner_border_js: b.right_corner_border_js,
+                          corner_border_offset_x: b.right_corner_border_offset_x,
+                          corner_border_offset_y: b.right_corner_border_offset_y,
+                          corner_border_offsets_by_context: b.right_corner_border_offsets_by_context,
+                          card_plate_url: b.right_card_plate_url,
+                        },
+                        56
+                      )}
+                      {b.right_name}
+                    </span>{" "}
+                    <span style={{ fontSize: 15, opacity: 0.82 }}>Lv {b.right_level ?? 0} • {formatPointsDisplay(b.right_points)} pts</span>
                   </div>
-                  {isSettled ? (
-                    <div style={netPointsRow(true)}>
-                      <div style={netPointsChangeChip(rightDelta)}>
-                        <span>{formatPointsValue((b.right_points ?? 0) - rightDelta)}</span>
-                        <span>{rightDelta >= 0 ? "▲" : "▼"}</span>
-                        <span>{formatPointsValue(b.right_points)}</span>
-                      </div>
-                      <div style={netDeltaChip(rightDelta)}>{formatNetDelta(rightDelta)}</div>
-                    </div>
-                  ) : null}
+                  {isSettled ? <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>{renderBattleSettledDeltaChip(b, b.right_student_id)}</div> : null}
                   {currentTurnId === b.right_student_id ? <div style={turnBadge()}>YOUR TURN</div> : null}
                   <div style={{ display: "inline-flex", alignItems: "baseline", gap: 6, fontWeight: 1000 }}>
                     <div style={{ fontSize: 30, color: "rgba(34,197,94,0.95)", textShadow: "0 0 12px rgba(34,197,94,0.35)" }}>
@@ -4305,7 +4356,7 @@ export default function SkillTrackerPage() {
                               </div>
                             </div>
                             <div style={{ fontSize: 12, opacity: 0.7 }}>
-                              Lv {t.student_level ?? 0} • {t.student_points ?? 0} pts
+                              Lv {t.student_level ?? 0} • {formatPointsDisplay(t.student_points)} pts
                             </div>
                           </div>
                         </div>
@@ -4551,7 +4602,7 @@ export default function SkillTrackerPage() {
                   {t.student_is_competition && compCrestUrl ? (
                     <img src={compCrestUrl} alt="Comp Crest" style={crestBadge()} />
                   ) : null}
-                  <span style={{ fontSize: 11, opacity: 0.75 }}>Lv {t.student_level ?? 0} • {t.student_points ?? 0} pts</span>
+                  <span style={{ fontSize: 13, opacity: 0.82 }}>Lv {t.student_level ?? 0} • {formatPointsDisplay(t.student_points)} pts</span>
                 </div>
                 <button
                   onClick={(e) => {
@@ -6234,6 +6285,24 @@ export default function SkillTrackerPage() {
                 avatarBg={battleResult.left_avatar_bg ?? "rgba(0,0,0,0.4)"}
                 avatarEffect={battleResult.left_avatar_effect ?? null}
                 effectConfig={effectConfigByKey[battleResult.left_avatar_effect ?? ""]?.config}
+                border={
+                  battleResult.left_corner_border_url || battleResult.left_corner_border_html || battleResult.left_corner_border_css || battleResult.left_corner_border_js
+                    ? {
+                        render_mode: battleResult.left_corner_border_render_mode ?? "image",
+                        image_url: battleResult.left_corner_border_url ?? null,
+                        html: battleResult.left_corner_border_html ?? null,
+                        css: battleResult.left_corner_border_css ?? null,
+                        js: battleResult.left_corner_border_js ?? null,
+                        offset_x: battleResult.left_corner_border_offset_x ?? 0,
+                        offset_y: battleResult.left_corner_border_offset_y ?? 0,
+                        offsets_by_context: battleResult.left_corner_border_offsets_by_context ?? {},
+                      }
+                    : null
+                }
+                cardPlateUrl={battleResult.left_card_plate_url ?? null}
+                cornerOffsets={cornerOffsets}
+                plateOffsets={plateOffsets}
+                contextKey={avatarContextKey}
                 successes={battleResult.left_attempts_list?.filter((x) => x).length ?? 0}
                 attempts={battleResult.left_attempts_list?.length ?? 0}
               />
@@ -6246,6 +6315,24 @@ export default function SkillTrackerPage() {
                 avatarBg={battleResult.right_avatar_bg ?? "rgba(0,0,0,0.4)"}
                 avatarEffect={battleResult.right_avatar_effect ?? null}
                 effectConfig={effectConfigByKey[battleResult.right_avatar_effect ?? ""]?.config}
+                border={
+                  battleResult.right_corner_border_url || battleResult.right_corner_border_html || battleResult.right_corner_border_css || battleResult.right_corner_border_js
+                    ? {
+                        render_mode: battleResult.right_corner_border_render_mode ?? "image",
+                        image_url: battleResult.right_corner_border_url ?? null,
+                        html: battleResult.right_corner_border_html ?? null,
+                        css: battleResult.right_corner_border_css ?? null,
+                        js: battleResult.right_corner_border_js ?? null,
+                        offset_x: battleResult.right_corner_border_offset_x ?? 0,
+                        offset_y: battleResult.right_corner_border_offset_y ?? 0,
+                        offsets_by_context: battleResult.right_corner_border_offsets_by_context ?? {},
+                      }
+                    : null
+                }
+                cardPlateUrl={battleResult.right_card_plate_url ?? null}
+                cornerOffsets={cornerOffsets}
+                plateOffsets={plateOffsets}
+                contextKey={avatarContextKey}
                 successes={battleResult.right_attempts_list?.filter((x) => x).length ?? 0}
                 attempts={battleResult.right_attempts_list?.length ?? 0}
               />
@@ -6257,8 +6344,12 @@ export default function SkillTrackerPage() {
               {battleWinnerLabel(battleResult)}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, fontSize: 12 }}>
-              <div style={{ textAlign: "left" }}>{battlePointsSummary(battleResult).left}</div>
-              <div style={{ textAlign: "right" }}>{battlePointsSummary(battleResult).right}</div>
+              <div style={{ textAlign: "left" }}>
+                {battlePointsSummaryRich("Left", battleResult.left_student_id, battleResult)}
+              </div>
+              <div style={{ textAlign: "right" }}>
+                {battlePointsSummaryRich("Right", battleResult.right_student_id, battleResult)}
+              </div>
             </div>
           </div>
         </Overlay>
@@ -6545,6 +6636,39 @@ export default function SkillTrackerPage() {
         display: grid;
         gap: 4px;
       }
+      .lane-chip-stack {
+        display: grid;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .lane-chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      .lane-info-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(15,23,42,0.56);
+        font-size: 13px;
+        font-weight: 900;
+        opacity: 0.92;
+      }
+      .lane-skill-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 9px;
+        border-radius: 999px;
+        border: 1px solid rgba(56,189,248,0.35);
+        background: rgba(14,165,233,0.14);
+        font-size: 11px;
+        font-weight: 900;
+        color: rgba(186,230,253,0.96);
+      }
       .lane-player-remaining {
         font-size: 11px;
         font-weight: 900;
@@ -6561,7 +6685,6 @@ export default function SkillTrackerPage() {
         letter-spacing: 0.08em;
       }
       .lane-player-cat {
-        margin-top: 4px;
         display: inline-flex;
         padding: 2px 8px;
         border-radius: 999px;
@@ -6572,7 +6695,6 @@ export default function SkillTrackerPage() {
         letter-spacing: 0.08em;
       }
       .lane-player-level {
-        margin-left: 8px;
         font-size: 11px;
         font-weight: 900;
         opacity: 0.8;
@@ -6656,7 +6778,7 @@ export default function SkillTrackerPage() {
         padding: 4px 8px;
         border-radius: 999px;
         border: 1px solid rgba(255,255,255,0.3);
-        font-size: 11px;
+        font-size: 13px;
         font-weight: 900;
         z-index: 2;
         box-shadow: 0 10px 20px rgba(0,0,0,0.35);
@@ -6677,13 +6799,12 @@ export default function SkillTrackerPage() {
         opacity: 0.6;
       }
       .lane-points-arrow {
-        font-size: 12px;
+        font-size: 14px;
       }
       .lane-points-after {
-        font-size: 12px;
+        font-size: 14px;
       }
       .lane-player-skill {
-        margin-top: 6px;
         font-size: 11px;
         font-weight: 900;
         opacity: 0.8;
@@ -7911,71 +8032,137 @@ function formatPointsValue(value: number | null | undefined): string {
 function formatNetDelta(value: number): string {
   const n = Number(value ?? 0);
   if (!Number.isFinite(n) || n === 0) return "0";
-  return `${n > 0 ? "+" : ""}${n}`;
+  return `${n > 0 ? "+" : ""}${Math.round(n).toLocaleString()}`;
 }
 
-function netPointsOverlayContainer(): React.CSSProperties {
-  return {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 8,
-    zIndex: 6,
-    pointerEvents: "none",
-  };
+function formatPointsDisplay(value: number | string | null | undefined): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return "0";
+  return Math.round(n).toLocaleString();
 }
 
-function netPointsChangeChip(delta: number): React.CSSProperties {
+function settledPointsChip(delta: number): React.CSSProperties {
   const isPositive = delta > 0;
   const isNegative = delta < 0;
   return {
     display: "inline-flex",
     alignItems: "center",
     gap: 6,
-    padding: "6px 10px",
+    padding: "7px 12px",
     borderRadius: 999,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 1000,
-    border: "1px solid rgba(255,255,255,0.25)",
-    background: isPositive
-      ? "rgba(34,197,94,0.25)"
-      : isNegative
-        ? "rgba(239,68,68,0.25)"
-        : "rgba(148,163,184,0.25)",
-    color: isPositive ? "rgba(34,197,94,0.95)" : isNegative ? "rgba(239,68,68,0.95)" : "rgba(148,163,184,0.95)",
+    border: "1px solid rgba(255,255,255,0.22)",
+    background: "rgba(2,6,23,0.82)",
+    color: isPositive ? "rgba(34,197,94,0.95)" : isNegative ? "rgba(239,68,68,0.95)" : "rgba(226,232,240,0.92)",
+    boxShadow: "0 0 16px rgba(15,23,42,0.5)",
+    backdropFilter: "blur(4px)",
   };
 }
 
-function netDeltaChip(delta: number): React.CSSProperties {
+function settledChangeChip(delta: number): React.CSSProperties {
   const isPositive = delta > 0;
   const isNegative = delta < 0;
   return {
     display: "inline-flex",
     alignItems: "center",
-    padding: "6px 10px",
+    gap: 8,
+    padding: "5px 10px",
     borderRadius: 999,
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: 1000,
-    border: "1px solid rgba(255,255,255,0.25)",
-    background: isPositive
-      ? "rgba(34,197,94,0.35)"
-      : isNegative
-        ? "rgba(239,68,68,0.35)"
-        : "rgba(148,163,184,0.35)",
-    color: isPositive ? "rgba(34,197,94,0.95)" : isNegative ? "rgba(239,68,68,0.95)" : "rgba(148,163,184,0.95)",
+    border: "1px solid rgba(255,255,255,0.22)",
+    background: isPositive ? "rgba(34,197,94,0.28)" : isNegative ? "rgba(239,68,68,0.28)" : "rgba(148,163,184,0.24)",
+    color: isPositive ? "rgba(34,197,94,0.98)" : isNegative ? "rgba(239,68,68,0.98)" : "rgba(226,232,240,0.95)",
+    width: "fit-content",
   };
 }
 
-function netPointsRow(alignRight = false): React.CSSProperties {
+function mvpTwoXChip(): React.CSSProperties {
+  return {
+    display: "inline-grid",
+    placeItems: "center",
+    minWidth: 24,
+    height: 24,
+    borderRadius: 999,
+    padding: "0 6px",
+    fontSize: 12,
+    fontWeight: 1000,
+    background: "rgba(250,204,21,0.22)",
+    border: "1px solid rgba(250,204,21,0.62)",
+    color: "rgba(250,204,21,0.98)",
+    textShadow: "0 0 8px rgba(250,204,21,0.55)",
+  };
+}
+
+function mvpModifierChip(): React.CSSProperties {
   return {
     display: "inline-flex",
     alignItems: "center",
-    gap: 8,
-    justifySelf: alignRight ? "end" : "start",
-    zIndex: 6,
+    borderRadius: 999,
+    padding: "3px 8px",
+    fontSize: 11,
+    fontWeight: 1000,
+    background: "rgba(250,204,21,0.16)",
+    border: "1px solid rgba(250,204,21,0.6)",
+    color: "rgba(253,224,71,0.98)",
   };
+}
+
+function battlePointsAfterValue(b: BattleRow, studentId: string): number | null {
+  const sid = String(studentId);
+  if (sid === String(b.left_student_id ?? "")) {
+    const n = Number(b.left_points ?? 0);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  }
+  if (sid === String(b.right_student_id ?? "")) {
+    const n = Number(b.right_points ?? 0);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  }
+  const participant = (b.participants ?? []).find((p) => String(p.id ?? "") === sid);
+  if (!participant) return null;
+  const n = Number(participant.points ?? 0);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
+function renderBattleSettledDeltaChip(b: BattleRow, studentId: string) {
+  const total = Math.round(Number(b.points_delta_by_id?.[studentId] ?? 0));
+  const baseWithMvpDouble = Math.round(Number(b.points_delta_base_by_id?.[studentId] ?? total));
+  const mvpModifierBonus = Math.round(Number(b.mvp_bonus_points_by_id?.[studentId] ?? 0));
+  const mvpIds = Array.isArray(b.mvp_ids) ? b.mvp_ids.map(String) : [];
+  const isMvp = mvpIds.includes(String(studentId));
+  const originalPoints = isMvp && baseWithMvpDouble > 0 ? Math.ceil(baseWithMvpDouble / 2) : baseWithMvpDouble;
+  const arrow = total >= 0 ? "▲" : "▼";
+  const pointsAfter = battlePointsAfterValue(b, studentId);
+  const pointsBefore = pointsAfter == null ? null : pointsAfter - total;
+
+  return (
+    <div style={{ display: "grid", gap: 6, justifyItems: "start" }}>
+      <div style={settledChangeChip(total)}>
+        <span>{arrow}</span>
+        <span>{formatNetDelta(total)} pts</span>
+        {pointsBefore != null && pointsAfter != null ? (
+          <>
+            <span style={{ opacity: 0.7 }}>•</span>
+            <span>{pointsBefore.toLocaleString()}</span>
+            <span style={{ opacity: 0.7 }}>→</span>
+            <span>{pointsAfter.toLocaleString()}</span>
+          </>
+        ) : null}
+      </div>
+      <div style={settledPointsChip(total)}>
+        {isMvp && originalPoints > 0 ? <s style={{ opacity: 0.7 }}>{formatNetDelta(originalPoints)} pts</s> : null}
+        <span style={{ color: "rgba(148,163,184,0.92)" }}>{isMvp ? "=" : ""}</span>
+        <span>{formatNetDelta(total)} pts</span>
+      </div>
+      {isMvp && (baseWithMvpDouble > 0 || mvpModifierBonus > 0) ? (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          {baseWithMvpDouble > 0 ? <span style={mvpTwoXChip()}>2x</span> : null}
+          {mvpModifierBonus > 0 ? <span style={mvpModifierChip()}>Avatar modifier applied +{mvpModifierBonus}</span> : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function formLabel(): React.CSSProperties {
@@ -8013,20 +8200,23 @@ function completedOverlay(): React.CSSProperties {
 function battleCompletedOverlay(): React.CSSProperties {
   return {
     position: "absolute",
-    inset: 0,
+    top: 10,
+    left: "50%",
+    transform: "translateX(-50%)",
     display: "grid",
-    placeItems: "center",
+    gap: 4,
     textAlign: "center",
-    padding: 12,
-    borderRadius: 18,
-    background: "rgba(0,0,0,0.55)",
-    border: "1px solid rgba(255,255,255,0.12)",
+    padding: "8px 12px",
+    borderRadius: 999,
+    background: "rgba(2,6,23,0.84)",
+    border: "1px solid rgba(250,204,21,0.45)",
     fontWeight: 1000,
     letterSpacing: 0.6,
     textTransform: "uppercase",
     pointerEvents: "none",
     animation: "completedPulse 1.8s ease-in-out infinite",
     zIndex: 2,
+    boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
   };
 }
 
@@ -8072,6 +8262,11 @@ function ResultSide({
   avatarBg,
   avatarEffect,
   effectConfig,
+  border,
+  cardPlateUrl,
+  cornerOffsets,
+  plateOffsets,
+  contextKey,
   successes,
   attempts,
 }: {
@@ -8080,6 +8275,11 @@ function ResultSide({
   avatarBg: string;
   avatarEffect?: string | null;
   effectConfig?: any;
+  border?: any;
+  cardPlateUrl?: string | null;
+  cornerOffsets: { x: number; y: number; size: number };
+  plateOffsets: { x: number; y: number; size: number };
+  contextKey: string;
   successes: number;
   attempts: number;
 }) {
@@ -8091,25 +8291,30 @@ function ResultSide({
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <div
           style={{
-            width: 54,
-            height: 54,
-            borderRadius: 999,
-            background: avatarBg,
-            border: "1px solid rgba(255,255,255,0.12)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            overflow: "hidden",
-            boxShadow: "0 0 18px rgba(59,130,246,0.35)",
             position: "relative",
+            width: 56,
+            height: 56,
+            borderRadius: 12,
+            background: "linear-gradient(135deg, rgba(15,23,42,0.95), rgba(30,64,175,0.35) 55%, rgba(16,185,129,0.25))",
+            border: "1px solid rgba(148,163,184,0.28)",
+            boxShadow: "0 12px 22px rgba(0,0,0,0.35), inset 0 0 12px rgba(59,130,246,0.22)",
+            overflow: "visible",
+            padding: 4,
           }}
         >
-          <AvatarEffectParticles effectKey={avatarEffect ?? null} config={effectConfig} />
-          {avatarSrc ? (
-            <img src={avatarSrc} alt={name} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-          ) : (
-            <span style={{ fontSize: 16, opacity: 0.7 }}>{name.slice(0, 1)}</span>
-          )}
+          {cardPlateUrl ? <img src={cardPlateUrl} alt="" style={cardPlateStyle(plateOffsets)} /> : null}
+          <AvatarRender
+            size={56}
+            bg={avatarBg}
+            avatarSrc={avatarSrc}
+            border={border ?? null}
+            effect={avatarEffect ? { key: avatarEffect, config: effectConfig } : null}
+            cornerOffsets={cornerOffsets}
+            contextKey={contextKey}
+            bleed={14}
+            style={{ borderRadius: 10 }}
+            fallback={<span style={{ fontSize: 16, opacity: 0.7 }}>{name.slice(0, 1)}</span>}
+          />
         </div>
         <div style={{ fontWeight: 1000, fontSize: 18 }}>{name}</div>
       </div>
@@ -8150,6 +8355,24 @@ function battlePointsSummary(b: BattleRow) {
     left: `Left: ${leftNet >= 0 ? "+" : ""}${leftNet} pts`,
     right: `Right: ${rightNet >= 0 ? "+" : ""}${rightNet} pts`,
   };
+}
+
+function battlePointsSummaryRich(label: string, studentId: string, b: BattleRow) {
+  const total = Number(b.points_delta_by_id?.[studentId] ?? 0);
+  const base = Number(b.points_delta_base_by_id?.[studentId] ?? total);
+  const mvpBonus = Number(b.mvp_bonus_points_by_id?.[studentId] ?? 0);
+  const fmt = (n: number) => `${n >= 0 ? "+" : ""}${n}`;
+  if (mvpBonus > 0) {
+    return (
+      <span>
+        {label}: <s>{fmt(base)} pts</s>{" "}
+        <span style={{ color: "#facc15", fontWeight: 1000 }}>
+          {fmt(total)} pts ({fmt(mvpBonus)} MVP modifier)
+        </span>
+      </span>
+    );
+  }
+  return `${label}: ${fmt(total)} pts`;
 }
 
 function TrendGraph({ logs, wide = false }: { logs: HistoryLog[]; wide?: boolean }) {

@@ -111,6 +111,7 @@ type DailyRedeemStatus = {
     skill_pulse_multiplier: number;
     daily_free_points: number;
     challenge_completion_bonus_pct: number;
+    mvp_bonus_pct: number;
     base_skill_pulse_points_per_rep: number;
     skill_pulse_points_per_rep: number;
   };
@@ -169,6 +170,7 @@ export default function StudentInfoPage() {
       spotlight_multiplier?: number | null;
       daily_free_points?: number | null;
       challenge_completion_bonus_pct?: number | null;
+      mvp_bonus_pct?: number | null;
     }>
   >([]);
   const [avatarId, setAvatarId] = useState("");
@@ -510,6 +512,7 @@ export default function StudentInfoPage() {
     0,
     Number(dailyRedeem?.modifiers?.challenge_completion_bonus_pct ?? selectedAvatarMeta?.challenge_completion_bonus_pct ?? 0)
   );
+  const mvpBonusPct = Math.max(0, Number(dailyRedeem?.modifiers?.mvp_bonus_pct ?? selectedAvatarMeta?.mvp_bonus_pct ?? 0));
   const skillPerRepBase = Math.max(0, Number(dailyRedeem?.modifiers?.base_skill_pulse_points_per_rep ?? 2));
   const skillPerRepFinal = Math.max(0, Number(dailyRedeem?.modifiers?.skill_pulse_points_per_rep ?? skillPerRepBase));
   const ruleKeeperFinalPoints = Math.round(ruleKeeperBasePoints * ruleKeeperMultiplier);
@@ -664,6 +667,10 @@ export default function StudentInfoPage() {
                     <div className="modifier-tile__label">Challenge Bonus</div>
                     <div className="modifier-tile__value">{Math.round(challengeBonusPct)}%</div>
                   </div>
+                  <div className="modifier-tile modifier-tile--mvpbonus">
+                    <div className="modifier-tile__label">MVP Bonus</div>
+                    <div className="modifier-tile__value">{Math.round(mvpBonusPct)}%</div>
+                  </div>
                   <div className="modifier-tile modifier-tile--daily">
                     <div className="modifier-tile__label">Free Daily Points</div>
                     <div className="modifier-tile__value">
@@ -673,7 +680,7 @@ export default function StudentInfoPage() {
                 </div>
                 <div className="redeem-card">
                   <div className="redeem-card__head">
-                    <div className="redeem-card__title">Redeem Points</div>
+                    <div className="redeem-card__title">Daily Points to Redeem</div>
                     <div className="redeem-card__pts">+{Math.round(Number(dailyRedeem?.available_points ?? 0))}</div>
                   </div>
                   <div className="redeem-card__chips">
@@ -1064,6 +1071,11 @@ function pageStyles() {
     .modifier-tile--daily {
       background: linear-gradient(145deg, rgba(14,165,233,0.25), rgba(15,23,42,0.3));
       border-color: rgba(14,165,233,0.45);
+    }
+
+    .modifier-tile--mvpbonus {
+      background: linear-gradient(145deg, rgba(250,204,21,0.24), rgba(92,50,12,0.34));
+      border-color: rgba(250,204,21,0.45);
     }
 
     .redeem-card {

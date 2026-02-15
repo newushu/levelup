@@ -3,6 +3,10 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BOARD_POINTS_PER_TOP10 = 15;
 const BOARD_POINTS_TOP1 = 30;
+const CAMP_ROLE_DAILY_POINTS: Record<string, number> = {
+  seller: 300,
+  cleaner: 500,
+};
 
 type AdminClient = ReturnType<typeof supabaseAdmin>;
 type RankedRow = { student_id: string; points: number; recorded_at?: string };
@@ -78,6 +82,117 @@ function isMissingRelation(err: any, relation: string) {
   const msg = String(err?.message || "").toLowerCase();
   const key = relation.toLowerCase();
   return msg.includes(`relation \"${key}\" does not exist`) || msg.includes(`${key} does not exist`);
+}
+
+function normalizeRole(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+function isDateKey(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ""));
+}
+
+function isWithinRosterWindow(todayKey: string, startDate?: string | null, endDate?: string | null) {
+  const start = String(startDate ?? "").trim();
+  const end = String(endDate ?? "").trim();
+  const hasStart = isDateKey(start);
+  const hasEnd = isDateKey(end);
+  if (hasStart && todayKey < start) return false;
+  if (hasEnd && todayKey > end) return false;
+  return true;
+}
+
+async function getCampRoleDailyPoints(admin: AdminClient, studentId: string) {
+  const todayEt = getEasternDateKey(new Date());
+  const membersRes = await admin
+    .from("camp_display_members")
+    .select("roster_id,display_role,secondary_role")
+    .eq("student_id", studentId)
+    .eq("enabled", true);
+
+  if (membersRes.error && isMissingRelation(membersRes.error, "camp_display_members")) {
+    return { points: 0, chips: [] as string[] };
+  }
+  if (membersRes.error) return { error: membersRes.error.message };
+
+  const members = (membersRes.data ?? []) as Array<{
+    roster_id?: string | null;
+    display_role?: string | null;
+    secondary_role?: string | null;
+  }>;
+  if (!members.length) return { points: 0, chips: [] as string[] };
+
+  const rosterIds = Array.from(new Set(members.map((m) => String(m.roster_id ?? "")).filter(Boolean)));
+  if (!rosterIds.length) return { points: 0, chips: [] as string[] };
+
+  const rostersRes = await admin
+    .from("camp_display_rosters")
+    .select("id,start_date,end_date")
+    .in("id", rosterIds)
+    .eq("enabled", true);
+
+  if (rostersRes.error && isMissingRelation(rostersRes.error, "camp_display_rosters")) {
+    return { points: 0, chips: [] as string[] };
+  }
+  if (rostersRes.error && (isMissingColumn(rostersRes.error, "start_date") || isMissingColumn(rostersRes.error, "end_date"))) {
+    const fallbackRostersRes = await admin
+      .from("camp_display_rosters")
+      .select("id")
+      .in("id", rosterIds)
+      .eq("enabled", true);
+    if (fallbackRostersRes.error) return { error: fallbackRostersRes.error.message };
+    const allActiveRosterIds = new Set((fallbackRostersRes.data ?? []).map((r: any) => String(r.id ?? "")).filter(Boolean));
+    let fallbackPoints = 0;
+    const labels: string[] = [];
+    for (const m of members) {
+      const rid = String(m.roster_id ?? "");
+      if (!rid || !allActiveRosterIds.has(rid)) continue;
+      const roleSet = new Set([normalizeRole(m.display_role), normalizeRole(m.secondary_role)].filter(Boolean));
+      for (const role of roleSet) {
+        const pts = Number(CAMP_ROLE_DAILY_POINTS[role] ?? 0);
+        if (pts <= 0) continue;
+        fallbackPoints += pts;
+        labels.push(`${role[0]?.toUpperCase() ?? ""}${role.slice(1)}`);
+      }
+    }
+    const uniqueLabels = Array.from(new Set(labels));
+    return {
+      points: fallbackPoints,
+      chips: fallbackPoints > 0 ? [`+${fallbackPoints} camp role (${uniqueLabels.join(", ")})`] : [],
+    };
+  }
+  if (rostersRes.error) return { error: rostersRes.error.message };
+
+  const activeRosterIds = new Set(
+    (rostersRes.data ?? [])
+      .filter((r: any) => isWithinRosterWindow(todayEt, String(r.start_date ?? ""), String(r.end_date ?? "")))
+      .map((r: any) => String(r.id ?? ""))
+      .filter(Boolean)
+  );
+
+  if (!activeRosterIds.size) return { points: 0, chips: [] as string[] };
+
+  let points = 0;
+  const labels: string[] = [];
+  for (const m of members) {
+    const rid = String(m.roster_id ?? "");
+    if (!rid || !activeRosterIds.has(rid)) continue;
+    const roleSet = new Set([normalizeRole(m.display_role), normalizeRole(m.secondary_role)].filter(Boolean));
+    for (const role of roleSet) {
+      const pts = Number(CAMP_ROLE_DAILY_POINTS[role] ?? 0);
+      if (pts <= 0) continue;
+      points += pts;
+      labels.push(`${role[0]?.toUpperCase() ?? ""}${role.slice(1)}`);
+    }
+  }
+
+  const uniqueLabels = Array.from(new Set(labels));
+  return {
+    points,
+    chips: points > 0 ? [`+${points} camp role (${uniqueLabels.join(", ")})`] : [],
+  };
 }
 
 function rankWithTies(rows: RankedRow[], boardKey: string, higherIsBetter = true, excludeNonPositive = false): BoardAward[] {
@@ -380,10 +495,15 @@ export async function computeDailyRedeemStatus(
   }
 
   const avatarPoints = Math.max(0, Math.round(Number(avatar?.daily_free_points ?? 0)));
+  const campRoleRes = await getCampRoleDailyPoints(admin, studentId);
+  if ("error" in campRoleRes) {
+    return { ok: false as const, error: campRoleRes.error };
+  }
+  const campRolePoints = Math.max(0, Math.round(Number(campRoleRes.points ?? 0)));
   const boardKeys = boardBundle.boardMap.get(studentId) ?? [];
   const boardAwardRows = boardBundle.boardAwardsByStudent.get(studentId) ?? [];
   const leaderboardPoints = Math.max(0, Math.round(Number(boardBundle.boardPointsByStudent.get(studentId) ?? 0)));
-  const totalPoints = Math.max(0, Math.round(avatarPoints + leaderboardPoints));
+  const totalPoints = Math.max(0, Math.round(avatarPoints + leaderboardPoints + campRolePoints));
 
   const avatarGrantedAt = avatarSettings?.avatar_daily_granted_at ? Date.parse(String(avatarSettings.avatar_daily_granted_at)) : Number.NaN;
   const boardGrantedAt = grantRow?.last_granted_at ? Date.parse(String(grantRow.last_granted_at)) : Number.NaN;
@@ -396,6 +516,7 @@ export async function computeDailyRedeemStatus(
 
   const contributions: string[] = [];
   if (avatarPoints > 0) contributions.push(`+${avatarPoints} avatar points`);
+  if (campRolePoints > 0) contributions.push(...campRoleRes.chips);
   const top1Count = boardAwardRows.filter((r) => Number(r.rank ?? 999) === 1).length;
   const nonTop1Count = Math.max(0, boardAwardRows.length - top1Count);
   if (top1Count > 0) contributions.push(`+${top1Count * BOARD_POINTS_TOP1} #1 in ${top1Count} leaderboard${top1Count === 1 ? "" : "s"}`);
@@ -414,6 +535,7 @@ export async function computeDailyRedeemStatus(
       cooldown_ms: cooldownMs,
       leaderboard_points: leaderboardPoints,
       avatar_points: avatarPoints,
+      camp_role_points: campRolePoints,
       leaderboard_boards: boardKeys,
       leaderboard_awards: boardAwardRows,
       leaderboard_snapshot_date: snapshotDateKey ?? getSnapshotCycleDateKey(new Date()),
@@ -425,7 +547,9 @@ export async function computeDailyRedeemStatus(
         spotlight_multiplier: Number(avatar?.spotlight_multiplier ?? 1),
         skill_pulse_multiplier: skillMultiplier,
         daily_free_points: avatarPoints,
+        camp_role_daily_points: campRolePoints,
         challenge_completion_bonus_pct: Number(avatar?.challenge_completion_bonus_pct ?? 0),
+        mvp_bonus_pct: Number(avatar?.mvp_bonus_pct ?? 0),
         base_skill_pulse_points_per_rep: skillBase,
         skill_pulse_points_per_rep: Math.max(0, Math.round(skillBase * skillMultiplier)),
       },
