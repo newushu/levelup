@@ -73,6 +73,8 @@ export async function middleware(request: NextRequest) {
     ? "skill-tablet"
     : roleList.includes("camp")
     ? "camp"
+    : roleList.includes("checkin")
+    ? "checkin"
     : roleList.includes("classroom")
     ? "classroom"
     : roleList.includes("skill_pulse")
@@ -94,6 +96,34 @@ export async function middleware(request: NextRequest) {
       const url = request.nextUrl.clone();
       url.pathname = "/parent";
       return NextResponse.redirect(url);
+    }
+  }
+
+  const isCampOnlyUser =
+    roleSet.has("camp") &&
+    !roleSet.has("admin") &&
+    !roleSet.has("coach") &&
+    !roleSet.has("classroom");
+
+  if (isCampOnlyUser) {
+    const campBaseAllowed =
+      pathname === "/" ||
+      pathname.startsWith("/camp") ||
+      pathname.startsWith("/logout");
+
+    if (!campBaseAllowed) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/camp";
+      return NextResponse.redirect(url);
+    }
+
+    if (pathname.startsWith("/camp") && pathname !== "/camp") {
+      const unlocked = request.cookies.get("camp_hub_ok")?.value === "1";
+      if (!unlocked) {
+        const url = request.nextUrl.clone();
+        url.pathname = "/camp";
+        return NextResponse.redirect(url);
+      }
     }
   }
 
@@ -150,9 +180,49 @@ export async function middleware(request: NextRequest) {
   if (matchedPerm) {
     const allowed = (matchedPerm.allowed_roles ?? []).map((r: any) => String(r).toLowerCase());
     const hasAccess = roleSet.has("admin") || allowed.some((r) => roleSet.has(r));
-    if (!hasAccess) {
+    const allowCheckinBypass =
+      pathname === "/classroom/checkin" &&
+      roleSet.has("checkin") &&
+      !roleSet.has("admin");
+    const allowClassroomHubBypass =
+      pathname === "/classroom" &&
+      roleSet.has("classroom") &&
+      !roleSet.has("admin");
+    if (!hasAccess && !allowCheckinBypass && !allowClassroomHubBypass) {
       const url = request.nextUrl.clone();
       url.pathname = "/";
+      return NextResponse.redirect(url);
+    }
+    return response;
+  }
+
+  const isCheckinOnlyUser =
+    roleSet.has("checkin") &&
+    !roleSet.has("admin") &&
+    !roleSet.has("coach") &&
+    !roleSet.has("classroom");
+
+  if (isCheckinOnlyUser) {
+    const allowed = pathname === "/classroom/checkin" || pathname.startsWith("/logout");
+    if (!allowed) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/classroom/checkin";
+      return NextResponse.redirect(url);
+    }
+    return response;
+  }
+
+  const isClassroomOnlyUser =
+    roleSet.has("classroom") &&
+    !roleSet.has("admin") &&
+    !roleSet.has("coach") &&
+    !roleSet.has("camp");
+
+  if (isClassroomOnlyUser) {
+    const allowed = pathname === "/classroom" || pathname === "/classroom/checkin" || pathname === "/student" || pathname.startsWith("/logout");
+    if (!allowed) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/classroom";
       return NextResponse.redirect(url);
     }
     return response;

@@ -28,6 +28,10 @@ export default function CampHubPage() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return setMsg(data?.error || "PIN verification failed");
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem("camp_hub_ok", "1");
+      document.cookie = "camp_hub_ok=1; Path=/; Max-Age=43200; SameSite=Lax";
+    }
     setPinOk(true);
     setPin("");
   }
@@ -42,7 +46,7 @@ export default function CampHubPage() {
   }
 
   return (
-    <main style={{ padding: 18, maxWidth: 900, margin: "0 auto" }}>
+    <main style={{ padding: 18, minHeight: "100vh", display: "grid", alignContent: "start", gap: 14 }}>
       <div style={{ fontSize: 28, fontWeight: 1000 }}>Camp Hub</div>
       <div style={{ opacity: 0.75, marginTop: 6 }}>Unlock with PIN or NFC to access camp tools.</div>
 
@@ -64,8 +68,7 @@ export default function CampHubPage() {
           </button>
         </div>
       ) : (
-        <div style={card()}>
-          <div style={{ fontWeight: 900, marginBottom: 8 }}>Camp Pages</div>
+        <div style={{ marginTop: 8 }}>
           <div style={linkGrid()}>
             <a href="/camp/register" style={linkCard()}>
               <span style={linkEmoji()}>🧾</span>
@@ -148,20 +151,22 @@ function btnPrimary(): React.CSSProperties {
 function linkGrid(): React.CSSProperties {
   return {
     display: "grid",
-    gap: 10,
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gap: 14,
+    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
   };
 }
 
 function linkCard(): React.CSSProperties {
   return {
     display: "flex",
-    gap: 12,
+    gap: 14,
     alignItems: "center",
-    padding: "12px 14px",
-    borderRadius: 14,
+    minHeight: 128,
+    padding: "18px 18px",
+    borderRadius: 18,
     border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(255,255,255,0.06)",
+    background: "linear-gradient(145deg, rgba(255,255,255,0.12), rgba(255,255,255,0.04))",
+    boxShadow: "0 14px 34px rgba(0,0,0,0.28)",
     color: "white",
     textDecoration: "none",
     fontWeight: 800,
@@ -170,12 +175,13 @@ function linkCard(): React.CSSProperties {
 
 function linkEmoji(): React.CSSProperties {
   return {
-    width: 38,
-    height: 38,
+    width: 54,
+    height: 54,
     display: "grid",
     placeItems: "center",
-    borderRadius: 12,
-    background: "rgba(255,255,255,0.08)",
-    fontSize: 18,
+    borderRadius: 14,
+    background: "rgba(255,255,255,0.1)",
+    fontSize: 26,
+    flexShrink: 0,
   };
 }

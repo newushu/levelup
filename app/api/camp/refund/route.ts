@@ -44,31 +44,53 @@ export async function POST(req: Request) {
   const payerIds = payments
     .map((p: any) => String(p?.student_id ?? "").trim())
     .filter(Boolean);
+  const refundAtIso = new Date().toISOString();
   if (payerIds.length) {
-    const { data: accounts } = await admin
-      .from("camp_accounts")
-      .select("student_id,balance_points")
-      .in("student_id", payerIds);
+    const { data: students } = await admin
+      .from("students")
+      .select("id,points_total")
+      .in("id", payerIds);
     const balanceMap = new Map<string, number>();
-    (accounts ?? []).forEach((row: any) => balanceMap.set(String(row.student_id), Number(row.balance_points ?? 0)));
+    (students ?? []).forEach((row: any) => balanceMap.set(String(row.id), Number(row.points_total ?? 0)));
 
-    const updates = payments
+    const enrichedPayments = payments.map((p: any) => {
+      const sid = String(p?.student_id ?? "").trim();
+      if (!sid) return p;
+      const amt = Number(p?.amount_points ?? 0);
+      const before = Number(balanceMap.get(sid) ?? 0);
+      const after = before + (Number.isFinite(amt) ? amt : 0);
+      return {
+        ...p,
+        refund_delta_points: Number.isFinite(amt) ? amt : 0,
+        refund_balance_before: before,
+        refund_balance_after: after,
+        refunded_at: refundAtIso,
+      };
+    });
+
+    const updates = enrichedPayments
       .map((p: any) => {
         const sid = String(p?.student_id ?? "").trim();
         if (!sid) return null;
-        const amt = Number(p?.amount_points ?? 0);
         return {
           student_id: sid,
-          balance_points: (balanceMap.get(sid) ?? 0) + (Number.isFinite(amt) ? amt : 0),
-          updated_at: new Date().toISOString(),
+          points_total: Number(p?.refund_balance_after ?? balanceMap.get(sid) ?? 0),
         };
       })
-      .filter(Boolean) as Array<{ student_id: string; balance_points: number; updated_at: string }>;
+      .filter(Boolean) as Array<{ student_id: string; points_total: number }>;
 
     if (updates.length) {
-      const { error: bErr } = await admin.from("camp_accounts").upsert(updates, { onConflict: "student_id" });
-      if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
+      for (const u of updates) {
+        const { error: bErr } = await admin.from("students").update({ points_total: u.points_total }).eq("id", u.student_id);
+        if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
+      }
     }
+
+    const { error: orderUpdateErr } = await admin
+      .from("camp_orders")
+      .update({ payments: enrichedPayments })
+      .eq("id", order_id);
+    if (orderUpdateErr) return NextResponse.json({ ok: false, error: orderUpdateErr.message }, { status: 500 });
   }
 
   const refunded_points = Number(order.total_points ?? 0);

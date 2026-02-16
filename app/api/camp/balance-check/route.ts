@@ -12,11 +12,10 @@ export async function POST(req: Request) {
   if (!student_id) return NextResponse.json({ ok: false, error: "student_id required" }, { status: 400 });
 
   const admin = supabaseAdmin();
-  const { data: student } = await admin.from("students").select("id,name").eq("id", student_id).maybeSingle();
+  const { data: student } = await admin.from("students").select("id,name,points_total").eq("id", student_id).maybeSingle();
   if (!student) return NextResponse.json({ ok: false, error: "Student not found" }, { status: 404 });
 
-  const { data: acct } = await admin.from("camp_accounts").select("balance_points").eq("student_id", student_id).maybeSingle();
-  const balance_points = Number(acct?.balance_points ?? 0);
+  const balance_points = Number((student as any)?.points_total ?? 0);
 
   const { data: aura } = await admin.from("camp_student_auras").select("aura_name,discount_points").eq("student_id", student_id).maybeSingle();
 

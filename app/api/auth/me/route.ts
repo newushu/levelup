@@ -25,6 +25,10 @@ export async function GET() {
       ? "parent"
       : roleList.includes("coach")
       ? "coach"
+      : roleList.includes("camp")
+      ? "camp"
+      : roleList.includes("checkin")
+      ? "checkin"
       : roleList.includes("classroom")
       ? "classroom"
       : roleList.includes("skill_user")
@@ -47,6 +51,7 @@ export async function GET() {
     ok: true,
     user: { id: user.id, email: user.email },
     role,
+    roles: roleList,
     student_id: student_id || null,
     parent_id: parent_id || null,
   });

@@ -43,6 +43,9 @@ type AvatarRow = {
   zoom_pct?: number | string | null;
   competition_only?: boolean | null;
   competition_discount_pct?: number | string | null;
+  limited_event_only?: boolean | null;
+  limited_event_name?: string | null;
+  limited_event_description?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -67,6 +70,9 @@ type AvatarEffectRow = {
   css?: string | null;
   js?: string | null;
   enabled?: boolean;
+  limited_event_only?: boolean | null;
+  limited_event_name?: string | null;
+  limited_event_description?: string | null;
 };
 
 type CornerBorderRow = {
@@ -488,6 +494,9 @@ export default function MediaVaultAdminPage() {
     zoom_pct: 100,
     competition_only: false,
     competition_discount_pct: 0,
+    limited_event_only: false,
+    limited_event_name: "",
+    limited_event_description: "",
   });
   const [newCornerBorder, setNewCornerBorder] = useState<CornerBorderRow>({
     key: "",
@@ -899,6 +908,9 @@ export default function MediaVaultAdminPage() {
         zoom_pct: 100,
         competition_only: false,
         competition_discount_pct: 0,
+        limited_event_only: false,
+        limited_event_name: "",
+        limited_event_description: "",
       });
     }
     await loadAll();
@@ -2834,6 +2846,37 @@ export default function MediaVaultAdminPage() {
                 style={input()}
               />
             </div>
+            <div style={fieldStack()}>
+              <div style={fieldLabel()}>Limited Event Only</div>
+              <label style={checkboxWrap()}>
+                <input
+                  type="checkbox"
+                  checked={newAvatar.limited_event_only === true}
+                  onChange={(e) => setNewAvatar((prev) => ({ ...prev, limited_event_only: e.target.checked }))}
+                />
+                Limited/special event
+              </label>
+            </div>
+          </div>
+          <div style={formRow({ columns: "repeat(2, minmax(0, 1fr))" })}>
+            <div style={fieldStack()}>
+              <div style={fieldLabel()}>Event Name</div>
+              <input
+                value={newAvatar.limited_event_name ?? ""}
+                onChange={(e) => setNewAvatar((prev) => ({ ...prev, limited_event_name: e.target.value }))}
+                style={input()}
+                placeholder="Summer Camp 2026"
+              />
+            </div>
+            <div style={fieldStack()}>
+              <div style={fieldLabel()}>Event Description</div>
+              <input
+                value={newAvatar.limited_event_description ?? ""}
+                onChange={(e) => setNewAvatar((prev) => ({ ...prev, limited_event_description: e.target.value }))}
+                style={input()}
+                placeholder="Limited edition unlock"
+              />
+            </div>
           </div>
 
           {!avatars.length ? (
@@ -3107,6 +3150,45 @@ export default function MediaVaultAdminPage() {
                               style={input()}
                             />
                           </div>
+                          <div style={fieldStack()}>
+                            <div style={fieldLabel()}>Limited Event Only</div>
+                            <label style={checkboxWrap()}>
+                              <input
+                                type="checkbox"
+                                checked={row.limited_event_only === true}
+                                onChange={(e) =>
+                                  setAvatars((prev) =>
+                                    prev.map((r) => (r === row ? { ...r, limited_event_only: e.target.checked } : r))
+                                  )
+                                }
+                              />
+                              Limited/special event
+                            </label>
+                          </div>
+                        </div>
+                        <div style={formRow({ columns: "repeat(2, minmax(0, 1fr))" })}>
+                          <div style={fieldStack()}>
+                            <div style={fieldLabel()}>Event Name</div>
+                            <input
+                              value={row.limited_event_name ?? ""}
+                              onChange={(e) =>
+                                setAvatars((prev) => prev.map((r) => (r === row ? { ...r, limited_event_name: e.target.value } : r)))
+                              }
+                              style={input()}
+                              placeholder="Special Event"
+                            />
+                          </div>
+                          <div style={fieldStack()}>
+                            <div style={fieldLabel()}>Event Description</div>
+                            <input
+                              value={row.limited_event_description ?? ""}
+                              onChange={(e) =>
+                                setAvatars((prev) => prev.map((r) => (r === row ? { ...r, limited_event_description: e.target.value } : r)))
+                              }
+                              style={input()}
+                              placeholder="How to unlock this event avatar"
+                            />
+                          </div>
                         </div>
                         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                           <label style={checkboxWrap()}>
@@ -3241,6 +3323,44 @@ export default function MediaVaultAdminPage() {
                         onChange={(e) =>
                           setAvatarEffects((prev) =>
                             prev.map((r) => (r.key === row.key ? { ...r, unlock_points: clampPoints(e.target.value) } : r))
+                          )
+                        }
+                        style={input()}
+                      />
+                    </label>
+                    <label style={checkboxWrap()}>
+                      <input
+                        type="checkbox"
+                        checked={row.limited_event_only === true}
+                        onChange={(e) =>
+                          setAvatarEffects((prev) =>
+                            prev.map((r) => (r.key === row.key ? { ...r, limited_event_only: e.target.checked } : r))
+                          )
+                        }
+                      />
+                      Limited event only
+                    </label>
+                    <label style={effectLabel()}>
+                      Event name
+                      <input
+                        type="text"
+                        value={row.limited_event_name ?? ""}
+                        onChange={(e) =>
+                          setAvatarEffects((prev) =>
+                            prev.map((r) => (r.key === row.key ? { ...r, limited_event_name: e.target.value } : r))
+                          )
+                        }
+                        style={input()}
+                      />
+                    </label>
+                    <label style={effectLabel()}>
+                      Event description
+                      <input
+                        type="text"
+                        value={row.limited_event_description ?? ""}
+                        onChange={(e) =>
+                          setAvatarEffects((prev) =>
+                            prev.map((r) => (r.key === row.key ? { ...r, limited_event_description: e.target.value } : r))
                           )
                         }
                         style={input()}

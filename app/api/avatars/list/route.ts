@@ -11,12 +11,28 @@ export async function GET() {
   if (!u.user) return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
 
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("avatars")
     .select(
-      "id,name,storage_path,enabled,is_secondary,unlock_level,unlock_points,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,mvp_bonus_pct,zoom_pct,competition_only,competition_discount_pct"
+      "id,name,storage_path,enabled,is_secondary,unlock_level,unlock_points,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,mvp_bonus_pct,zoom_pct,competition_only,competition_discount_pct,limited_event_only,limited_event_name,limited_event_description"
     )
     .order("name", { ascending: true });
+
+  if (error && /limited_event_/i.test(String(error.message ?? ""))) {
+    const fallback = await supabase
+      .from("avatars")
+      .select(
+        "id,name,storage_path,enabled,is_secondary,unlock_level,unlock_points,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,mvp_bonus_pct,zoom_pct,competition_only,competition_discount_pct"
+      )
+      .order("name", { ascending: true });
+    data = (fallback.data ?? []).map((row: any) => ({
+      ...row,
+      limited_event_only: false,
+      limited_event_name: "",
+      limited_event_description: "",
+    }));
+    error = fallback.error as any;
+  }
 
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
@@ -51,6 +67,9 @@ export async function GET() {
       zoom_pct: Number(a.zoom_pct ?? 100),
       competition_only: !!a.competition_only,
       competition_discount_pct: Number(a.competition_discount_pct ?? 0),
+      limited_event_only: !!a.limited_event_only,
+      limited_event_name: String(a.limited_event_name ?? ""),
+      limited_event_description: String(a.limited_event_description ?? ""),
       public_url,
     };
   });

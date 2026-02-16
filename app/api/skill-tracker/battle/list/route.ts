@@ -561,15 +561,16 @@ export async function GET(req: Request) {
         if (winnerIds.length) {
           const share = Math.floor(payoutTotal / Math.max(1, winnerIds.length));
           const netShare = Math.max(0, share - wagerAmount);
-          participants.forEach((id) => {
+          const losers = participants.filter((id) => !winnerIds.includes(id));
+          losers.forEach((id) => {
             pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) - wagerAmount);
             basePointsDeltaById.set(id, (basePointsDeltaById.get(id) ?? 0) - wagerAmount);
             lossById.set(id, wagerAmount);
           });
           winnerIds.forEach((id) => {
-            if (share > 0) pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + share);
-            if (share > 0) basePointsDeltaById.set(id, (basePointsDeltaById.get(id) ?? 0) + share);
-            baseWinById.set(id, share);
+            if (netShare > 0) pointsDeltaById.set(id, (pointsDeltaById.get(id) ?? 0) + netShare);
+            if (netShare > 0) basePointsDeltaById.set(id, (basePointsDeltaById.get(id) ?? 0) + netShare);
+            baseWinById.set(id, netShare);
             netWinById.set(id, netShare);
           });
         }

@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getStudentCriteriaState, matchItemCriteria } from "@/lib/unlockCriteria";
 
 export async function POST(req: Request) {
   const supabase = await supabaseServer();
+  const admin = supabaseAdmin();
   const { data: u } = await supabase.auth.getUser();
   if (!u.user) return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
 
@@ -16,6 +19,54 @@ export async function POST(req: Request) {
   if (!student_id) return NextResponse.json({ ok: false, error: "Missing student_id" }, { status: 400 });
   if (!bg_color && !particle_style && !corner_border_key && !card_plate_key) {
     return NextResponse.json({ ok: false, error: "Missing bg_color, particle_style, corner_border_key, or card_plate_key" }, { status: 400 });
+  }
+
+  const { data: student, error: sErr } = await admin
+    .from("students")
+    .select("id,level")
+    .eq("id", student_id)
+    .maybeSingle();
+  if (sErr) return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
+  if (!student) return NextResponse.json({ ok: false, error: "Student not found" }, { status: 404 });
+
+  const criteriaState = await getStudentCriteriaState(admin as any, student_id);
+
+  async function canUseItem(itemType: "effect" | "corner_border" | "card_plate", itemKey: string) {
+    if (!itemKey || itemKey === "none") return true;
+    const table = itemType === "effect" ? "avatar_effects" : itemType === "corner_border" ? "ui_corner_borders" : "ui_card_plate_borders";
+    const keyField = itemType === "effect" ? "key" : "key";
+    const itemRes = await admin.from(table).select("unlock_level,unlock_points,enabled").eq(keyField, itemKey).maybeSingle();
+    if (itemRes.error) return false;
+    const item = itemRes.data as any;
+    if (!item || item.enabled === false) return false;
+    const unlockLevel = Number(item.unlock_level ?? 1);
+    const unlockPoints = Math.max(0, Math.floor(Number(item.unlock_points ?? 0)));
+    const levelOk = Number(student.level ?? 1) >= unlockLevel;
+    const unlockedByDefault = unlockPoints <= 0 && levelOk;
+    const custom = await admin
+      .from("student_custom_unlocks")
+      .select("id")
+      .eq("student_id", student_id)
+      .eq("item_type", itemType)
+      .eq("item_key", itemKey)
+      .maybeSingle();
+    if (custom.error) return false;
+    const criteriaMatch = matchItemCriteria(itemType, itemKey, criteriaState.fulfilledKeys, criteriaState.requirementMap);
+    const bypassByCriteria = criteriaMatch.hasRequirements && criteriaMatch.matched;
+    return bypassByCriteria || !!custom.data || unlockedByDefault;
+  }
+
+  if (particle_style && particle_style !== "none") {
+    const ok = await canUseItem("effect", particle_style);
+    if (!ok) return NextResponse.json({ ok: false, error: "Effect is locked for this student" }, { status: 400 });
+  }
+  if (corner_border_key && corner_border_key !== "none") {
+    const ok = await canUseItem("corner_border", corner_border_key);
+    if (!ok) return NextResponse.json({ ok: false, error: "Border is locked for this student" }, { status: 400 });
+  }
+  if (card_plate_key && card_plate_key !== "none") {
+    const ok = await canUseItem("card_plate", card_plate_key);
+    if (!ok) return NextResponse.json({ ok: false, error: "Card plate is locked for this student" }, { status: 400 });
   }
 
   const payload: Record<string, any> = {

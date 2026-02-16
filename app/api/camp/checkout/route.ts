@@ -46,12 +46,12 @@ export async function POST(req: Request) {
   }, 0);
   const expectedTotal = Math.max(0, total_points);
   const supabase = await supabaseServer();
+  const admin = supabaseAdmin();
   let coupon_discount_points = 0;
   const couponUpdates: Array<{ coupon_type_id: string; remaining_qty: number }> = [];
   const coupons_used: any[] = [];
   const couponStudentId = String(payments[0]?.student_id ?? "").trim();
   if (coupon_uses.length && couponStudentId) {
-    const admin = supabaseAdmin();
     const couponIds = coupon_uses.map((c: any) => String(c.coupon_type_id ?? "")).filter(Boolean);
     const { data: couponTypes } = await admin
       .from("camp_coupon_types")
@@ -126,6 +126,88 @@ export async function POST(req: Request) {
   if (paymentTotal !== final_total_points) {
     return NextResponse.json({ ok: false, error: "Payments must equal total points" }, { status: 400 });
   }
+  const normalizeItems = (value: any) =>
+    (Array.isArray(value) ? value : [])
+      .map((item: any) => ({
+        id: String(item?.id ?? ""),
+        qty: Number(item?.qty ?? 1),
+        price_points: Number(item?.price_points ?? 0),
+        second: !!item?.second,
+      }))
+      .sort((a: any, b: any) => a.id.localeCompare(b.id));
+  const normalizePayments = (value: any) =>
+    (Array.isArray(value) ? value : [])
+      .map((p: any) => ({
+        student_id: String(p?.student_id ?? ""),
+        amount_points: Number(p?.amount_points ?? 0),
+      }))
+      .sort((a: any, b: any) => `${a.student_id}:${a.amount_points}`.localeCompare(`${b.student_id}:${b.amount_points}`));
+
+  const primaryStudentId = String(payments[0]?.student_id ?? "").trim();
+  const duplicateWindowIso = new Date(Date.now() - 10_000).toISOString();
+  const normalizedItems = JSON.stringify(normalizeItems(items));
+  const normalizedPayments = JSON.stringify(normalizePayments(payments));
+  if (primaryStudentId) {
+    const { data: recentOrders } = await supabase
+      .from("camp_orders")
+      .select("id,student_id,total_points,paid_at,items,payments")
+      .eq("student_id", primaryStudentId)
+      .eq("total_points", final_total_points)
+      .gte("paid_at", duplicateWindowIso)
+      .order("paid_at", { ascending: false })
+      .limit(8);
+    const dupe = (recentOrders ?? []).find((row: any) => {
+      const rowItems = JSON.stringify(normalizeItems(row?.items));
+      const rowPayments = JSON.stringify(normalizePayments(row?.payments));
+      return rowItems === normalizedItems && rowPayments === normalizedPayments;
+    });
+    if (dupe?.id) {
+      return NextResponse.json({ ok: true, duplicate: true, order_id: String(dupe.id), total_points: final_total_points });
+    }
+  }
+
+  const payerIds = payments
+    .map((p: any) => String(p?.student_id ?? "").trim())
+    .filter(Boolean);
+  const balanceMap = new Map<string, number>();
+  if (payerIds.length) {
+    const { data: students } = await admin
+      .from("students")
+      .select("id,points_total")
+      .in("id", payerIds);
+    (students ?? []).forEach((row: any) => balanceMap.set(String(row.id), Number(row.points_total ?? 0)));
+  }
+  const enrichedPayments = payments.map((p: any) => {
+    const sid = String(p?.student_id ?? "").trim();
+    const amount = Math.max(0, Number(p?.amount_points ?? 0));
+    if (!sid) {
+      return {
+        student_id: sid || null,
+        student_name: String(p?.student_name ?? "").trim() || null,
+        amount_points: amount,
+      };
+    }
+    const before = Number(balanceMap.get(sid) ?? 0);
+    const after = before - amount;
+    return {
+      student_id: sid,
+      student_name: String(p?.student_name ?? "").trim() || null,
+      amount_points: amount,
+      delta_points: -amount,
+      balance_before: before,
+      balance_after: after,
+      changed_at: new Date().toISOString(),
+    };
+  });
+
+  const insufficient = enrichedPayments.find((p: any) => {
+    if (!p?.student_id) return false;
+    return Number(p?.balance_before ?? 0) < Number(p?.amount_points ?? 0);
+  });
+  if (insufficient) {
+    return NextResponse.json({ ok: false, error: `Insufficient points for ${String(insufficient.student_name ?? "payer")}` }, { status: 400 });
+  }
+
   const { data: orderRow, error: oErr } = await supabase
     .from("camp_orders")
     .insert({
@@ -136,7 +218,7 @@ export async function POST(req: Request) {
       total_points: final_total_points,
       discount_points: discount_points || null,
       coupons_used: coupons_used.length ? coupons_used : null,
-      payments,
+      payments: enrichedPayments,
     })
     .select("id")
     .maybeSingle();
@@ -144,7 +226,6 @@ export async function POST(req: Request) {
   const orderId = String(orderRow?.id ?? "").trim();
 
   if (orderId && coupons_used.length && couponStudentId) {
-    const admin = supabaseAdmin();
     if (couponUpdates.length) {
       for (const update of couponUpdates) {
         await admin
@@ -163,38 +244,24 @@ export async function POST(req: Request) {
     await admin.from("camp_coupon_redemptions").insert(redemptionRows);
   }
 
-  const admin = supabaseAdmin();
-  const payerIds = payments
-    .map((p: any) => String(p?.student_id ?? "").trim())
-    .filter(Boolean);
   if (payerIds.length) {
-    const { data: accounts } = await admin
-      .from("camp_accounts")
-      .select("student_id,balance_points")
-      .in("student_id", payerIds);
-    const balanceMap = new Map<string, number>();
-    (accounts ?? []).forEach((row: any) => balanceMap.set(String(row.student_id), Number(row.balance_points ?? 0)));
-
-    const updates = payments
+    const updates = enrichedPayments
       .map((p: any) => {
         const sid = String(p?.student_id ?? "").trim();
         if (!sid) return null;
-        const amt = Number(p?.amount_points ?? 0);
-        return {
-          student_id: sid,
-          balance_points: (balanceMap.get(sid) ?? 0) - (Number.isFinite(amt) ? amt : 0),
-          updated_at: new Date().toISOString(),
-        };
+        return { student_id: sid, points_total: Number(p?.balance_after ?? 0) };
       })
-      .filter(Boolean) as Array<{ student_id: string; balance_points: number; updated_at: string }>;
+      .filter(Boolean) as Array<{ student_id: string; points_total: number }>;
     if (updates.length) {
-      const { error: bErr } = await admin.from("camp_accounts").upsert(updates, { onConflict: "student_id" });
-      if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
+      for (const u of updates) {
+        const { error: bErr } = await admin.from("students").update({ points_total: u.points_total }).eq("id", u.student_id);
+        if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
+      }
     }
   }
 
   const receipts: any[] = [];
-  for (const payment of payments) {
+  for (const payment of enrichedPayments) {
     const sid = String(payment?.student_id ?? "").trim();
     const amt = Number(payment?.amount_points ?? 0);
     if (!sid) {
@@ -222,13 +289,15 @@ export async function POST(req: Request) {
         avatar_effect: avatarSettings?.particle_style ?? null,
       };
     }
-    const { data: acct } = await admin.from("camp_accounts").select("balance_points").eq("student_id", sid).maybeSingle();
+    const { data: acct } = await admin.from("students").select("points_total").eq("id", sid).maybeSingle();
     receipts.push({
       student,
       amount_points: Number.isFinite(amt) ? amt : 0,
-      balance_points: Number(acct?.balance_points ?? 0),
+      balance_before: Number(payment?.balance_before ?? NaN),
+      balance_points: Number(acct?.points_total ?? 0),
+      delta_points: Number(payment?.delta_points ?? -Math.max(0, amt)),
     });
   }
 
-  return NextResponse.json({ ok: true, receipts, total_points });
+  return NextResponse.json({ ok: true, order_id: orderId, receipts, total_points });
 }

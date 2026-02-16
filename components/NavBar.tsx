@@ -1194,6 +1194,11 @@ function roleFlag(role: string): React.CSSProperties {
       background: "linear-gradient(135deg, rgba(250,204,21,0.25), rgba(245,158,11,0.25))",
       shadow: "0 10px 24px rgba(250,204,21,0.18)",
     },
+    checkin: {
+      border: "1px solid rgba(45,212,191,0.45)",
+      background: "linear-gradient(135deg, rgba(45,212,191,0.25), rgba(14,116,144,0.25))",
+      shadow: "0 10px 24px rgba(45,212,191,0.18)",
+    },
     display: {
       border: "1px solid rgba(14,165,233,0.45)",
       background: "linear-gradient(135deg, rgba(14,165,233,0.25), rgba(59,130,246,0.25))",
@@ -1234,6 +1239,7 @@ function roleLabel(role: string, studentName: string) {
   if (lower === "admin") return "ADMIN";
   if (lower === "coach") return "COACH";
   if (lower === "classroom") return "CLASSROOM";
+  if (lower === "checkin") return "CHECK-IN";
   if (lower === "display") return "DISPLAY";
   if (lower === "skill_pulse") return "SKILL PULSE";
   return role.toUpperCase();

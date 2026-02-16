@@ -43,6 +43,9 @@ export default function LoginPage() {
           const role = String(data?.role ?? "");
           if (role === "parent") nextPath = "/parent";
           else if (role === "student") nextPath = "/student";
+          else if (role === "camp") nextPath = "/camp";
+          else if (role === "classroom") nextPath = "/classroom";
+          else if (role === "checkin") nextPath = "/classroom/checkin";
         }
       } catch {}
       window.location.href = nextPath;

@@ -69,20 +69,21 @@ export async function POST(req: Request) {
     .upsert(entries, { onConflict: "helper_student_id,entry_date", ignoreDuplicates: true });
   if (eErr) return NextResponse.json({ ok: false, error: eErr.message }, { status: 500 });
 
-  const { data: accounts } = await admin
-    .from("camp_accounts")
-    .select("student_id,balance_points")
-    .in("student_id", newHelpers);
+  const { data: students } = await admin
+    .from("students")
+    .select("id,points_total")
+    .in("id", newHelpers);
   const balanceMap = new Map<string, number>();
-  (accounts ?? []).forEach((row: any) => balanceMap.set(String(row.student_id), Number(row.balance_points ?? 0)));
+  (students ?? []).forEach((row: any) => balanceMap.set(String(row.id), Number(row.points_total ?? 0)));
 
-  const updates = newHelpers.map((helperId: string) => ({
-    student_id: helperId,
-    balance_points: (balanceMap.get(helperId) ?? 0) + helperPoints,
-    updated_at: new Date().toISOString(),
-  }));
-  const { error: uErr } = await admin.from("camp_accounts").upsert(updates, { onConflict: "student_id" });
-  if (uErr) return NextResponse.json({ ok: false, error: uErr.message }, { status: 500 });
+  for (const helperId of newHelpers) {
+    const nextPoints = (balanceMap.get(helperId) ?? 0) + helperPoints;
+    const { error: uErr } = await admin
+      .from("students")
+      .update({ points_total: nextPoints })
+      .eq("id", helperId);
+    if (uErr) return NextResponse.json({ ok: false, error: uErr.message }, { status: 500 });
+  }
 
   return NextResponse.json({ ok: true, awarded: newHelpers.length, helpers: newHelpers });
 }

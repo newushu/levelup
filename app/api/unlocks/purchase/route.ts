@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getStudentCriteriaState, matchItemCriteria } from "@/lib/unlockCriteria";
 
 const ITEM_TABLES: Record<
   string,
@@ -48,7 +49,11 @@ export async function POST(req: Request) {
 
   const unlockLevel = Number(item?.unlock_level ?? 1);
   const unlockPoints = Math.max(0, Math.floor(Number(item?.unlock_points ?? 0)));
-  if (Number(student.level ?? 1) < unlockLevel) {
+  const criteriaState = await getStudentCriteriaState(admin as any, student_id);
+  const criteriaMatch = matchItemCriteria(item_type, item_key, criteriaState.fulfilledKeys, criteriaState.requirementMap);
+  const bypassByCriteria = criteriaMatch.hasRequirements && criteriaMatch.matched;
+
+  if (!bypassByCriteria && Number(student.level ?? 1) < unlockLevel) {
     return NextResponse.json({ ok: false, error: `Requires level ${unlockLevel}` }, { status: 400 });
   }
 
@@ -64,7 +69,8 @@ export async function POST(req: Request) {
   }
 
   const pointsBalance = Number(student.points_balance ?? 0);
-  if (unlockPoints > 0 && pointsBalance < unlockPoints) {
+  const effectiveUnlockPoints = bypassByCriteria ? 0 : unlockPoints;
+  if (effectiveUnlockPoints > 0 && pointsBalance < effectiveUnlockPoints) {
     return NextResponse.json({ ok: false, error: `Need ${unlockPoints} points` }, { status: 400 });
   }
 
@@ -73,12 +79,12 @@ export async function POST(req: Request) {
     .insert({ student_id, item_type, item_key });
   if (insErr) return NextResponse.json({ ok: false, error: insErr.message }, { status: 500 });
 
-  if (unlockPoints > 0) {
+  if (effectiveUnlockPoints > 0) {
     const label = String(item?.name ?? item_key);
-    const note = `Unlock ${item_type}: ${label} (-${unlockPoints})`;
+    const note = `Unlock ${item_type}: ${label} (-${effectiveUnlockPoints})`;
     const { error: ledgerErr } = await admin.from("ledger").insert({
       student_id,
-      points: -Math.abs(unlockPoints),
+      points: -Math.abs(effectiveUnlockPoints),
       note,
       category: `unlock_${item_type}`,
       created_by: u.user.id,

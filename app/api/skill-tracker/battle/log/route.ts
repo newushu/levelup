@@ -235,31 +235,30 @@ export async function POST(req: Request) {
         if (winnerIds.length) {
           const share = Math.floor(payoutTotal / Math.max(1, winnerIds.length));
           const netShare = Math.max(0, share - wagerAmount);
-          if (share > 0) {
-            participants.forEach((pid) => {
+          const losers = participants.filter((pid) => !winnerIds.includes(pid));
+          losers.forEach((pid) => {
+            ledgerRows.push({
+              student_id: pid,
+              points: -wagerAmount,
+              note: `Battle Pulse loss (-${wagerAmount})`,
+              category: "manual",
+              created_by: u.user.id,
+            });
+            lossById.set(pid, wagerAmount);
+          });
+          winnerIds.forEach((pid) => {
+            if (netShare > 0) {
               ledgerRows.push({
                 student_id: pid,
-                points: -wagerAmount,
-                note: `Battle Pulse wager (-${wagerAmount})`,
+                points: netShare,
+                note: `Battle Pulse win (+${netShare})`,
                 category: "manual",
                 created_by: u.user.id,
               });
-              lossById.set(pid, wagerAmount);
-            });
-            winnerIds.forEach((pid) => {
-              if (netShare > 0) {
-                ledgerRows.push({
-                  student_id: pid,
-                  points: netShare,
-                  note: `Battle Pulse win (+${netShare})`,
-                  category: "manual",
-                  created_by: u.user.id,
-                });
-              }
-              baseWinById.set(pid, netShare);
-              netWinById.set(pid, netShare);
-            });
-          }
+            }
+            baseWinById.set(pid, netShare);
+            netWinById.set(pid, netShare);
+          });
         }
       } else {
         const losers = participants.filter((pid) => !winnerIds.includes(pid));

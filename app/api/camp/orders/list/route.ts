@@ -48,11 +48,9 @@ export async function GET() {
   const refundByOrderId = new Map<string, any>();
 
   if (ids.length) {
-    const { data: students } = await admin.from("students").select("id,name").in("id", ids);
+    const { data: students } = await admin.from("students").select("id,name,points_total").in("id", ids);
     (students ?? []).forEach((s: any) => studentById.set(String(s.id), s));
-
-    const { data: accounts } = await admin.from("camp_accounts").select("student_id,balance_points").in("student_id", ids);
-    (accounts ?? []).forEach((row: any) => balanceById.set(String(row.student_id), Number(row.balance_points ?? 0)));
+    (students ?? []).forEach((s: any) => balanceById.set(String(s.id), Number(s.points_total ?? 0)));
 
     const { data: settings } = await admin
       .from("student_avatar_settings")

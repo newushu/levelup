@@ -8111,17 +8111,17 @@ function mvpModifierChip(): React.CSSProperties {
 
 function battlePointsAfterValue(b: BattleRow, studentId: string): number | null {
   const sid = String(studentId);
-  if (sid === String(b.left_student_id ?? "")) {
-    const n = Number(b.left_points ?? 0);
-    return Number.isFinite(n) ? Math.round(n) : null;
-  }
-  if (sid === String(b.right_student_id ?? "")) {
-    const n = Number(b.right_points ?? 0);
-    return Number.isFinite(n) ? Math.round(n) : null;
-  }
-  const participant = (b.participants ?? []).find((p) => String(p.id ?? "") === sid);
-  if (!participant) return null;
-  const n = Number(participant.points ?? 0);
+  const afterMap = (b as any)?.battle_meta?.settlement_points_after_by_id;
+  if (!afterMap || typeof afterMap !== "object") return null;
+  const n = Number((afterMap as Record<string, unknown>)[sid]);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
+function battlePointsBeforeValue(b: BattleRow, studentId: string): number | null {
+  const sid = String(studentId);
+  const beforeMap = (b as any)?.battle_meta?.settlement_points_before_by_id;
+  if (!beforeMap || typeof beforeMap !== "object") return null;
+  const n = Number((beforeMap as Record<string, unknown>)[sid]);
   return Number.isFinite(n) ? Math.round(n) : null;
 }
 
@@ -8134,7 +8134,7 @@ function renderBattleSettledDeltaChip(b: BattleRow, studentId: string) {
   const originalPoints = isMvp && baseWithMvpDouble > 0 ? Math.ceil(baseWithMvpDouble / 2) : baseWithMvpDouble;
   const arrow = total >= 0 ? "▲" : "▼";
   const pointsAfter = battlePointsAfterValue(b, studentId);
-  const pointsBefore = pointsAfter == null ? null : pointsAfter - total;
+  const pointsBefore = battlePointsBeforeValue(b, studentId);
 
   return (
     <div style={{ display: "grid", gap: 6, justifyItems: "start" }}>

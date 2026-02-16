@@ -46,6 +46,7 @@ const ROUTE_ROLE_OPTIONS = [
   { value: "admin", label: "Admin" },
   { value: "coach", label: "Coach" },
   { value: "classroom", label: "Classroom" },
+  { value: "checkin", label: "Check-In" },
   { value: "camp", label: "Camp" },
   { value: "coach-dashboard", label: "Coach Dashboard" },
   { value: "skill-tablet", label: "Skill Tablet" },
@@ -61,6 +62,7 @@ const USER_ROLE_OPTIONS = [
   { value: "student", label: "Student" },
   { value: "parent", label: "Parent" },
   { value: "classroom", label: "Classroom" },
+  { value: "checkin", label: "Check-In" },
   { value: "display", label: "Display" },
   { value: "skill_pulse", label: "Skill Pulse" },
   { value: "camp", label: "Camp" },
@@ -685,6 +687,7 @@ export default function AccessAdminPage() {
                 <option value="coach-dashboard">Coach Dashboard</option>
                 <option value="skill-tablet">Skill Tablet</option>
                 <option value="classroom">Classroom</option>
+                <option value="checkin">Check-In</option>
                 <option value="camp">Camp Helper</option>
                 <option value="display">Display</option>
                 <option value="skill_pulse">Skill Pulse</option>

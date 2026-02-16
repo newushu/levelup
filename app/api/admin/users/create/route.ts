@@ -11,6 +11,7 @@ const ALLOWED_ROLES = new Set([
   "display",
   "skill_pulse",
   "camp",
+  "checkin",
   "classroom",
   "skill-tablet",
   "coach-dashboard",

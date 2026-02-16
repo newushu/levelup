@@ -116,6 +116,23 @@ type DailyRedeemStatus = {
     skill_pulse_points_per_rep: number;
   };
 };
+type UnlockCriteriaDef = {
+  key: string;
+  label: string;
+  description?: string | null;
+  enabled?: boolean;
+};
+type UnlockRequirement = {
+  item_type: string;
+  item_key: string;
+  criteria_key: string;
+};
+type StudentCriteriaState = {
+  criteria_key: string;
+  fulfilled?: boolean;
+  note?: string | null;
+  fulfilled_at?: string | null;
+};
 const medalTierOrder = ["bronze", "silver", "gold", "platinum", "diamond", "master"];
 
 async function safeJson(res: Response) {
@@ -171,14 +188,26 @@ export default function StudentInfoPage() {
       daily_free_points?: number | null;
       challenge_completion_bonus_pct?: number | null;
       mvp_bonus_pct?: number | null;
+      unlock_level?: number | null;
+      unlock_points?: number | null;
+      limited_event_only?: boolean | null;
+      limited_event_name?: string | null;
+      limited_event_description?: string | null;
     }>
   >([]);
   const [avatarId, setAvatarId] = useState("");
   const [avatarBg, setAvatarBg] = useState("rgba(15,23,42,0.75)");
   const [avatarEffectKey, setAvatarEffectKey] = useState<string | null>(null);
   const [cornerBorderKey, setCornerBorderKey] = useState<string | null>(null);
-  const [effectCatalog, setEffectCatalog] = useState<Array<{ key: string; config?: any; render_mode?: string | null; z_layer?: string | null; html?: string | null; css?: string | null; js?: string | null }>>([]);
-  const [cornerBorders, setCornerBorders] = useState<Array<{ key: string; image_url?: string | null; render_mode?: string | null; z_layer?: string | null; html?: string | null; css?: string | null; js?: string | null; offset_x?: number | null; offset_y?: number | null; offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null; rotate?: number | null }> | null; enabled?: boolean | null }>>([]);
+  const [effectCatalog, setEffectCatalog] = useState<Array<{ key: string; name?: string | null; unlock_level?: number | null; unlock_points?: number | null; config?: any; render_mode?: string | null; z_layer?: string | null; html?: string | null; css?: string | null; js?: string | null; enabled?: boolean | null; limited_event_only?: boolean | null; limited_event_name?: string | null; limited_event_description?: string | null }>>([]);
+  const [cornerBorders, setCornerBorders] = useState<Array<{ key: string; name?: string | null; image_url?: string | null; render_mode?: string | null; z_layer?: string | null; html?: string | null; css?: string | null; js?: string | null; offset_x?: number | null; offset_y?: number | null; offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null; rotate?: number | null }> | null; unlock_level?: number | null; unlock_points?: number | null; enabled?: boolean | null }>>([]);
+  const [customUnlocks, setCustomUnlocks] = useState<Array<{ item_type: string; item_key: string }>>([]);
+  const [criteriaDefs, setCriteriaDefs] = useState<UnlockCriteriaDef[]>([]);
+  const [itemRequirements, setItemRequirements] = useState<UnlockRequirement[]>([]);
+  const [studentCriteria, setStudentCriteria] = useState<StudentCriteriaState[]>([]);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
+  const [avatarPickerTab, setAvatarPickerTab] = useState<"avatar" | "effect" | "border">("avatar");
+  const [pickerBusyKey, setPickerBusyKey] = useState("");
   const [dailyRedeem, setDailyRedeem] = useState<DailyRedeemStatus | null>(null);
   const [redeemBurst, setRedeemBurst] = useState<{ points: number; text: string } | null>(null);
   const [leaderboardDetailOpen, setLeaderboardDetailOpen] = useState(false);
@@ -272,6 +301,23 @@ export default function StudentInfoPage() {
         const borderKey = String(s?.corner_border_key ?? "").trim();
         setCornerBorderKey(borderKey || null);
       }
+    })();
+  }, [student?.id]);
+
+  useEffect(() => {
+    if (!student?.id) return;
+    (async () => {
+      const res = await fetch("/api/unlocks/context", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_id: student.id }),
+      });
+      const sj = await safeJson(res);
+      if (!sj.ok) return;
+      setCustomUnlocks((sj.json?.custom_unlocks ?? []) as Array<{ item_type: string; item_key: string }>);
+      setCriteriaDefs((sj.json?.criteria_definitions ?? []) as UnlockCriteriaDef[]);
+      setItemRequirements((sj.json?.item_requirements ?? []) as UnlockRequirement[]);
+      setStudentCriteria((sj.json?.student_criteria ?? []) as StudentCriteriaState[]);
     })();
   }, [student?.id]);
 
@@ -528,6 +574,119 @@ export default function StudentInfoPage() {
     mvp: "Battle MVP",
   };
 
+  const fulfilledCriteriaKeys = useMemo(() => {
+    return new Set(
+      studentCriteria
+        .filter((c) => c.fulfilled !== false)
+        .map((c) => String(c.criteria_key ?? "").trim())
+        .filter(Boolean)
+    );
+  }, [studentCriteria]);
+
+  const criteriaByItem = useMemo(() => {
+    const map = new Map<string, string[]>();
+    itemRequirements.forEach((row) => {
+      const itemType = String(row.item_type ?? "").trim();
+      const itemKey = String(row.item_key ?? "").trim();
+      const criteriaKey = String(row.criteria_key ?? "").trim();
+      if (!itemType || !itemKey || !criteriaKey) return;
+      const k = `${itemType}:${itemKey}`;
+      const arr = map.get(k) ?? [];
+      arr.push(criteriaKey);
+      map.set(k, arr);
+    });
+    return map;
+  }, [itemRequirements]);
+
+  const customUnlockSet = useMemo(() => {
+    return new Set(customUnlocks.map((u) => `${u.item_type}:${u.item_key}`));
+  }, [customUnlocks]);
+
+  function getItemUnlockState(itemType: "avatar" | "effect" | "corner_border", itemKey: string, unlockLevel: number, unlockPoints: number) {
+    const level = Math.max(1, Number(levelDisplay ?? 1));
+    const levelOk = level >= Math.max(1, Number(unlockLevel ?? 1));
+    const needsPointsPurchase = Math.max(0, Number(unlockPoints ?? 0)) > 0;
+    const customUnlocked = customUnlockSet.has(`${itemType}:${itemKey}`);
+    const reqKeys = Array.from(new Set(criteriaByItem.get(`${itemType}:${itemKey}`) ?? []));
+    const hasCriteriaReq = reqKeys.length > 0;
+    const criteriaMatched = hasCriteriaReq && reqKeys.every((k) => fulfilledCriteriaKeys.has(k));
+    const unlockedByDefault = !needsPointsPurchase && levelOk;
+    const unlocked = customUnlocked || criteriaMatched || unlockedByDefault;
+    return {
+      unlocked,
+      customUnlocked,
+      criteriaMatched,
+      hasCriteriaReq,
+      requiredCriteriaKeys: reqKeys,
+      levelOk,
+      needsPointsPurchase,
+    };
+  }
+
+  async function refreshUnlockContext() {
+    if (!student?.id) return;
+    const res = await fetch("/api/unlocks/context", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ student_id: student.id }),
+    });
+    const sj = await safeJson(res);
+    if (!sj.ok) return;
+    setCustomUnlocks((sj.json?.custom_unlocks ?? []) as Array<{ item_type: string; item_key: string }>);
+    setCriteriaDefs((sj.json?.criteria_definitions ?? []) as UnlockCriteriaDef[]);
+    setItemRequirements((sj.json?.item_requirements ?? []) as UnlockRequirement[]);
+    setStudentCriteria((sj.json?.student_criteria ?? []) as StudentCriteriaState[]);
+  }
+
+  async function unlockItem(itemType: "avatar" | "effect" | "corner_border", itemKey: string) {
+    if (!student?.id || !itemKey) return;
+    setPickerBusyKey(`${itemType}:${itemKey}:unlock`);
+    const res = await fetch("/api/unlocks/purchase", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ student_id: student.id, item_type: itemType, item_key: itemKey }),
+    });
+    const sj = await safeJson(res);
+    setPickerBusyKey("");
+    if (!sj.ok) {
+      setMsg(String(sj.json?.error ?? "Unlock failed"));
+      return;
+    }
+    setMsg("Unlocked.");
+    await refreshUnlockContext();
+  }
+
+  async function applyAvatar(avatarIdToUse: string) {
+    if (!student?.id || !avatarIdToUse) return;
+    setPickerBusyKey(`avatar:${avatarIdToUse}:apply`);
+    const res = await fetch("/api/avatar/set", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ student_id: student.id, avatar_id: avatarIdToUse }),
+    });
+    const sj = await safeJson(res);
+    setPickerBusyKey("");
+    if (!sj.ok) return setMsg(String(sj.json?.error ?? "Failed to apply avatar"));
+    setAvatarId(avatarIdToUse);
+    setMsg("Avatar updated.");
+  }
+
+  async function applyStylePatch(patch: { particle_style?: string; corner_border_key?: string }) {
+    if (!student?.id) return;
+    setPickerBusyKey(`style:${patch.particle_style ?? patch.corner_border_key ?? "x"}`);
+    const res = await fetch("/api/avatar/style", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ student_id: student.id, ...patch }),
+    });
+    const sj = await safeJson(res);
+    setPickerBusyKey("");
+    if (!sj.ok) return setMsg(String(sj.json?.error ?? "Failed to apply style"));
+    if (patch.particle_style !== undefined) setAvatarEffectKey(patch.particle_style === "none" ? null : patch.particle_style);
+    if (patch.corner_border_key !== undefined) setCornerBorderKey(patch.corner_border_key === "none" ? null : patch.corner_border_key);
+    setMsg("Style updated.");
+  }
+
   async function redeemDailyPoints() {
     if (!student?.id || !dailyRedeem?.can_redeem || redeemingDaily) return;
     setRedeemingDaily(true);
@@ -636,6 +795,14 @@ export default function StudentInfoPage() {
                     fallback={<div className="left-card__avatar-fallback">{initials}</div>}
                   />
                 </div>
+                <button
+                  type="button"
+                  className="redeem-detail-btn"
+                  onClick={() => setAvatarPickerOpen(true)}
+                  style={{ marginTop: 8 }}
+                >
+                  Change Avatar Style
+                </button>
                 <div className="modifier-grid">
                   <div className="modifier-tile modifier-tile--keeper">
                     <div className="modifier-tile__label">Rule Keeper</div>
@@ -875,6 +1042,125 @@ export default function StudentInfoPage() {
               ) : (
                 <div className="leaderboard-detail-empty">No top-10 leaderboard eligibility right now.</div>
               )}
+            </div>
+          </div>
+        ) : null}
+        {avatarPickerOpen ? (
+          <div className="leaderboard-detail-overlay" onClick={() => setAvatarPickerOpen(false)}>
+            <div className="avatar-picker-panel" onClick={(e) => e.stopPropagation()}>
+              <button className="leaderboard-detail-close" onClick={() => setAvatarPickerOpen(false)}>×</button>
+              <div className="leaderboard-detail-title">Avatar and Style Unlocks</div>
+              <div className="avatar-picker-tabs">
+                <button className={`avatar-picker-tab ${avatarPickerTab === "avatar" ? "avatar-picker-tab--active" : ""}`} onClick={() => setAvatarPickerTab("avatar")}>Avatar</button>
+                <button className={`avatar-picker-tab ${avatarPickerTab === "effect" ? "avatar-picker-tab--active" : ""}`} onClick={() => setAvatarPickerTab("effect")}>Effect</button>
+                <button className={`avatar-picker-tab ${avatarPickerTab === "border" ? "avatar-picker-tab--active" : ""}`} onClick={() => setAvatarPickerTab("border")}>Border</button>
+              </div>
+              <div className="avatar-picker-grid">
+                {avatarPickerTab === "avatar"
+                  ? avatarCatalog.filter((item) => item.enabled !== false).map((item) => {
+                      const key = String(item.id ?? "");
+                      const state = getItemUnlockState("avatar", key, Number(item.unlock_level ?? 1), Number(item.unlock_points ?? 0));
+                      const src = item.storage_path
+                        ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/avatars/${String(item.storage_path)}`
+                        : "";
+                      return (
+                        <div key={`av-${key}`} className="avatar-picker-item">
+                          <div className="avatar-picker-thumb">
+                            {src ? <img src={src} alt={String(item.name ?? "Avatar")} /> : <div className="avatar-picker-empty">No image</div>}
+                          </div>
+                          <div className="avatar-picker-name">{item.name ?? "Avatar"}</div>
+                          <div className="avatar-picker-meta">
+                            <span>Lv {Math.max(1, Number(item.unlock_level ?? 1))}</span>
+                            <span>{Math.max(0, Number(item.unlock_points ?? 0))} pts</span>
+                          </div>
+                          {item.limited_event_only ? (
+                            <div className="avatar-picker-limited">{item.limited_event_name || "Limited Event"}: {item.limited_event_description || "Special unlock only"}</div>
+                          ) : null}
+                          <div className="avatar-picker-mods">
+                            RK {Math.round(Number(item.rule_keeper_multiplier ?? 1) * 100)}% • RB {Math.round(Number(item.rule_breaker_multiplier ?? 1) * 100)}% • SP {Math.round(Number(item.skill_pulse_multiplier ?? 1) * 100)}%
+                          </div>
+                          {state.hasCriteriaReq ? (
+                            <div className="avatar-picker-criteria">
+                              Criteria: {state.requiredCriteriaKeys.map((c) => criteriaDefs.find((d) => d.key === c)?.label ?? c).join(", ")}
+                            </div>
+                          ) : null}
+                          <div className="avatar-picker-actions">
+                            {state.unlocked ? (
+                              <button disabled={pickerBusyKey === `avatar:${key}:apply`} onClick={() => applyAvatar(key)} className="redeem-detail-btn">
+                                {String(avatarId) === key ? "Selected" : "Use"}
+                              </button>
+                            ) : (
+                              <button disabled={pickerBusyKey === `avatar:${key}:unlock`} onClick={() => unlockItem("avatar", key)} className="redeem-btn redeem-btn--active">
+                                Unlock
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  : avatarPickerTab === "effect"
+                    ? effectCatalog.filter((item) => item.enabled !== false).map((item) => {
+                        const key = String(item.key ?? "");
+                        const state = getItemUnlockState("effect", key, Number(item.unlock_level ?? 1), Number(item.unlock_points ?? 0));
+                        return (
+                          <div key={`ef-${key}`} className="avatar-picker-item">
+                            <div className="avatar-picker-name">{item.name ?? key}</div>
+                            <div className="avatar-picker-meta">
+                              <span>Lv {Math.max(1, Number(item.unlock_level ?? 1))}</span>
+                              <span>{Math.max(0, Number(item.unlock_points ?? 0))} pts</span>
+                            </div>
+                            {item.limited_event_only ? (
+                              <div className="avatar-picker-limited">{item.limited_event_name || "Limited Event"}: {item.limited_event_description || "Special unlock only"}</div>
+                            ) : null}
+                            {state.hasCriteriaReq ? (
+                              <div className="avatar-picker-criteria">
+                                Criteria: {state.requiredCriteriaKeys.map((c) => criteriaDefs.find((d) => d.key === c)?.label ?? c).join(", ")}
+                              </div>
+                            ) : null}
+                            <div className="avatar-picker-actions">
+                              {state.unlocked ? (
+                                <button disabled={pickerBusyKey === `style:${key}`} onClick={() => applyStylePatch({ particle_style: key })} className="redeem-detail-btn">
+                                  {avatarEffectKey === key ? "Selected" : "Use"}
+                                </button>
+                              ) : (
+                                <button disabled={pickerBusyKey === `effect:${key}:unlock`} onClick={() => unlockItem("effect", key)} className="redeem-btn redeem-btn--active">
+                                  Unlock
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    : cornerBorders.filter((item) => item.enabled !== false).map((item) => {
+                        const key = String(item.key ?? "");
+                        const state = getItemUnlockState("corner_border", key, Number(item.unlock_level ?? 1), Number(item.unlock_points ?? 0));
+                        return (
+                          <div key={`bd-${key}`} className="avatar-picker-item">
+                            <div className="avatar-picker-name">{item.name ?? key}</div>
+                            <div className="avatar-picker-meta">
+                              <span>Lv {Math.max(1, Number(item.unlock_level ?? 1))}</span>
+                              <span>{Math.max(0, Number(item.unlock_points ?? 0))} pts</span>
+                            </div>
+                            {state.hasCriteriaReq ? (
+                              <div className="avatar-picker-criteria">
+                                Criteria: {state.requiredCriteriaKeys.map((c) => criteriaDefs.find((d) => d.key === c)?.label ?? c).join(", ")}
+                              </div>
+                            ) : null}
+                            <div className="avatar-picker-actions">
+                              {state.unlocked ? (
+                                <button disabled={pickerBusyKey === `style:${key}`} onClick={() => applyStylePatch({ corner_border_key: key })} className="redeem-detail-btn">
+                                  {cornerBorderKey === key ? "Selected" : "Use"}
+                                </button>
+                              ) : (
+                                <button disabled={pickerBusyKey === `corner_border:${key}:unlock`} onClick={() => unlockItem("corner_border", key)} className="redeem-btn redeem-btn--active">
+                                  Unlock
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+              </div>
             </div>
           </div>
         ) : null}
@@ -1614,6 +1900,115 @@ function pageStyles() {
       border: 1px solid rgba(239,68,68,0.3);
       font-weight: 900;
       font-size: 12px;
+    }
+
+    .avatar-picker-panel {
+      width: min(1120px, 96vw);
+      max-height: min(86vh, 900px);
+      overflow: auto;
+      border-radius: 22px;
+      padding: 16px;
+      border: 1px solid rgba(56,189,248,0.3);
+      background: linear-gradient(155deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98));
+      display: grid;
+      gap: 12px;
+      position: relative;
+    }
+
+    .avatar-picker-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .avatar-picker-tab {
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,0.34);
+      background: rgba(30,41,59,0.6);
+      color: #e2e8f0;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .avatar-picker-tab--active {
+      border-color: rgba(56,189,248,0.72);
+      background: rgba(14,165,233,0.25);
+      color: #e0f2fe;
+    }
+
+    .avatar-picker-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    }
+
+    .avatar-picker-item {
+      border-radius: 14px;
+      border: 1px solid rgba(148,163,184,0.3);
+      background: rgba(15,23,42,0.74);
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+    }
+
+    .avatar-picker-thumb {
+      height: 128px;
+      border-radius: 12px;
+      border: 1px solid rgba(148,163,184,0.3);
+      background: rgba(15,23,42,0.8);
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
+
+    .avatar-picker-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .avatar-picker-name {
+      font-size: 14px;
+      font-weight: 1000;
+    }
+
+    .avatar-picker-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 11px;
+      opacity: 0.85;
+    }
+
+    .avatar-picker-limited {
+      border-radius: 9px;
+      border: 1px solid rgba(245,158,11,0.42);
+      background: rgba(120,53,15,0.4);
+      padding: 6px 8px;
+      font-size: 11px;
+      line-height: 1.3;
+      color: #fde68a;
+    }
+
+    .avatar-picker-mods,
+    .avatar-picker-criteria {
+      font-size: 11px;
+      opacity: 0.86;
+      line-height: 1.3;
+    }
+
+    .avatar-picker-actions {
+      margin-top: auto;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .avatar-picker-empty {
+      font-size: 12px;
+      opacity: 0.68;
     }
 
     @media (max-width: 1100px) {

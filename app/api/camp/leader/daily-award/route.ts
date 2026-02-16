@@ -50,14 +50,10 @@ export async function POST() {
   if (!dailyPoints) return NextResponse.json({ ok: true, awarded: false });
 
   const admin = supabaseAdmin();
-  const { data: acct } = await admin.from("camp_accounts").select("balance_points").eq("student_id", studentId).maybeSingle();
-  const balance_points = Number(acct?.balance_points ?? 0) + dailyPoints;
+  const { data: student } = await admin.from("students").select("id,points_total").eq("id", studentId).maybeSingle();
+  const balance_points = Number(student?.points_total ?? 0) + dailyPoints;
 
-  const { error: aErr } = await admin.from("camp_accounts").upsert({
-    student_id: studentId,
-    balance_points,
-    updated_at: new Date().toISOString(),
-  });
+  const { error: aErr } = await admin.from("students").update({ points_total: balance_points }).eq("id", studentId);
   if (aErr) return NextResponse.json({ ok: false, error: aErr.message }, { status: 500 });
 
   const { error: lErr } = await admin.from("camp_leader_awards").insert({

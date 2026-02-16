@@ -31,17 +31,23 @@ export async function GET() {
 
   let { data, error } = await supabase
     .from("avatar_effects")
-    .select("id,key,name,unlock_level,unlock_points,config,render_mode,z_layer,html,css,js,enabled")
+    .select("id,key,name,unlock_level,unlock_points,config,render_mode,z_layer,html,css,js,enabled,limited_event_only,limited_event_name,limited_event_description")
     .order("unlock_level", { ascending: true })
     .order("name", { ascending: true });
 
-  if (error && /z_layer/i.test(error.message ?? "")) {
+  if (error && /z_layer|limited_event_/i.test(error.message ?? "")) {
     const fallback = await supabase
       .from("avatar_effects")
       .select("id,key,name,unlock_level,unlock_points,config,render_mode,html,css,js,enabled")
       .order("unlock_level", { ascending: true })
       .order("name", { ascending: true });
-    data = (fallback.data ?? []).map((row: any) => ({ ...row, z_layer: "behind_avatar" }));
+    data = (fallback.data ?? []).map((row: any) => ({
+      ...row,
+      z_layer: "behind_avatar",
+      limited_event_only: false,
+      limited_event_name: "",
+      limited_event_description: "",
+    }));
     error = fallback.error;
   }
 
@@ -60,6 +66,9 @@ export async function GET() {
     css?: string | null;
     js?: string | null;
     enabled?: boolean;
+    limited_event_only?: boolean | null;
+    limited_event_name?: string | null;
+    limited_event_description?: string | null;
   }>;
   const byKey = new Map(rows.map((row) => [row.key, row]));
   const merged = EFFECT_PRESETS.map((preset) => {
@@ -77,6 +86,9 @@ export async function GET() {
       css: row?.css ?? "",
       js: row?.js ?? "",
       enabled: row?.enabled ?? false,
+      limited_event_only: row?.limited_event_only ?? false,
+      limited_event_name: row?.limited_event_name ?? "",
+      limited_event_description: row?.limited_event_description ?? "",
     };
   });
   const extras = rows
@@ -94,6 +106,9 @@ export async function GET() {
       css: row.css ?? "",
       js: row.js ?? "",
       enabled: row.enabled ?? false,
+      limited_event_only: row?.limited_event_only ?? false,
+      limited_event_name: row?.limited_event_name ?? "",
+      limited_event_description: row?.limited_event_description ?? "",
     }));
   const effects = [...merged, ...extras];
 

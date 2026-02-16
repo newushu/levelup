@@ -10,6 +10,7 @@ const ALLOWED_ROLES: Set<string> = new Set([
   "display",
   "skill_pulse",
   "camp",
+  "checkin",
   "classroom",
   "skill-tablet",
   "coach-dashboard",

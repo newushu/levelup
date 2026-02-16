@@ -235,7 +235,7 @@ export default function ClassroomPage() {
         const data = await res.json();
         if (data?.ok) setViewerRole(String(data?.role ?? "student"));
         if (data?.ok && data?.role === "student") setStudentBlocked(true);
-        if (data?.ok && !["admin", "classroom"].includes(String(data?.role ?? ""))) setAdminBlocked(true);
+        if (data?.ok && !["admin", "classroom", "checkin"].includes(String(data?.role ?? ""))) setAdminBlocked(true);
       } catch {}
     })();
   }, []);
@@ -248,7 +248,7 @@ export default function ClassroomPage() {
   ) : adminBlocked ? (
     <main style={{ padding: 18 }}>
       <div style={{ fontSize: 22, fontWeight: 900 }}>Classroom is admin-only.</div>
-      <div style={{ opacity: 0.7, marginTop: 6 }}>Admin or classroom accounts can access classroom tools.</div>
+      <div style={{ opacity: 0.7, marginTop: 6 }}>Admin, classroom, or check-in accounts can access classroom tools.</div>
     </main>
   ) : null;
 
@@ -1147,6 +1147,33 @@ export default function ClassroomPage() {
     setGroupMsg(`Created group tracker for ${groupSelectedIds.length} students.`);
   }
 
+  if (blockedView) return blockedView;
+
+  if (viewerRole === "classroom" || viewerRole === "checkin") {
+    return (
+      <main style={{ minHeight: "100vh", padding: 22, display: "grid", alignContent: "start", gap: 18 }}>
+        <div style={{ fontSize: 32, fontWeight: 1000 }}>Classroom Launcher</div>
+        <div style={{ opacity: 0.78 }}>Choose a tool for this station.</div>
+        <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
+          <a href="/student" style={classroomLaunchCard()}>
+            <div style={classroomLaunchEmoji()}>🧑</div>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 950 }}>Student Info</div>
+              <div style={{ fontSize: 13, opacity: 0.78 }}>Open the student page.</div>
+            </div>
+          </a>
+          <a href="/classroom/checkin" style={classroomLaunchCard()}>
+            <div style={classroomLaunchEmoji()}>✅</div>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 950 }}>Check-In</div>
+              <div style={{ fontSize: 13, opacity: 0.78 }}>Open classroom check-in.</div>
+            </div>
+          </a>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main style={{ padding: "0 0 4px" }}>
       <div style={{ display: "grid", gap: 14 }}>
@@ -1994,6 +2021,35 @@ export default function ClassroomPage() {
       </div>
     </main>
   );
+}
+
+function classroomLaunchCard(): React.CSSProperties {
+  return {
+    display: "flex",
+    gap: 14,
+    alignItems: "center",
+    minHeight: 120,
+    borderRadius: 18,
+    padding: "18px 20px",
+    textDecoration: "none",
+    color: "white",
+    border: "1px solid rgba(255,255,255,0.15)",
+    background: "linear-gradient(145deg, rgba(255,255,255,0.12), rgba(255,255,255,0.04))",
+    boxShadow: "0 16px 34px rgba(0,0,0,0.3)",
+  };
+}
+
+function classroomLaunchEmoji(): React.CSSProperties {
+  return {
+    width: 56,
+    height: 56,
+    borderRadius: 14,
+    display: "grid",
+    placeItems: "center",
+    fontSize: 28,
+    background: "rgba(255,255,255,0.12)",
+    flexShrink: 0,
+  };
 }
 
 function inp(): React.CSSProperties {

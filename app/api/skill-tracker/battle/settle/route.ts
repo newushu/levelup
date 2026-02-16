@@ -227,6 +227,7 @@ export async function POST(req: Request) {
   );
 
   const ledgerRows: Array<{ student_id: string; points: number; note: string; category: string; created_by: string }> = [];
+  const mvpLedgerRows: Array<{ student_id: string; points: number; note: string; category: string; created_by: string }> = [];
   const baseWinById = new Map<string, number>();
   const netWinById = new Map<string, number>();
   const lossById = new Map<string, number>();
@@ -236,31 +237,30 @@ export async function POST(req: Request) {
       if (winnerIds.length) {
         const share = Math.floor(payoutTotal / Math.max(1, winnerIds.length));
         const netShare = Math.max(0, share - wagerAmount);
-        if (share > 0) {
-          participants.forEach((pid) => {
+        const losers = participants.filter((pid) => !winnerIds.includes(pid));
+        losers.forEach((pid) => {
+          ledgerRows.push({
+            student_id: pid,
+            points: -wagerAmount,
+            note: `Battle Pulse loss (-${wagerAmount})`,
+            category: "manual",
+            created_by: u.user.id,
+          });
+          lossById.set(pid, wagerAmount);
+        });
+        winnerIds.forEach((pid) => {
+          if (netShare > 0) {
             ledgerRows.push({
               student_id: pid,
-              points: -wagerAmount,
-              note: `Battle Pulse wager (-${wagerAmount})`,
+              points: netShare,
+              note: `Battle Pulse win (+${netShare})`,
               category: "manual",
               created_by: u.user.id,
             });
-            lossById.set(pid, wagerAmount);
-          });
-          winnerIds.forEach((pid) => {
-            if (netShare > 0) {
-              ledgerRows.push({
-                student_id: pid,
-                points: netShare,
-                note: `Battle Pulse win (+${netShare})`,
-                category: "manual",
-                created_by: u.user.id,
-              });
-            }
-            baseWinById.set(pid, netShare);
-            netWinById.set(pid, netShare);
-          });
-        }
+          }
+          baseWinById.set(pid, netShare);
+          netWinById.set(pid, netShare);
+        });
       }
     } else {
       const losers = participants.filter((pid) => !winnerIds.includes(pid));
@@ -344,7 +344,6 @@ export async function POST(req: Request) {
   }
 
   if (!limitReached && mvpIds.length) {
-    const mvpRows: Array<{ student_id: string; points: number; note: string; category: string; created_by: string }> = [];
     const buildMvpAward = (studentId: string, basePoints: number, baseNote: string, category: string) => {
       const base = Math.max(0, Math.round(Number(basePoints ?? 0)));
       if (base <= 0) return;
@@ -352,7 +351,7 @@ export async function POST(req: Request) {
       const bonus = Math.max(0, Math.round(base * (pct / 100)));
       const total = base + bonus;
       const note = bonus > 0 ? `${baseNote} (+${bonus} MVP modifier)` : baseNote;
-      mvpRows.push({
+      mvpLedgerRows.push({
         student_id: studentId,
         points: total,
         note,
@@ -374,7 +373,7 @@ export async function POST(req: Request) {
         const refund = lossById.get(pid) ?? 0;
         const refundCap = Math.max(0, Math.min(refund, 50));
         if (refundCap > 0) {
-          mvpRows.push({
+          mvpLedgerRows.push({
             student_id: pid,
             points: refundCap,
             note: `Battle Pulse MVP protection (+${refundCap})`,
@@ -410,23 +409,60 @@ export async function POST(req: Request) {
       }
     });
 
-    if (mvpRows.length) {
-      const insLedger = await supabase.from("ledger").insert(mvpRows);
+    if (mvpLedgerRows.length) {
+      const insLedger = await supabase.from("ledger").insert(mvpLedgerRows);
       if (insLedger.error) return NextResponse.json({ ok: false, error: insLedger.error.message }, { status: 500 });
     }
   }
 
-  if (!limitReached && (ledgerRows.length || mvpIds.length)) {
+  if (!limitReached && (ledgerRows.length || mvpLedgerRows.length)) {
     for (const pid of participants) {
       const rpc = await supabase.rpc("recompute_student_points", { p_student_id: pid });
       if (rpc.error) return NextResponse.json({ ok: false, error: rpc.error.message }, { status: 500 });
     }
   }
 
+  const settledAtIso = new Date().toISOString();
+  const currentMeta =
+    battle?.battle_meta && typeof battle.battle_meta === "object" && !Array.isArray(battle.battle_meta)
+      ? (battle.battle_meta as Record<string, any>)
+      : {};
+  let nextMeta: Record<string, any> = { ...currentMeta };
+  if (!limitReached && (ledgerRows.length || mvpLedgerRows.length)) {
+    const totalDeltaById = new Map<string, number>();
+    participants.forEach((pid) => totalDeltaById.set(pid, 0));
+    [...ledgerRows, ...mvpLedgerRows].forEach((row) => {
+      const sid = String(row.student_id ?? "").trim();
+      if (!sid) return;
+      totalDeltaById.set(sid, (totalDeltaById.get(sid) ?? 0) + Number(row.points ?? 0));
+    });
+    const { data: latestRows, error: latestErr } = await supabase
+      .from("students")
+      .select("id,points_total")
+      .in("id", participants);
+    if (latestErr) return NextResponse.json({ ok: false, error: latestErr.message }, { status: 500 });
+    const afterById: Record<string, number> = {};
+    const beforeById: Record<string, number> = {};
+    (latestRows ?? []).forEach((row: any) => {
+      const sid = String(row.id ?? "").trim();
+      if (!sid) return;
+      const after = Math.round(Number(row.points_total ?? 0));
+      const delta = Math.round(Number(totalDeltaById.get(sid) ?? 0));
+      afterById[sid] = after;
+      beforeById[sid] = after - delta;
+    });
+    nextMeta = {
+      ...nextMeta,
+      settlement_points_after_by_id: afterById,
+      settlement_points_before_by_id: beforeById,
+      settlement_snapshot_at: settledAtIso,
+    };
+  }
+
   const winner_id = winnerIds.length === 1 ? winnerIds[0] : null;
   const upd = await supabase
     .from("battle_trackers")
-    .update({ settled_at: new Date().toISOString(), winner_id })
+    .update({ settled_at: settledAtIso, winner_id, battle_meta: nextMeta })
     .eq("id", battle_id);
   if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 });
 

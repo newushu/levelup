@@ -23,17 +23,16 @@ type Payer = { student: StudentPick; amount: string };
 
 export default function CampRegisterPage() {
   const [role, setRole] = useState("student");
+  const [roles, setRoles] = useState<string[]>([]);
   const [isLeader, setIsLeader] = useState(false);
   const [leaderMsg, setLeaderMsg] = useState("");
-
-  const [pinOk, setPinOk] = useState(false);
-  const [pin, setPin] = useState("");
   const [msg, setMsg] = useState("");
 
   const [menus, setMenus] = useState<Menu[]>([]);
   const [selectedItems, setSelectedItems] = useState<Record<string, { qty: number; second: boolean }>>({});
 
   const [payStep, setPayStep] = useState(false);
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
   const [payerQuery, setPayerQuery] = useState("");
   const [payerResults, setPayerResults] = useState<StudentPick[]>([]);
   const [payers, setPayers] = useState<Payer[]>([]);
@@ -61,6 +60,8 @@ export default function CampRegisterPage() {
   const [couponUses, setCouponUses] = useState<Record<string, number>>({});
   const [auraDiscount, setAuraDiscount] = useState(0);
   const [auraName, setAuraName] = useState("");
+  const [hubGateChecked, setHubGateChecked] = useState(false);
+  const [activeMenuId, setActiveMenuId] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -69,9 +70,24 @@ export default function CampRegisterPage() {
         const data = await res.json();
         if (data?.ok) {
           setRole(String(data?.role ?? "student"));
+          setRoles(
+            Array.isArray(data?.roles)
+              ? data.roles.map((r: any) => String(r ?? "").toLowerCase()).filter(Boolean)
+              : [String(data?.role ?? "student").toLowerCase()]
+          );
         }
       } catch {}
     })();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const ok = window.sessionStorage.getItem("camp_hub_ok") === "1";
+    if (!ok) {
+      window.location.href = "/camp";
+      return;
+    }
+    setHubGateChecked(true);
   }, []);
 
   useEffect(() => {
@@ -90,26 +106,13 @@ export default function CampRegisterPage() {
     })();
   }, [role]);
 
-  const canAccess = ["admin", "coach", "camp"].includes(role) || isLeader;
-  const canRegister = ["admin", "camp"].includes(role) || isLeader;
-  const canRefund = ["admin", "camp"].includes(role);
-
-  async function verifyPin() {
-    setMsg("");
-    if (!pin.trim()) return setMsg("Enter PIN or NFC code.");
-    const res = await fetch("/api/camp/settings/verify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pin: pin.trim() }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return setMsg(data?.error || "PIN verification failed");
-    setPinOk(true);
-    setPin("");
-  }
+  const roleSet = new Set(roles.length ? roles : [String(role ?? "").toLowerCase()]);
+  const canAccess = ["admin", "coach", "camp"].some((r) => roleSet.has(r)) || isLeader;
+  const canRegister = ["admin", "camp"].some((r) => roleSet.has(r)) || isLeader;
+  const canRefund = ["admin", "camp"].some((r) => roleSet.has(r));
 
   useEffect(() => {
-    if (!pinOk) return;
+    if (!hubGateChecked) return;
     (async () => {
       const res = await fetch("/api/camp/menus?items=1", { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
@@ -120,7 +123,7 @@ export default function CampRegisterPage() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) setOrders(data.orders ?? []);
     })();
-  }, [pinOk]);
+  }, [hubGateChecked]);
 
   useEffect(() => {
     const first = payers[0]?.student;
@@ -148,7 +151,7 @@ export default function CampRegisterPage() {
   }, [payers]);
 
   useEffect(() => {
-    if (!pinOk || !isLeader) return;
+    if (!hubGateChecked || !isLeader) return;
     (async () => {
       const res = await fetch("/api/camp/leader/daily-award", { method: "POST" });
       const data = await res.json().catch(() => ({}));
@@ -156,7 +159,7 @@ export default function CampRegisterPage() {
         setLeaderMsg(`Daily leader award: +${data.daily_points} pts`);
       }
     })();
-  }, [pinOk, isLeader]);
+  }, [hubGateChecked, isLeader]);
 
   useEffect(() => {
     if (!payerQuery.trim()) {
@@ -226,6 +229,21 @@ export default function CampRegisterPage() {
       .filter((menu) => menu.items.length);
   }, [menus]);
 
+  useEffect(() => {
+    if (!menuSections.length) {
+      setActiveMenuId("");
+      return;
+    }
+    if (!menuSections.some((s) => s.id === activeMenuId)) {
+      setActiveMenuId(menuSections[0].id);
+    }
+  }, [menuSections, activeMenuId]);
+
+  const activeMenuSection = useMemo(() => {
+    if (!menuSections.length) return null;
+    return menuSections.find((s) => s.id === activeMenuId) ?? menuSections[0];
+  }, [menuSections, activeMenuId]);
+
   const cartItems = useMemo(() => {
     return Object.entries(selectedItems)
       .map(([itemId, sel]) => {
@@ -284,6 +302,7 @@ export default function CampRegisterPage() {
   const payablePoints = Math.max(0, totalPoints - totalDiscount);
   const paymentTotal = payers.reduce((sum, payer) => sum + (Number(payer.amount) || 0), 0);
   const remainingPoints = payablePoints - paymentTotal;
+  const canStartPayment = cartItems.length > 0;
 
   async function lookupNfc(code: string) {
     const res = await fetch("/api/camp/nfc", {
@@ -313,6 +332,13 @@ export default function CampRegisterPage() {
         ...payer,
         amount: String(base + (idx === 0 ? remainder : 0)),
       }))
+    );
+  }
+
+  function setPayerAmount(studentId: string, raw: string | number) {
+    const next = Math.max(0, Math.round(Number(raw) || 0));
+    setPayers((prev) =>
+      prev.map((p) => (p.student.id === studentId ? { ...p, amount: String(next) } : p))
     );
   }
 
@@ -392,57 +418,75 @@ export default function CampRegisterPage() {
   }
 
   async function submitPayment() {
-    if (!canRegister) return;
+    if (isSubmittingPayment) return;
+    if (!canRegister) return setMsg("This account is not allowed to submit payments.");
     if (!Object.keys(selectedItems).length) return setMsg("Select at least one item.");
     if (!payers.length) return setMsg("Select at least one payer.");
     if (remainingPoints !== 0) return setMsg("Payments must match the total.");
 
-    setMsg("");
-    const items = cartItems.map((entry) => ({
-      id: entry.item.id,
-      name: entry.item.name,
-      price_points: entry.price,
-      qty: entry.qty,
-      second: entry.second,
-    }));
+    setIsSubmittingPayment(true);
+    try {
+      setMsg("");
+      const items = cartItems.map((entry) => ({
+        id: entry.item.id,
+        name: entry.item.name,
+        price_points: entry.price,
+        qty: entry.qty,
+        second: entry.second,
+      }));
 
-    const res = await fetch("/api/camp/checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        student_id: payers[0]?.student?.id ?? null,
-        student_name: payers[0]?.student?.name ?? null,
-        paid_by: paidBy.trim() || null,
-        items,
-        discount_points: discountPoints || 0,
-        aura_discount_points: auraDiscount || 0,
-        coupons: Object.entries(couponUses)
-          .map(([couponId, qty]) => ({ coupon_type_id: couponId, qty: Number(qty) || 0 }))
-          .filter((c) => c.qty > 0),
-        payments: payers.map((payer) => ({
-          student_id: payer.student.id,
-          student_name: payer.student.name,
-          amount_points: Number(payer.amount) || 0,
-        })),
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return setMsg(data?.error || "Payment failed");
+      const res = await fetch("/api/camp/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          student_id: payers[0]?.student?.id ?? null,
+          student_name: payers[0]?.student?.name ?? null,
+          paid_by: paidBy.trim() || null,
+          items,
+          discount_points: discountPoints || 0,
+          aura_discount_points: auraDiscount || 0,
+          coupons: Object.entries(couponUses)
+            .map(([couponId, qty]) => ({ coupon_type_id: couponId, qty: Number(qty) || 0 }))
+            .filter((c) => c.qty > 0),
+          payments: payers.map((payer) => ({
+            student_id: payer.student.id,
+            student_name: payer.student.name,
+            amount_points: Number(payer.amount) || 0,
+          })),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMsg(data?.error || "Payment failed");
+        return;
+      }
 
-    setSelectedItems({});
-    setPayStep(false);
-    setPaidBy("");
-    setPayers([]);
-    setDiscountApplied(false);
-    setDiscountInput("");
-    setDiscountAuthorized(false);
-    setAdminPin("");
-    setPayerQuery("");
-    setPayerResults([]);
+      setSelectedItems({});
+      setPayStep(false);
+      setPaidBy("");
+      setPayers([]);
+      setDiscountApplied(false);
+      setDiscountInput("");
+      setDiscountAuthorized(false);
+      setAdminPin("");
+      setPayerQuery("");
+      setPayerResults([]);
 
-    const resLog = await fetch("/api/camp/orders/list", { cache: "no-store" });
-    const logData = await resLog.json().catch(() => ({}));
-    if (resLog.ok) setOrders(logData.orders ?? []);
+      const resLog = await fetch("/api/camp/orders/list", { cache: "no-store" });
+      const logData = await resLog.json().catch(() => ({}));
+      if (resLog.ok) setOrders(logData.orders ?? []);
+      if (data?.duplicate) setMsg("Duplicate tap ignored: existing payment reused.");
+    } finally {
+      setIsSubmittingPayment(false);
+    }
+  }
+
+  if (!hubGateChecked) {
+    return (
+      <main style={{ padding: 18 }}>
+        <div style={{ fontSize: 18, opacity: 0.75 }}>Redirecting to Camp Hub…</div>
+      </main>
+    );
   }
 
   if (!canAccess) {
@@ -454,29 +498,6 @@ export default function CampRegisterPage() {
     );
   }
 
-  if (!pinOk) {
-    return (
-      <main style={{ padding: 18, maxWidth: 520, margin: "0 auto" }}>
-        <div style={{ fontSize: 26, fontWeight: 900 }}>Camp Register</div>
-        <div style={{ marginTop: 12 }}>
-          <input
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") verifyPin();
-            }}
-            placeholder="Enter PIN or scan NFC"
-            style={pinInput()}
-          />
-          {msg ? <div style={{ color: "crimson", marginTop: 6 }}>{msg}</div> : null}
-          <button onClick={verifyPin} style={btnPrimary()}>
-            Unlock
-          </button>
-        </div>
-      </main>
-    );
-  }
-
   return (
     <main style={{ padding: 18, maxWidth: "none", width: "100%" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
@@ -484,7 +505,6 @@ export default function CampRegisterPage() {
         <div style={{ display: "flex", gap: 8 }}>
           <a href="/camp/menu" style={btnGhost()}>Menu Display</a>
           <a href="/camp/menu-editor" style={btnGhost()}>Menu Editor</a>
-          <a href="/spin" style={btnGhost()}>Prize Wheel</a>
         </div>
       </div>
       {msg ? <div style={{ color: "crimson", marginTop: 6 }}>{msg}</div> : null}
@@ -572,46 +592,51 @@ export default function CampRegisterPage() {
               </div>
             ) : null}
           </div>
-          <div style={{ display: "grid", gap: 8 }}>
+          <div style={{ display: "grid", gap: 10 }}>
             {orders.map((order: any) => (
-              <div key={order.id} style={receiptRow()}>
-                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <div style={avatarBadge(order?.student?.avatar_bg)}>
-                    {order?.student?.avatar_storage_path ? (
-                      <img
-                        src={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/avatars/${order.student.avatar_storage_path}`}
-                        alt={order?.student?.name ?? "Student"}
-                        style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                      />
-                    ) : (
-                      <span style={{ fontWeight: 900 }}>{(order?.student?.name ?? order?.student_name ?? "?").slice(0, 1)}</span>
-                    )}
-                  </div>
-                  <div style={{ display: "grid", gap: 4 }}>
-                    <div style={{ fontWeight: 900 }}>{order?.student?.name ?? order?.student_name ?? "Walk-in"}</div>
-                    <div style={{ opacity: 0.7, fontSize: 12 }}>
-                      {formatLocalTime(order?.paid_at)} • Paid {order.total_points} pts
+              <button
+                key={order.id}
+                type="button"
+                style={orderSummaryCard()}
+                onClick={() => {
+                  setActiveOrder(order);
+                  setRefundMsg("");
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <div style={avatarBadge(order?.student?.avatar_bg)}>
+                      {order?.student?.avatar_storage_path ? (
+                        <img
+                          src={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/avatars/${order.student.avatar_storage_path}`}
+                          alt={order?.student?.name ?? "Student"}
+                          style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                        />
+                      ) : (
+                        <span style={{ fontWeight: 900 }}>{(order?.student?.name ?? order?.student_name ?? "?").slice(0, 1)}</span>
+                      )}
+                    </div>
+                    <div style={{ display: "grid", gap: 4, textAlign: "left" }}>
+                      <div style={{ fontWeight: 900 }}>{order?.student?.name ?? order?.student_name ?? "Walk-in"}</div>
+                      <div style={{ opacity: 0.75, fontSize: 12 }}>{formatLocalTime(order?.paid_at)}</div>
                     </div>
                   </div>
+                  <div style={orderPointsPill(order?.refund?.refunded_at)}>
+                    {order?.refund?.refunded_at ? "Refunded" : `${order.total_points} pts`}
+                  </div>
                 </div>
-                <div style={{ display: "grid", gap: 6, justifyItems: "end" }}>
-                  <div style={{ fontWeight: 900 }}>Balance: {order.balance_points ?? "-"} pts</div>
+                <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                  <div style={{ fontSize: 12, opacity: 0.8, textAlign: "left" }}>Balance: {order.balance_points ?? "-"} pts</div>
+                  {renderOrderBalanceLine(order) ? (
+                    <div style={{ fontSize: 11, opacity: 0.92, color: "#e2e8f0", textAlign: "left" }}>{renderOrderBalanceLine(order)}</div>
+                  ) : null}
                   {order?.refund?.refunded_at ? (
-                    <div style={{ fontSize: 11, color: "#f97316" }}>
+                    <div style={{ fontSize: 11, color: "#f97316", textAlign: "left" }}>
                       Refunded {order?.refund?.refunded_points ?? 0} pts
                     </div>
                   ) : null}
-                  <button
-                    onClick={() => {
-                      setActiveOrder(order);
-                      setRefundMsg("");
-                    }}
-                    style={btnGhostSmall()}
-                  >
-                    Details
-                  </button>
                 </div>
-              </div>
+              </button>
             ))}
             {!orders.length ? <div style={{ opacity: 0.6 }}>No orders yet.</div> : null}
           </div>
@@ -620,12 +645,26 @@ export default function CampRegisterPage() {
         <div style={centerColumn()}>
           <section style={card()}>
             <div style={{ fontWeight: 900, marginBottom: 8 }}>Select Items</div>
+            {menuSections.length ? (
+              <div style={folderTabsWrap()}>
+                {menuSections.map((section) => (
+                  <button
+                    key={section.id}
+                    type="button"
+                    onClick={() => setActiveMenuId(section.id)}
+                    style={folderTab(section.id === (activeMenuSection?.id ?? ""))}
+                  >
+                    {section.name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <div style={{ display: "grid", gap: 16 }}>
-              {menuSections.map((section) => (
-                <div key={section.id} style={categoryCard()}>
-                  <div style={{ fontWeight: 900, fontSize: 18 }}>{section.name}</div>
+              {activeMenuSection ? (
+                <div key={activeMenuSection.id} style={categoryCard()}>
+                  <div style={{ fontWeight: 900, fontSize: 18 }}>{activeMenuSection.name}</div>
                   <div style={itemsGrid()}>
-                    {section.items.map((item) => {
+                    {activeMenuSection.items.map((item) => {
                       const selected = !!selectedItems[item.id];
                       return (
                         <button
@@ -665,7 +704,7 @@ export default function CampRegisterPage() {
                     })}
                   </div>
                 </div>
-              ))}
+              ) : null}
               {!flatItems.length ? <div style={{ opacity: 0.7 }}>No items yet.</div> : null}
             </div>
             <div style={{ marginTop: 12, fontWeight: 900 }}>Total: {totalPoints} pts</div>
@@ -812,18 +851,18 @@ export default function CampRegisterPage() {
           <div style={payCard()}>
             <div style={{ fontWeight: 900, fontSize: 18 }}>Payable: {payablePoints} pts</div>
             <button
+              type="button"
               onClick={() => {
-                if (!cartItems.length) {
-                  setMsg("Select at least one item.");
-                  return;
-                }
                 setPayStep(true);
               }}
-              style={payBtn()}
+              style={payBtn(!canStartPayment)}
+              disabled={!canStartPayment}
             >
               PAY
             </button>
-            <div style={{ fontSize: 12, opacity: 0.7 }}>Split payments & discounts open in overlay.</div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              {canStartPayment ? "Split payments & discounts open in overlay." : "Add items to cart to continue."}
+            </div>
           </div>
         </aside>
       </div>
@@ -837,7 +876,7 @@ export default function CampRegisterPage() {
           setDiscountInput("");
         }}>
           <div
-            style={overlayCard()}
+            style={overlayCard("payment")}
             onClick={(e) => {
               e.stopPropagation();
             }}
@@ -877,7 +916,7 @@ export default function CampRegisterPage() {
                     })();
                   }}
                   placeholder="Type name or scan NFC"
-                  style={input()}
+                  style={bigInput()}
                 />
                 {payerResults.length ? (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -899,7 +938,9 @@ export default function CampRegisterPage() {
                 </div>
                 {payers.length ? (
                   <div style={{ display: "grid", gap: 8 }}>
-                    {payers.map((payer) => (
+                    {payers.map((payer) => {
+                      const payerAmount = Math.max(0, Number(payer.amount) || 0);
+                      return (
                       <div key={payer.student.id} style={payerCard()}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
                           <div style={{ fontWeight: 900 }}>{payer.student.name}</div>
@@ -914,16 +955,25 @@ export default function CampRegisterPage() {
                           Amount (pts)
                           <input
                             value={payer.amount}
-                            onChange={(e) =>
-                              setPayers((prev) =>
-                                prev.map((p) => (p.student.id === payer.student.id ? { ...p, amount: e.target.value } : p))
-                              )
-                            }
-                            style={input()}
+                            onChange={(e) => setPayerAmount(payer.student.id, e.target.value)}
+                            style={bigInput()}
                           />
                         </label>
+                        <input
+                          type="range"
+                          min={0}
+                          max={Math.max(0, payablePoints)}
+                          step={1}
+                          value={payerAmount}
+                          onChange={(e) => setPayerAmount(payer.student.id, e.target.value)}
+                          style={payerSlider()}
+                        />
+                        <div style={{ display: "flex", justifyContent: "space-between", opacity: 0.7, fontSize: 12 }}>
+                          <span>0</span>
+                          <span>{payablePoints} pts</span>
+                        </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                 ) : (
                   <div style={{ opacity: 0.6 }}>Add at least one payer.</div>
@@ -956,7 +1006,7 @@ export default function CampRegisterPage() {
                             setCouponUses((prev) => ({ ...prev, [coupon.id]: next }));
                           }}
                           placeholder="Qty"
-                          style={input()}
+                          style={bigInput()}
                         />
                       </label>
                     ))}
@@ -977,7 +1027,7 @@ export default function CampRegisterPage() {
                 <div style={{ fontWeight: 900, marginBottom: 6 }}>Discount</div>
                 <label style={label()}>
                   Discount points
-                  <input value={discountInput} onChange={(e) => setDiscountInput(e.target.value)} style={input()} />
+                  <input value={discountInput} onChange={(e) => setDiscountInput(e.target.value)} style={bigInput()} />
                 </label>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
                   <button
@@ -1005,7 +1055,7 @@ export default function CampRegisterPage() {
                         onKeyDown={(e) => {
                           if (e.key === "Enter") unlockDiscount();
                         }}
-                        style={input()}
+                        style={bigInput()}
                       />
                     </label>
                     <button onClick={unlockDiscount} style={btnPrimary()}>
@@ -1017,13 +1067,13 @@ export default function CampRegisterPage() {
 
               <label style={label()}>
                 Paid by (optional)
-                <input value={paidBy} onChange={(e) => setPaidBy(e.target.value)} style={input()} />
+                <input value={paidBy} onChange={(e) => setPaidBy(e.target.value)} style={bigInput()} />
               </label>
 
               {msg ? <div style={{ color: "crimson" }}>{msg}</div> : null}
 
-              <button onClick={submitPayment} style={btnPrimary()}>
-                Submit payment
+              <button onClick={submitPayment} style={btnPrimary()} disabled={isSubmittingPayment}>
+                {isSubmittingPayment ? "Submitting..." : "Submit payment"}
               </button>
             </div>
           </div>
@@ -1039,7 +1089,7 @@ export default function CampRegisterPage() {
           }}
         >
           <div
-            style={overlayCard()}
+            style={overlayCard("detail")}
             onClick={(e) => {
               e.stopPropagation();
             }}
@@ -1082,6 +1132,12 @@ export default function CampRegisterPage() {
                   {(Array.isArray(activeOrder?.payments) ? activeOrder.payments : []).map((p: any, idx: number) => (
                     <div key={`${p?.student_id ?? p?.student_name ?? "payer"}-${idx}`} style={{ fontSize: 13 }}>
                       {p?.student_name ?? "Payer"} • {p?.amount_points ?? 0} pts
+                      {Number.isFinite(Number(p?.balance_before)) && Number.isFinite(Number(p?.balance_after))
+                        ? ` • ${Number(p.balance_before).toLocaleString()} -> ${Number(p.balance_after).toLocaleString()}`
+                        : ""}
+                      {Number.isFinite(Number(p?.refund_balance_before)) && Number.isFinite(Number(p?.refund_balance_after))
+                        ? ` • refund ${Number(p.refund_balance_before).toLocaleString()} -> ${Number(p.refund_balance_after).toLocaleString()}`
+                        : ""}
                     </div>
                   ))}
                 </div>
@@ -1146,8 +1202,9 @@ export default function CampRegisterPage() {
 function layoutGrid(): React.CSSProperties {
   return {
     display: "grid",
-    gridTemplateColumns: "minmax(220px, 1.1fr) minmax(0, 2.6fr) minmax(0, 1fr)",
-    gap: 16,
+    gridTemplateColumns: "360px minmax(0, 1fr) 320px",
+    columnGap: 18,
+    rowGap: 16,
     alignItems: "start",
     marginTop: 16,
     justifyItems: "stretch",
@@ -1158,8 +1215,8 @@ function centerColumn(): React.CSSProperties {
   return {
     width: "100%",
     justifySelf: "stretch",
-    padding: "0 0 0 0",
-    marginLeft: -80,
+    minWidth: 0,
+    padding: 0,
   };
 }
 
@@ -1317,8 +1374,9 @@ function logRail(): React.CSSProperties {
     border: "1px solid rgba(255,255,255,0.1)",
     background: "rgba(6,8,12,0.75)",
     justifySelf: "start",
-    marginLeft: 20,
-    minWidth: 360,
+    width: "100%",
+    minWidth: 0,
+    color: "white",
   };
 }
 
@@ -1408,9 +1466,9 @@ function overlayBackdrop(): React.CSSProperties {
   };
 }
 
-function overlayCard(): React.CSSProperties {
+function overlayCard(kind: "payment" | "detail" = "detail"): React.CSSProperties {
   return {
-    width: "min(920px, 96vw)",
+    width: kind === "payment" ? "min(740px, 94vw)" : "min(920px, 96vw)",
     maxHeight: "90vh",
     overflow: "auto",
     borderRadius: 20,
@@ -1431,15 +1489,19 @@ function overlayHeader(): React.CSSProperties {
   };
 }
 
-function payBtn(): React.CSSProperties {
+function payBtn(disabled = false): React.CSSProperties {
   return {
     padding: "14px 18px",
     borderRadius: 14,
-    border: "1px solid rgba(34,197,94,0.8)",
-    background: "linear-gradient(135deg, rgba(34,197,94,0.95), rgba(16,185,129,0.6))",
+    border: disabled ? "1px solid rgba(148,163,184,0.35)" : "1px solid rgba(34,197,94,0.8)",
+    background: disabled
+      ? "linear-gradient(135deg, rgba(51,65,85,0.7), rgba(30,41,59,0.6))"
+      : "linear-gradient(135deg, rgba(34,197,94,0.95), rgba(16,185,129,0.6))",
     color: "white",
     fontWeight: 900,
     fontSize: 18,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.75 : 1,
   };
 }
 
@@ -1454,6 +1516,18 @@ function input(): React.CSSProperties {
     border: "1px solid rgba(255,255,255,0.12)",
     background: "rgba(8,10,15,0.7)",
     color: "white",
+  };
+}
+
+function bigInput(): React.CSSProperties {
+  return {
+    padding: "14px 16px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: "rgba(8,10,15,0.85)",
+    color: "white",
+    fontSize: 18,
+    fontWeight: 700,
   };
 }
 
@@ -1579,7 +1653,7 @@ function remainingCard(remaining: number): React.CSSProperties {
 
 function remainingBar(): React.CSSProperties {
   return {
-    height: 10,
+    height: 16,
     borderRadius: 999,
     background: "rgba(255,255,255,0.12)",
     overflow: "hidden",
@@ -1613,5 +1687,82 @@ function discountBtn(authorized: boolean): React.CSSProperties {
     color: "white",
     fontWeight: 800,
     opacity: authorized ? 1 : 0.4,
+  };
+}
+
+function renderOrderBalanceLine(order: any): string {
+  const payments = Array.isArray(order?.payments) ? order.payments : [];
+  const first = payments.find((p: any) => Number.isFinite(Number(p?.balance_before)) && Number.isFinite(Number(p?.balance_after)));
+  if (!first) return "";
+  const before = Number(first.balance_before);
+  const after = Number(first.balance_after);
+  const delta = after - before;
+  const deltaLabel = `${delta >= 0 ? "+" : ""}${delta.toLocaleString()} pts`;
+  if (order?.refund?.refunded_at) {
+    const rb = Number(first?.refund_balance_before);
+    const ra = Number(first?.refund_balance_after);
+    if (Number.isFinite(rb) && Number.isFinite(ra)) {
+      return `Paid ${before.toLocaleString()} -> ${after.toLocaleString()} (${deltaLabel}) • Refunded ${rb.toLocaleString()} -> ${ra.toLocaleString()}`;
+    }
+  }
+  return `${before.toLocaleString()} -> ${after.toLocaleString()} (${deltaLabel})`;
+}
+
+function folderTabsWrap(): React.CSSProperties {
+  return {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    alignItems: "end",
+    marginBottom: 10,
+  };
+}
+
+function folderTab(active: boolean): React.CSSProperties {
+  return {
+    padding: "10px 14px",
+    borderRadius: "14px 14px 0 0",
+    border: active ? "1px solid rgba(56,189,248,0.75)" : "1px solid rgba(255,255,255,0.16)",
+    borderBottom: active ? "1px solid rgba(8,10,15,0.9)" : "1px solid rgba(255,255,255,0.12)",
+    background: active
+      ? "linear-gradient(180deg, rgba(14,165,233,0.28), rgba(8,10,15,0.9))"
+      : "linear-gradient(180deg, rgba(255,255,255,0.12), rgba(8,10,15,0.75))",
+    color: "white",
+    fontWeight: 800,
+  };
+}
+
+function orderSummaryCard(): React.CSSProperties {
+  return {
+    borderRadius: 14,
+    padding: 12,
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "linear-gradient(135deg, rgba(15,23,42,0.72), rgba(3,7,18,0.82))",
+    display: "grid",
+    width: "100%",
+    textAlign: "left",
+    color: "white",
+    appearance: "none",
+    boxShadow: "0 12px 24px rgba(0,0,0,0.2)",
+  };
+}
+
+function orderPointsPill(refunded: boolean): React.CSSProperties {
+  return {
+    borderRadius: 999,
+    padding: "6px 10px",
+    fontSize: 12,
+    fontWeight: 900,
+    border: refunded ? "1px solid rgba(249,115,22,0.6)" : "1px solid rgba(34,197,94,0.45)",
+    background: refunded ? "rgba(249,115,22,0.18)" : "rgba(34,197,94,0.16)",
+  };
+}
+
+function payerSlider(): React.CSSProperties {
+  return {
+    width: "100%",
+    accentColor: "#22c55e",
+    height: 20,
+    cursor: "pointer",
   };
 }

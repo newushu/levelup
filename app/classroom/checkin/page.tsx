@@ -273,17 +273,51 @@ export default function ClassroomCheckinPage() {
   const redeemFetchInFlightRef = useRef<Set<string>>(new Set());
   const emotePopupTimerRef = useRef<number | null>(null);
   const recipientTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const overlayAutoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const overlayLastInteractionRef = useRef<number>(0);
+  const overlayOpenRef = useRef<boolean>(false);
+  const wakeLockRef = useRef<any>(null);
+  const [fullscreenOn, setFullscreenOn] = useState(false);
+  const [wakeLockOn, setWakeLockOn] = useState(false);
 
   useEffect(() => {
     redeemByStudentRef.current = redeemByStudent;
   }, [redeemByStudent]);
 
   useEffect(() => {
+    overlayOpenRef.current = overlayOpen;
+    if (!overlayOpen) clearOverlayAutoClose();
+  }, [overlayOpen]);
+
+  useEffect(() => {
     return () => {
       if (emotePopupTimerRef.current) window.clearTimeout(emotePopupTimerRef.current);
       if (recipientTimerRef.current) clearTimeout(recipientTimerRef.current);
+      if (overlayAutoCloseTimerRef.current) clearTimeout(overlayAutoCloseTimerRef.current);
+      if (wakeLockRef.current?.release) wakeLockRef.current.release().catch(() => undefined);
     };
   }, []);
+
+  useEffect(() => {
+    const onFs = () => setFullscreenOn(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFs);
+    onFs();
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
+  useEffect(() => {
+    if (!wakeLockOn) return;
+    const onVisibility = async () => {
+      if (document.visibilityState !== "visible") return;
+      try {
+        if (wakeLockRef.current?.release) wakeLockRef.current = await (navigator as any).wakeLock?.request?.("screen");
+      } catch {
+        setWakeLockOn(false);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [wakeLockOn]);
 
   useEffect(() => {
     if (!sendOpen) {
@@ -345,8 +379,8 @@ export default function ClassroomCheckinPage() {
       const logo = await safeJson(logoRes);
       const role = String(me.json?.role ?? "student");
       setViewerRole(role);
-      if (!["admin", "coach", "classroom"].includes(role)) {
-        setBlockedMsg("Classroom check-in is admin, coach, or classroom only.");
+      if (!["admin", "coach", "classroom", "checkin"].includes(role)) {
+        setBlockedMsg("Classroom check-in is admin, coach, classroom, or check-in role only.");
       }
       if (logo.ok && logo.json?.logo_url) setLogoUrl(String(logo.json.logo_url));
     })();
@@ -510,6 +544,60 @@ export default function ClassroomCheckinPage() {
     return () => window.clearInterval(timer);
   }, []);
 
+  function clearOverlayAutoClose() {
+    if (overlayAutoCloseTimerRef.current) clearTimeout(overlayAutoCloseTimerRef.current);
+    overlayAutoCloseTimerRef.current = null;
+  }
+
+  function markOverlayInteraction() {
+    overlayLastInteractionRef.current = Date.now();
+    clearOverlayAutoClose();
+  }
+
+  function scheduleOverlayAutoClose() {
+    const baseline = overlayLastInteractionRef.current;
+    clearOverlayAutoClose();
+    overlayAutoCloseTimerRef.current = setTimeout(() => {
+      if (!overlayOpenRef.current) return;
+      if (overlayLastInteractionRef.current !== baseline) return;
+      setOverlayOpen(false);
+    }, 2000);
+  }
+
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch {
+      setMsg("Fullscreen is not available on this device/browser.");
+    }
+  }
+
+  async function toggleWakeLock() {
+    try {
+      if (wakeLockOn) {
+        if (wakeLockRef.current?.release) await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+        setWakeLockOn(false);
+        return;
+      }
+      const lock = await (navigator as any).wakeLock?.request?.("screen");
+      if (!lock) {
+        setWakeLockOn(false);
+        setMsg("Keep-awake is not available on this device/browser.");
+        return;
+      }
+      wakeLockRef.current = lock;
+      setWakeLockOn(true);
+    } catch {
+      setWakeLockOn(false);
+      setMsg("Keep-awake is not available on this device/browser.");
+    }
+  }
+
   async function checkIn(student: { id: string; name: string }) {
     if (!instanceId) return setMsg("Select a class first.");
     const res = await fetch("/api/checkin", {
@@ -523,6 +611,7 @@ export default function ClassroomCheckinPage() {
     setMsg("");
     setQuery("");
     setSearchRows([]);
+    scheduleOverlayAutoClose();
     if (sj.json?.emote_popup) {
       const popupDuration = Math.max(500, Math.min(20000, Number(sj.json?.emote_popup?.emote?.duration_ms ?? 3000) || 3000));
       setEmotePopup({
@@ -637,6 +726,30 @@ export default function ClassroomCheckinPage() {
   return (
     <main style={{ padding: 14 }}>
       <style>{`
+        .checkin-top-controls {
+          position: fixed;
+          top: 16px;
+          left: 16px;
+          z-index: 260;
+          display: inline-flex;
+          gap: 8px;
+        }
+        .topctl-btn {
+          border-radius: 999px;
+          border: 1px solid rgba(148,163,184,0.4);
+          background: rgba(2,6,23,0.72);
+          color: #e2e8f0;
+          padding: 8px 12px;
+          font-size: 12px;
+          font-weight: 900;
+          letter-spacing: 0.02em;
+          cursor: pointer;
+        }
+        .topctl-btn.active {
+          border-color: rgba(45,212,191,0.65);
+          box-shadow: 0 0 0 1px rgba(45,212,191,0.35) inset;
+          color: #99f6e4;
+        }
         .checkin-shell {
           position: relative;
           overflow: hidden;
@@ -988,6 +1101,14 @@ export default function ClassroomCheckinPage() {
           .date-nav-label { min-width: 220px; font-size: clamp(18px, 5vw, 28px); }
         }
       `}</style>
+      <div className="checkin-top-controls">
+        <button type="button" className={`topctl-btn ${fullscreenOn ? "active" : ""}`} onClick={toggleFullscreen}>
+          {fullscreenOn ? "Exit Fullscreen" : "Fullscreen"}
+        </button>
+        <button type="button" className={`topctl-btn ${wakeLockOn ? "active" : ""}`} onClick={toggleWakeLock}>
+          {wakeLockOn ? "Keep Awake On" : "Keep Awake"}
+        </button>
+      </div>
       <div className="checkin-shell">
         <div className="station-bg" aria-hidden>
           <img src="https://newushu.com/uploads/1/1/1/3/111378341/caal-patriots-final-edit-7_orig.gif" alt="" />
@@ -1053,8 +1174,23 @@ export default function ClassroomCheckinPage() {
         </section>
       </div>
       {overlayOpen && activeCard ? (
-        <div className="overlay-wrap" onClick={() => setOverlayOpen(false)}>
-          <div className="overlay-panel gentle-fade" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="overlay-wrap"
+          onClick={() => {
+            clearOverlayAutoClose();
+            setOverlayOpen(false);
+          }}
+        >
+          <div
+            className="overlay-panel gentle-fade"
+            onClick={(e) => {
+              e.stopPropagation();
+              markOverlayInteraction();
+            }}
+            onMouseMove={markOverlayInteraction}
+            onTouchStart={markOverlayInteraction}
+            onKeyDown={markOverlayInteraction}
+          >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
               <div style={{ display: "grid", gap: 2 }}>
                 <div style={{ fontSize: 26, fontWeight: 1000, color: "#0f172a" }}>{activeCard.name}</div>
@@ -1108,7 +1244,10 @@ export default function ClassroomCheckinPage() {
                     className="input-box"
                     placeholder="Type student name..."
                     value={query}
-                    onChange={(e) => setQuery(e.target.value)}
+                    onChange={(e) => {
+                      markOverlayInteraction();
+                      setQuery(e.target.value);
+                    }}
                   />
                   <div style={{ fontSize: 12, opacity: 0.72, color: "#0f172a" }}>{searching ? "Searching..." : `${searchRows.length} matches`}</div>
                   <div className="search-list">

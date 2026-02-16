@@ -7,13 +7,30 @@ export async function GET() {
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 403 });
 
   const admin = supabaseAdmin();
-  const { data, error } = await admin
+  let { data, error } = await admin
     .from("avatars")
     .select(
-      "id,name,storage_path,enabled,is_secondary,unlock_level,unlock_points,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,mvp_bonus_pct,zoom_pct,competition_only,competition_discount_pct,created_at,updated_at"
+      "id,name,storage_path,enabled,is_secondary,unlock_level,unlock_points,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,mvp_bonus_pct,zoom_pct,competition_only,competition_discount_pct,limited_event_only,limited_event_name,limited_event_description,created_at,updated_at"
     )
     .order("unlock_level", { ascending: true })
     .order("name", { ascending: true });
+
+  if (error && /limited_event_/i.test(String(error.message ?? ""))) {
+    const fallback = await admin
+      .from("avatars")
+      .select(
+        "id,name,storage_path,enabled,is_secondary,unlock_level,unlock_points,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,mvp_bonus_pct,zoom_pct,competition_only,competition_discount_pct,created_at,updated_at"
+      )
+      .order("unlock_level", { ascending: true })
+      .order("name", { ascending: true });
+    data = (fallback.data ?? []).map((row: any) => ({
+      ...row,
+      limited_event_only: false,
+      limited_event_name: "",
+      limited_event_description: "",
+    }));
+    error = fallback.error as any;
+  }
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, avatars: data ?? [] });
@@ -41,6 +58,9 @@ export async function POST(req: Request) {
   const zoom_pct = Math.max(50, Math.min(200, Math.floor(Number(body?.zoom_pct ?? 100))));
   const competition_only = body?.competition_only === true;
   const competition_discount_pct = Math.max(0, Math.min(100, Math.floor(Number(body?.competition_discount_pct ?? 0))));
+  const limited_event_only = body?.limited_event_only === true;
+  const limited_event_name = String(body?.limited_event_name ?? "").trim();
+  const limited_event_description = String(body?.limited_event_description ?? "").trim();
 
   if (!name) return NextResponse.json({ ok: false, error: "Name is required" }, { status: 400 });
   if (!storage_path) return NextResponse.json({ ok: false, error: "Storage path is required" }, { status: 400 });
@@ -65,29 +85,57 @@ export async function POST(req: Request) {
     zoom_pct,
     competition_only,
     competition_discount_pct,
+    limited_event_only,
+    limited_event_name,
+    limited_event_description,
   };
 
   const admin = supabaseAdmin();
+  const selectWithLimited =
+    "id,name,storage_path,enabled,is_secondary,unlock_level,unlock_points,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,mvp_bonus_pct,zoom_pct,competition_only,competition_discount_pct,limited_event_only,limited_event_name,limited_event_description,created_at,updated_at";
+  const selectLegacy =
+    "id,name,storage_path,enabled,is_secondary,unlock_level,unlock_points,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,mvp_bonus_pct,zoom_pct,competition_only,competition_discount_pct,created_at,updated_at";
+
   if (id) {
-    const { data, error } = await admin
+    let data: any = null;
+    let error: any = null;
+    ({ data, error } = await admin
       .from("avatars")
       .upsert({ id, ...payload }, { onConflict: "id" })
-      .select(
-        "id,name,storage_path,enabled,is_secondary,unlock_level,unlock_points,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,mvp_bonus_pct,zoom_pct,competition_only,competition_discount_pct,created_at,updated_at"
-      )
-      .single();
+      .select(selectWithLimited)
+      .single());
+    if (error && /limited_event_/i.test(String(error.message ?? ""))) {
+      const { limited_event_only: _a, limited_event_name: _b, limited_event_description: _c, ...legacyPayload } = payload;
+      const fallback = await admin
+        .from("avatars")
+        .upsert({ id, ...legacyPayload }, { onConflict: "id" })
+        .select(selectLegacy)
+        .single();
+      data = fallback.data ? { ...fallback.data, limited_event_only: false, limited_event_name: "", limited_event_description: "" } : fallback.data;
+      error = fallback.error as any;
+    }
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, avatar: data });
   }
 
   const newId = crypto.randomUUID();
-  const { data, error } = await admin
+  let data: any = null;
+  let error: any = null;
+  ({ data, error } = await admin
     .from("avatars")
     .insert({ id: newId, ...payload })
-    .select(
-      "id,name,storage_path,enabled,is_secondary,unlock_level,unlock_points,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,mvp_bonus_pct,zoom_pct,competition_only,competition_discount_pct,created_at,updated_at"
-    )
-    .single();
+    .select(selectWithLimited)
+    .single());
+  if (error && /limited_event_/i.test(String(error.message ?? ""))) {
+    const { limited_event_only: _a, limited_event_name: _b, limited_event_description: _c, ...legacyPayload } = payload;
+    const fallback = await admin
+      .from("avatars")
+      .insert({ id: newId, ...legacyPayload })
+      .select(selectLegacy)
+      .single();
+    data = fallback.data ? { ...fallback.data, limited_event_only: false, limited_event_name: "", limited_event_description: "" } : fallback.data;
+    error = fallback.error as any;
+  }
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, avatar: data });
 }

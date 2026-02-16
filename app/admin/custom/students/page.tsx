@@ -16,6 +16,20 @@ type StudentRow = {
   enrollment_info?: any;
   is_competition_team?: boolean | null;
 };
+type UnlockCriteriaDef = {
+  key: string;
+  label: string;
+  description?: string | null;
+  enabled?: boolean;
+};
+type UnlockRequirement = {
+  id?: string;
+  item_type: string;
+  item_key: string;
+  criteria_key: string;
+};
+type AvatarOption = { id: string; name: string; enabled?: boolean | null };
+type EffectOption = { key: string; name: string; enabled?: boolean | null };
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -46,17 +60,49 @@ export default function StudentsAdminPage() {
     password: "",
     role: "classroom",
   });
+  const [criteria, setCriteria] = useState<UnlockCriteriaDef[]>([]);
+  const [requirements, setRequirements] = useState<UnlockRequirement[]>([]);
+  const [avatarOptions, setAvatarOptions] = useState<AvatarOption[]>([]);
+  const [effectOptions, setEffectOptions] = useState<EffectOption[]>([]);
+  const [criteriaStudentId, setCriteriaStudentId] = useState("");
+  const [studentCriteriaMap, setStudentCriteriaMap] = useState<Record<string, { fulfilled: boolean; note?: string }>>({});
+  const [newCriteria, setNewCriteria] = useState({ key: "", label: "", description: "" });
+  const [assignForm, setAssignForm] = useState({ item_type: "avatar", item_key: "", criteria_key: "" });
 
   async function loadStudents() {
     const res = await fetch("/api/students/list", { cache: "no-store" });
     const sj = await safeJson(res);
     if (!sj.ok) return setMsg(sj.json?.error || "Failed to load students");
     setRows((sj.json?.students ?? []) as StudentRow[]);
+    const all = (sj.json?.students ?? []) as StudentRow[];
+    if (!criteriaStudentId && all[0]?.id) setCriteriaStudentId(String(all[0].id));
+  }
+
+  async function loadUnlockCriteria(studentId?: string) {
+    const url = studentId ? `/api/admin/unlock-criteria?student_id=${encodeURIComponent(studentId)}` : "/api/admin/unlock-criteria";
+    const res = await fetch(url, { cache: "no-store" });
+    const sj = await safeJson(res);
+    if (!sj.ok) return setMsg(sj.json?.error || "Failed to load unlock criteria");
+    setCriteria((sj.json?.criteria ?? []) as UnlockCriteriaDef[]);
+    setRequirements((sj.json?.requirements ?? []) as UnlockRequirement[]);
+    setAvatarOptions((sj.json?.avatars ?? []) as AvatarOption[]);
+    setEffectOptions((sj.json?.effects ?? []) as EffectOption[]);
+    const map: Record<string, { fulfilled: boolean; note?: string }> = {};
+    ((sj.json?.student_criteria ?? []) as Array<{ criteria_key: string; fulfilled?: boolean; note?: string }>).forEach((row) => {
+      map[String(row.criteria_key)] = { fulfilled: row.fulfilled !== false, note: row.note ?? "" };
+    });
+    setStudentCriteriaMap(map);
   }
 
   useEffect(() => {
     loadStudents();
+    loadUnlockCriteria();
   }, []);
+
+  useEffect(() => {
+    if (!criteriaStudentId) return;
+    loadUnlockCriteria(criteriaStudentId);
+  }, [criteriaStudentId]);
 
   async function createStudent() {
     setMsg("");
@@ -127,6 +173,60 @@ export default function StudentsAdminPage() {
     setRows((prev) => prev.map((row) => (row.id === id ? { ...row, is_competition_team: value } : row)));
   }
 
+  async function upsertCriteria() {
+    if (!newCriteria.key.trim() || !newCriteria.label.trim()) return;
+    const res = await fetch("/api/admin/unlock-criteria", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "upsert_criteria",
+        key: newCriteria.key.trim().toLowerCase(),
+        label: newCriteria.label.trim(),
+        description: newCriteria.description.trim(),
+        enabled: true,
+      }),
+    });
+    const sj = await safeJson(res);
+    if (!sj.ok) return setMsg(sj.json?.error || "Failed to save criteria");
+    setNewCriteria({ key: "", label: "", description: "" });
+    await loadUnlockCriteria(criteriaStudentId || undefined);
+  }
+
+  async function setRequirement(required: boolean) {
+    if (!assignForm.criteria_key || !assignForm.item_key) return;
+    const res = await fetch("/api/admin/unlock-criteria", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "set_requirement",
+        item_type: assignForm.item_type,
+        item_key: assignForm.item_key,
+        criteria_key: assignForm.criteria_key,
+        required,
+      }),
+    });
+    const sj = await safeJson(res);
+    if (!sj.ok) return setMsg(sj.json?.error || "Failed to update requirement");
+    await loadUnlockCriteria(criteriaStudentId || undefined);
+  }
+
+  async function toggleStudentCriteria(criteriaKey: string, fulfilled: boolean) {
+    if (!criteriaStudentId) return;
+    const res = await fetch("/api/admin/unlock-criteria", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "set_student_criteria",
+        student_id: criteriaStudentId,
+        criteria_key: criteriaKey,
+        fulfilled,
+      }),
+    });
+    const sj = await safeJson(res);
+    if (!sj.ok) return setMsg(sj.json?.error || "Failed to update student criteria");
+    await loadUnlockCriteria(criteriaStudentId);
+  }
+
   return (
     <main style={{ display: "grid", gap: 16 }}>
       <Link href="/admin/custom" style={backLink()}>← Back to Admin Workspace</Link>
@@ -191,6 +291,100 @@ export default function StudentsAdminPage() {
             style={textarea()}
           />
           <button onClick={createStudent} style={btn()}>Create Student</button>
+        </div>
+      </section>
+
+      <section style={card()}>
+        <div style={{ fontWeight: 1000 }}>Avatar Unlock Criteria</div>
+        <div style={{ opacity: 0.72, fontSize: 12 }}>
+          Create yes/no criteria, attach them to avatars/effects, and mark fulfillment per student.
+        </div>
+
+        <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+          <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+            <input
+              value={newCriteria.key}
+              onChange={(e) => setNewCriteria((p) => ({ ...p, key: e.target.value }))}
+              placeholder="criteria_key (hardworking)"
+              style={input()}
+            />
+            <input
+              value={newCriteria.label}
+              onChange={(e) => setNewCriteria((p) => ({ ...p, label: e.target.value }))}
+              placeholder="Label (Hard Working)"
+              style={input()}
+            />
+            <input
+              value={newCriteria.description}
+              onChange={(e) => setNewCriteria((p) => ({ ...p, description: e.target.value }))}
+              placeholder="Description"
+              style={input()}
+            />
+            <button onClick={upsertCriteria} style={btn()}>Add Criteria</button>
+          </div>
+
+          <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+            <select
+              value={assignForm.item_type}
+              onChange={(e) => setAssignForm((p) => ({ ...p, item_type: e.target.value, item_key: "" }))}
+              style={input()}
+            >
+              <option value="avatar">Avatar</option>
+              <option value="effect">Avatar Effect</option>
+            </select>
+            <select
+              value={assignForm.item_key}
+              onChange={(e) => setAssignForm((p) => ({ ...p, item_key: e.target.value }))}
+              style={input()}
+            >
+              <option value="">Select item</option>
+              {assignForm.item_type === "avatar"
+                ? avatarOptions.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)
+                : effectOptions.map((a) => <option key={a.key} value={a.key}>{a.name}</option>)}
+            </select>
+            <select
+              value={assignForm.criteria_key}
+              onChange={(e) => setAssignForm((p) => ({ ...p, criteria_key: e.target.value }))}
+              style={input()}
+            >
+              <option value="">Select criteria</option>
+              {criteria.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setRequirement(true)} style={btn()}>Require</button>
+              <button onClick={() => setRequirement(false)} style={btn()}>Remove</button>
+            </div>
+          </div>
+
+          <div style={{ fontSize: 12, opacity: 0.82 }}>
+            Current requirements: {requirements.length ? requirements.map((r) => `${r.item_type}:${r.item_key} -> ${r.criteria_key}`).join(" • ") : "none"}
+          </div>
+
+          <div style={{ display: "grid", gap: 8, gridTemplateColumns: "240px 1fr" }}>
+            <select value={criteriaStudentId} onChange={(e) => setCriteriaStudentId(e.target.value)} style={input()}>
+              <option value="">Select student</option>
+              {rows.map((s) => <option key={s.id} value={s.id}>{s.name ?? `${s.first_name ?? ""} ${s.last_name ?? ""}`}</option>)}
+            </select>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {criteria.map((c) => {
+                const on = studentCriteriaMap[c.key]?.fulfilled === true;
+                return (
+                  <button
+                    key={c.key}
+                    type="button"
+                    onClick={() => toggleStudentCriteria(c.key, !on)}
+                    style={{
+                      ...btn(),
+                      background: on ? "rgba(34,197,94,0.22)" : "rgba(59,130,246,0.2)",
+                      borderColor: on ? "rgba(34,197,94,0.42)" : "rgba(59,130,246,0.35)",
+                    }}
+                  >
+                    {on ? "✓ " : ""}{c.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       </section>
 

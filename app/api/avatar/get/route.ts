@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getStudentCriteriaState, matchItemCriteria } from "@/lib/unlockCriteria";
 
 type LevelRow = { level: number; min_lifetime_points: number };
 
@@ -82,10 +83,23 @@ export async function POST(req: Request) {
   const eligible = enabledAvatars.filter((a: any) => Number(a.unlock_level ?? 1) <= effectiveLevel);
   const fallback = eligible.find((a: any) => !a.is_secondary) ?? eligible[0] ?? enabledAvatars[0] ?? null;
 
+  const criteriaState = await getStudentCriteriaState(admin as any, student_id);
+  const { data: customUnlocks } = await admin
+    .from("student_custom_unlocks")
+    .select("item_type,item_key")
+    .eq("student_id", student_id);
+  const customUnlockSet = new Set((customUnlocks ?? []).map((row: any) => `${String(row.item_type)}:${String(row.item_key)}`));
+
   const selectedId = String(settings?.avatar_id ?? "").trim();
   const selectedRow = selectedId ? enabledAvatars.find((a: any) => String(a.id) === selectedId) : null;
   const selectedUnlock = Number(selectedRow?.unlock_level ?? 1);
-  const selectedValid = !!selectedRow && selectedUnlock <= effectiveLevel;
+  const selectedPoints = Math.max(0, Number(selectedRow?.unlock_points ?? 0));
+  const selectedCustomUnlock = customUnlockSet.has(`avatar:${selectedId}`);
+  const selectedCriteria = matchItemCriteria("avatar", selectedId, criteriaState.fulfilledKeys, criteriaState.requirementMap);
+  const selectedCriteriaOk = selectedCriteria.hasRequirements && selectedCriteria.matched;
+  const selectedValid =
+    !!selectedRow &&
+    (selectedUnlock <= effectiveLevel && selectedPoints <= 0 || selectedCustomUnlock || selectedCriteriaOk);
 
   const { data: borders } = await admin
     .from("ui_corner_borders")
@@ -93,7 +107,12 @@ export async function POST(req: Request) {
   const borderByKey = new Map((borders ?? []).map((b: any) => [String(b.key), b]));
   const selectedBorderKey = String(settings?.corner_border_key ?? "").trim();
   const selectedBorder = selectedBorderKey ? borderByKey.get(selectedBorderKey) : null;
-  const borderUnlocked = selectedBorder ? Number(selectedBorder.unlock_level ?? 1) <= effectiveLevel : false;
+  const borderLevelUnlocked = selectedBorder ? Number(selectedBorder.unlock_level ?? 1) <= effectiveLevel : false;
+  const borderPoints = Math.max(0, Number((selectedBorder as any)?.unlock_points ?? 0));
+  const borderCustomUnlock = customUnlockSet.has(`corner_border:${selectedBorderKey}`);
+  const borderCriteria = matchItemCriteria("corner_border", selectedBorderKey, criteriaState.fulfilledKeys, criteriaState.requirementMap);
+  const borderCriteriaOk = borderCriteria.hasRequirements && borderCriteria.matched;
+  const borderUnlocked = borderLevelUnlocked && borderPoints <= 0 || borderCustomUnlock || borderCriteriaOk;
   const borderEnabled = selectedBorder ? selectedBorder.enabled !== false : false;
   const borderValid = !!selectedBorder && borderUnlocked && borderEnabled;
 

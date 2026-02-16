@@ -187,6 +187,9 @@ export default function CampDisplayPage() {
       .on("postgres_changes", { event: "*", schema: "public", table: "camp_display_screens" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "students" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "ledger" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "camp_orders" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "camp_order_refunds" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "camp_accounts" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "battle_mvp_awards" }, load)
       .subscribe();
 

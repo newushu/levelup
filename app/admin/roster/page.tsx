@@ -258,6 +258,9 @@ export default function AdminRosterPage() {
                 <option value="coach">Coach</option>
                 <option value="student">Student</option>
                 <option value="parent">Parent</option>
+                <option value="classroom">Classroom</option>
+                <option value="checkin">Check-In</option>
+                <option value="camp">Camp</option>
                 <option value="display">Display</option>
                 <option value="skill_pulse">SkillPulse Tablet</option>
               </select>

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { requireAdmin } from "@/lib/authz";
 
-const ALLOWED_ROLES = new Set(["classroom", "display", "skill_pulse", "camp"]);
+const ALLOWED_ROLES = new Set(["classroom", "checkin", "display", "skill_pulse", "camp"]);
 
 export async function POST(req: Request) {
   const gate = await requireAdmin();

@@ -237,6 +237,82 @@ async function loadRecentLedgerByStudent(admin: ReturnType<typeof supabaseAdmin>
       created_at: String((row as any).created_at ?? ""),
     });
   }
+
+  const isNewer = (isoA: string, isoB: string) => {
+    const a = new Date(isoA).getTime();
+    const b = new Date(isoB).getTime();
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+    return a > b;
+  };
+
+  const { data: recentOrders } = await admin
+    .from("camp_orders")
+    .select("id,paid_at,payments")
+    .order("paid_at", { ascending: false })
+    .limit(300);
+
+  const refundOrderIds = Array.from(new Set((recentOrders ?? []).map((o: any) => String(o.id ?? "")).filter(Boolean)));
+  const refundByOrderId = new Map<string, { refunded_at: string }>();
+  if (refundOrderIds.length) {
+    const { data: refunds } = await admin
+      .from("camp_order_refunds")
+      .select("order_id,refunded_at")
+      .in("order_id", refundOrderIds);
+    (refunds ?? []).forEach((r: any) => {
+      const oid = String(r.order_id ?? "");
+      if (!oid) return;
+      refundByOrderId.set(oid, { refunded_at: String(r.refunded_at ?? "") });
+    });
+  }
+
+  const idSet = new Set(ids);
+  for (const order of recentOrders ?? []) {
+    const paidAt = String((order as any).paid_at ?? "");
+    const payments = Array.isArray((order as any).payments) ? (order as any).payments : [];
+    for (const p of payments) {
+      const sid = String((p as any).student_id ?? "");
+      if (!sid || !idSet.has(sid) || !paidAt) continue;
+      const amt = Math.max(0, Number((p as any).amount_points ?? 0));
+      const before = Number((p as any).balance_before ?? NaN);
+      const after = Number((p as any).balance_after ?? NaN);
+      const prev = map.get(sid);
+      if (!prev || isNewer(paidAt, prev.created_at)) {
+        const detail =
+          Number.isFinite(before) && Number.isFinite(after)
+            ? `Camp purchase: ${before.toLocaleString()} -> ${after.toLocaleString()}`
+            : "Camp purchase";
+        map.set(sid, {
+          points: -amt,
+          note: detail,
+          category: "camp_checkout",
+          created_at: paidAt,
+        });
+      }
+    }
+
+    const refund = refundByOrderId.get(String((order as any).id ?? ""));
+    if (!refund?.refunded_at) continue;
+    for (const p of payments) {
+      const sid = String((p as any).student_id ?? "");
+      if (!sid || !idSet.has(sid)) continue;
+      const amt = Math.max(0, Number((p as any).refund_delta_points ?? (p as any).amount_points ?? 0));
+      const before = Number((p as any).refund_balance_before ?? NaN);
+      const after = Number((p as any).refund_balance_after ?? NaN);
+      const prev = map.get(sid);
+      if (!prev || isNewer(refund.refunded_at, prev.created_at)) {
+        const detail =
+          Number.isFinite(before) && Number.isFinite(after)
+            ? `Camp refund: ${before.toLocaleString()} -> ${after.toLocaleString()}`
+            : "Camp refund";
+        map.set(sid, {
+          points: amt,
+          note: detail,
+          category: "camp_refund",
+          created_at: refund.refunded_at,
+        });
+      }
+    }
+  }
   return map;
 }
 

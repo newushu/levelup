@@ -2,8 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/authz";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-const SELECT_WITH_LAYER = "id,key,name,unlock_level,unlock_points,config,render_mode,z_layer,html,css,js,enabled";
-const SELECT_NO_LAYER = "id,key,name,unlock_level,unlock_points,config,render_mode,html,css,js,enabled";
+const SELECT_WITH_LAYER = "id,key,name,unlock_level,unlock_points,config,render_mode,z_layer,html,css,js,enabled,limited_event_only,limited_event_name,limited_event_description";
 
 export async function GET() {
   const gate = await requireAdmin();
@@ -22,13 +21,19 @@ export async function GET() {
     .order("unlock_level", { ascending: true })
     .order("name", { ascending: true });
 
-  if (error && /z_layer/i.test(error.message ?? "")) {
+  if (error && /z_layer|limited_event_/i.test(error.message ?? "")) {
     const fallback = await admin
       .from("avatar_effects")
-      .select(SELECT_NO_LAYER)
+      .select("id,key,name,unlock_level,unlock_points,config,render_mode,html,css,js,enabled")
       .order("unlock_level", { ascending: true })
       .order("name", { ascending: true });
-    data = (fallback.data ?? []).map((row: any) => ({ ...row, z_layer: "behind_avatar" }));
+    data = (fallback.data ?? []).map((row: any) => ({
+      ...row,
+      z_layer: "behind_avatar",
+      limited_event_only: false,
+      limited_event_name: "",
+      limited_event_description: "",
+    }));
     error = fallback.error;
   }
 
@@ -53,6 +58,9 @@ export async function POST(req: Request) {
   const css = typeof body?.css === "string" ? body.css : "";
   const js = typeof body?.js === "string" ? body.js : "";
   const enabled = body?.enabled !== false;
+  const limited_event_only = body?.limited_event_only === true;
+  const limited_event_name = String(body?.limited_event_name ?? "").trim();
+  const limited_event_description = String(body?.limited_event_description ?? "").trim();
 
   if (!key) return NextResponse.json({ ok: false, error: "Key is required" }, { status: 400 });
   if (!name) return NextResponse.json({ ok: false, error: "Name is required" }, { status: 400 });
@@ -69,6 +77,9 @@ export async function POST(req: Request) {
     css,
     js,
     enabled,
+    limited_event_only,
+    limited_event_name,
+    limited_event_description,
   };
 
   const admin = supabaseAdmin();
@@ -84,14 +95,16 @@ export async function POST(req: Request) {
       .upsert({ id, ...payload }, { onConflict: "id" })
       .select(SELECT_WITH_LAYER)
       .single();
-    if (error && /z_layer/i.test(error.message ?? "")) {
-      const { z_layer: _ignored, ...legacyPayload } = payload;
+    if (error && /z_layer|limited_event_/i.test(error.message ?? "")) {
+      const { z_layer: _ignored, limited_event_only: _x, limited_event_name: _y, limited_event_description: _z, ...legacyPayload } = payload;
       const fallback = await admin
         .from("avatar_effects")
         .upsert({ id, ...legacyPayload }, { onConflict: "id" })
-        .select(SELECT_NO_LAYER)
+        .select("id,key,name,unlock_level,unlock_points,config,render_mode,html,css,js,enabled")
         .single();
-      data = fallback.data ? { ...fallback.data, z_layer: "behind_avatar" } : fallback.data;
+      data = fallback.data
+        ? { ...fallback.data, z_layer: "behind_avatar", limited_event_only: false, limited_event_name: "", limited_event_description: "" }
+        : fallback.data;
       error = fallback.error;
     }
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
@@ -109,14 +122,16 @@ export async function POST(req: Request) {
     .upsert(payload, { onConflict: "key" })
     .select(SELECT_WITH_LAYER)
     .single();
-  if (error && /z_layer/i.test(error.message ?? "")) {
-    const { z_layer: _ignored, ...legacyPayload } = payload;
+  if (error && /z_layer|limited_event_/i.test(error.message ?? "")) {
+    const { z_layer: _ignored, limited_event_only: _x, limited_event_name: _y, limited_event_description: _z, ...legacyPayload } = payload;
     const fallback = await admin
       .from("avatar_effects")
       .upsert(legacyPayload, { onConflict: "key" })
-      .select(SELECT_NO_LAYER)
+      .select("id,key,name,unlock_level,unlock_points,config,render_mode,html,css,js,enabled")
       .single();
-    data = fallback.data ? { ...fallback.data, z_layer: "behind_avatar" } : fallback.data;
+    data = fallback.data
+      ? { ...fallback.data, z_layer: "behind_avatar", limited_event_only: false, limited_event_name: "", limited_event_description: "" }
+      : fallback.data;
     error = fallback.error;
   }
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

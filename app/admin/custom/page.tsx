@@ -143,6 +143,11 @@ const adminSections = [
         href: "/admin/custom/media?view=avatars",
       },
       {
+        title: "Limited Events",
+        desc: "Create special events and assign which students can unlock event avatars/effects.",
+        href: "/admin/custom/limited-events",
+      },
+      {
         title: "Display Settings",
         desc: "Choose which displays and live activity events are shown.",
         href: "/admin/custom/display-settings",

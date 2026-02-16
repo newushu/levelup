@@ -40,6 +40,7 @@ function describeRoute(route: string) {
     "/taolu-tracker": "Taolu Tracker",
     "/performance-lab": "Performance Lab",
     "/classroom": "Classroom HQ (daily tools)",
+    "/classroom/checkin": "Classroom Check-In (attendance)",
     "/classroom/roster": "Classroom Roster (who's here)",
     "/admin": "Admin Workspace",
     "/admin/custom/access": "Access & Permissions",
@@ -138,6 +139,8 @@ async function listRoutes() {
 
 function defaultRolesForRoute(route_path: string) {
   if (route_path.startsWith("/admin")) return ["admin"];
+  if (route_path === "/classroom/checkin") return ["admin", "coach", "classroom", "checkin"];
+  if (route_path === "/classroom") return ["admin", "coach", "classroom", "checkin"];
   if (route_path.startsWith("/coach") || route_path.startsWith("/classroom")) return ["admin", "coach"];
   return ["admin"];
 }
