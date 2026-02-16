@@ -125,7 +125,13 @@ export async function POST(req: Request) {
       source_type: "roulette_spin",
       created_by: gate.userId,
     });
-    if (ledErr) return NextResponse.json({ ok: false, error: ledErr.message }, { status: 500 });
+    if (ledErr) {
+      const code = String((ledErr as any)?.code ?? "");
+      // If a concurrent request already wrote this roulette grant, treat as idempotent success.
+      if (code !== "23505") {
+        return NextResponse.json({ ok: false, error: ledErr.message }, { status: 500 });
+      }
+    }
     }
 
     const rpc = await supabase.rpc("recompute_student_points", { p_student_id: spin.student_id });

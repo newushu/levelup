@@ -600,7 +600,7 @@ export default function StudentInfoPage() {
     [avatarCatalog, avatarId]
   );
   const avatarZoomPct = Math.max(50, Math.min(200, Number(student?.avatar_zoom_pct ?? 100)));
-  const pointsDisplay = Number(student?.points_balance ?? student?.points_total ?? 0);
+  const pointsDisplay = Number(student?.points_total ?? student?.points_balance ?? 0);
   const levelDisplay = Number(student?.level ?? 1);
   const lifetimePoints = Number(student?.lifetime_points ?? student?.points_total ?? 0);
   const thresholdMap = useMemo(() => {

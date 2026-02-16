@@ -244,16 +244,19 @@ function menuGrid(count: number): React.CSSProperties {
     display: "grid",
     gap: 18,
     gridTemplateColumns: count === 1 ? "minmax(0, 1fr)" : "repeat(2, minmax(0, 1fr))",
+    alignItems: "start",
   };
 }
 
 function menuCard(): React.CSSProperties {
   return {
+    minWidth: 0,
     borderRadius: 18,
     padding: 18,
     border: "1px solid rgba(255,255,255,0.12)",
     background: "rgba(10,12,18,0.75)",
     boxShadow: "0 18px 50px rgba(0,0,0,0.35)",
+    overflow: "hidden",
   };
 }
 
@@ -261,13 +264,18 @@ function itemGrid(): React.CSSProperties {
   return {
     marginTop: 14,
     display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(300px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: 12,
+    minWidth: 0,
+    width: "100%",
   };
 }
 
 function itemCard(): React.CSSProperties {
   return {
+    minWidth: 0,
+    width: "100%",
+    boxSizing: "border-box",
     borderRadius: 16,
     padding: 16,
     border: "1px solid rgba(255,255,255,0.1)",
@@ -289,6 +297,8 @@ function itemImage(item: MenuItem): React.CSSProperties {
   const y = Number.isFinite(yRaw) && String(item.image_y).trim() !== "" ? yRaw : 50;
   const zoom = Number.isFinite(zoomRaw) && zoomRaw > 0 ? zoomRaw : 120;
   return {
+    minWidth: 0,
+    maxWidth: "100%",
     width: "100%",
     aspectRatio: "1 / 1",
     borderRadius: 12,
@@ -305,6 +315,7 @@ function itemImage(item: MenuItem): React.CSSProperties {
     justifyContent: "center",
     padding: 8,
     position: "relative",
+    overflow: "hidden",
   };
 }
 

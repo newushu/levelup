@@ -7,16 +7,13 @@ const MAX_LEVEL = 99;
 
 function computeThresholds(baseJump: number, difficultyPct: number) {
   const levels: Array<{ level: number; min: number }> = [];
-  let total = 0;
   for (let level = 1; level <= MAX_LEVEL; level += 1) {
     if (level === 1) {
       levels.push({ level, min: 0 });
       continue;
     }
-    const exponent = level - 1;
-    const factor = Math.pow(1 + difficultyPct / 100, exponent);
-    total += baseJump * factor;
-    const rounded = Math.round(total / 10) * 10;
+    const raw = baseJump * Math.pow(1 + difficultyPct / 100, level - 1);
+    const rounded = Math.round(raw / 5) * 5;
     levels.push({ level, min: Math.max(0, Math.floor(rounded)) });
   }
   return levels;
