@@ -7,11 +7,17 @@ const ITEM_TABLES: Record<
   string,
   { table: string; keyField: string; selectFields: string; labelField?: string }
 > = {
-  avatar: { table: "avatars", keyField: "id", selectFields: "id,name,unlock_level,unlock_points" },
-  effect: { table: "avatar_effects", keyField: "key", selectFields: "key,name,unlock_level,unlock_points" },
-  corner_border: { table: "ui_corner_borders", keyField: "key", selectFields: "key,name,unlock_level,unlock_points" },
+  avatar: { table: "avatars", keyField: "id", selectFields: "id,name,unlock_level,unlock_points,enabled,limited_event_only" },
+  effect: { table: "avatar_effects", keyField: "key", selectFields: "key,name,unlock_level,unlock_points,enabled,limited_event_only" },
+  corner_border: { table: "ui_corner_borders", keyField: "key", selectFields: "key,name,unlock_level,unlock_points,enabled,limited_event_only" },
   card_plate: { table: "ui_card_plate_borders", keyField: "key", selectFields: "key,name,unlock_level,unlock_points" },
 };
+
+function isMissingColumn(err: any, column: string) {
+  const msg = String(err?.message ?? "").toLowerCase();
+  const key = column.toLowerCase();
+  return msg.includes(`column \"${key}\"`) || msg.includes(`.${key}`) || msg.includes(key);
+}
 
 export async function POST(req: Request) {
   const supabase = await supabaseServer();
@@ -32,28 +38,57 @@ export async function POST(req: Request) {
   const admin = supabaseAdmin();
   const { data: student, error: sErr } = await admin
     .from("students")
-    .select("id,name,level,points_balance")
+    .select("id,name,level,lifetime_points,points_balance")
     .eq("id", student_id)
     .maybeSingle();
   if (sErr) return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
   if (!student) return NextResponse.json({ ok: false, error: "Student not found" }, { status: 404 });
 
-  const { data: itemRaw, error: iErr } = await admin
+  let { data: itemRaw, error: iErr } = await admin
     .from(itemDef.table)
     .select(itemDef.selectFields)
     .eq(itemDef.keyField, item_key)
     .maybeSingle();
+  if (iErr && isMissingColumn(iErr, "limited_event_only")) {
+    const fallback = await admin
+      .from(itemDef.table)
+      .select("id,name,unlock_level,unlock_points,enabled,key")
+      .eq(itemDef.keyField, item_key)
+      .maybeSingle();
+    itemRaw = fallback.data as any;
+    iErr = fallback.error as any;
+  }
   if (iErr) return NextResponse.json({ ok: false, error: iErr.message }, { status: 500 });
   const item = itemRaw as any;
   if (!item) return NextResponse.json({ ok: false, error: "Item not found" }, { status: 404 });
+  if (item.enabled === false) return NextResponse.json({ ok: false, error: "Item is disabled" }, { status: 400 });
+
+  const thresholdsRes = await admin
+    .from("avatar_level_thresholds")
+    .select("level,min_lifetime_points")
+    .order("level", { ascending: true });
+  let effectiveLevel = Math.max(1, Number(student.level ?? 1));
+  if (!thresholdsRes.error && (thresholdsRes.data ?? []).length) {
+    const lifetime = Number((student as any).lifetime_points ?? 0);
+    for (const row of thresholdsRes.data ?? []) {
+      if (lifetime >= Number((row as any).min_lifetime_points ?? 0)) {
+        effectiveLevel = Math.max(effectiveLevel, Number((row as any).level ?? effectiveLevel));
+      }
+    }
+  }
 
   const unlockLevel = Number(item?.unlock_level ?? 1);
   const unlockPoints = Math.max(0, Math.floor(Number(item?.unlock_points ?? 0)));
+  const limitedEventOnly = item?.limited_event_only === true;
   const criteriaState = await getStudentCriteriaState(admin as any, student_id);
   const criteriaMatch = matchItemCriteria(item_type, item_key, criteriaState.fulfilledKeys, criteriaState.requirementMap);
   const bypassByCriteria = criteriaMatch.hasRequirements && criteriaMatch.matched;
 
-  if (!bypassByCriteria && Number(student.level ?? 1) < unlockLevel) {
+  if (limitedEventOnly && !bypassByCriteria) {
+    return NextResponse.json({ ok: false, error: "This limited event item requires eligibility" }, { status: 400 });
+  }
+
+  if (!bypassByCriteria && effectiveLevel < unlockLevel) {
     return NextResponse.json({ ok: false, error: `Requires level ${unlockLevel}` }, { status: 400 });
   }
 
@@ -69,7 +104,7 @@ export async function POST(req: Request) {
   }
 
   const pointsBalance = Number(student.points_balance ?? 0);
-  const effectiveUnlockPoints = bypassByCriteria ? 0 : unlockPoints;
+  const effectiveUnlockPoints = bypassByCriteria || limitedEventOnly ? 0 : unlockPoints;
   if (effectiveUnlockPoints > 0 && pointsBalance < effectiveUnlockPoints) {
     return NextResponse.json({ ok: false, error: `Need ${unlockPoints} points` }, { status: 400 });
   }

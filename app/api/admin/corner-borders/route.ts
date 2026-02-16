@@ -3,7 +3,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { supabaseServer } from "@/lib/supabase/server";
 
 const SELECT_WITH_LAYER =
-  "id,key,name,image_url,render_mode,z_layer,offset_x,offset_y,offsets_by_context,html,css,js,unlock_level,unlock_points,enabled,updated_at";
+  "id,key,name,image_url,render_mode,z_layer,offset_x,offset_y,offsets_by_context,html,css,js,unlock_level,unlock_points,enabled,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,mvp_bonus_pct,limited_event_only,limited_event_name,limited_event_description,updated_at";
 const SELECT_NO_LAYER =
   "id,key,name,image_url,render_mode,offset_x,offset_y,offsets_by_context,html,css,js,unlock_level,unlock_points,enabled,updated_at";
 
@@ -42,13 +42,26 @@ export async function GET() {
     .order("unlock_level", { ascending: true })
     .order("name", { ascending: true });
 
-  if (error && /z_layer/i.test(error.message ?? "")) {
+  if (error && /z_layer|rule_keeper_multiplier|rule_breaker_multiplier|skill_pulse_multiplier|spotlight_multiplier|daily_free_points|challenge_completion_bonus_pct|mvp_bonus_pct|limited_event_/i.test(error.message ?? "")) {
     const fallback = await admin
       .from("ui_corner_borders")
       .select(SELECT_NO_LAYER)
       .order("unlock_level", { ascending: true })
       .order("name", { ascending: true });
     data = (fallback.data ?? []).map((row: any) => ({ ...row, z_layer: "above_avatar" }));
+    data = (data ?? []).map((row: any) => ({
+      ...row,
+      rule_keeper_multiplier: 1,
+      rule_breaker_multiplier: 1,
+      skill_pulse_multiplier: 1,
+      spotlight_multiplier: 1,
+      daily_free_points: 0,
+      challenge_completion_bonus_pct: 0,
+      mvp_bonus_pct: 0,
+      limited_event_only: false,
+      limited_event_name: "",
+      limited_event_description: "",
+    }));
     error = fallback.error;
   }
 
@@ -77,6 +90,16 @@ export async function POST(req: Request) {
   const unlock_level = Number.isFinite(unlock_level_raw) && unlock_level_raw > 0 ? Math.floor(unlock_level_raw) : 1;
   const unlock_points = Math.max(0, Math.floor(Number(body?.unlock_points ?? 0)));
   const enabled = body?.enabled !== false;
+  const rule_keeper_multiplier = Number(body?.rule_keeper_multiplier ?? 1);
+  const rule_breaker_multiplier = Number(body?.rule_breaker_multiplier ?? 1);
+  const skill_pulse_multiplier = Number(body?.skill_pulse_multiplier ?? 1);
+  const spotlight_multiplier = Number(body?.spotlight_multiplier ?? 1);
+  const daily_free_points = Math.max(0, Math.floor(Number(body?.daily_free_points ?? 0)));
+  const challenge_completion_bonus_pct = Math.max(0, Number(body?.challenge_completion_bonus_pct ?? 0));
+  const mvp_bonus_pct = Math.max(0, Number(body?.mvp_bonus_pct ?? 0));
+  const limited_event_only = body?.limited_event_only === true;
+  const limited_event_name = String(body?.limited_event_name ?? "").trim();
+  const limited_event_description = String(body?.limited_event_description ?? "").trim();
 
   if (!key || !name) {
     return NextResponse.json({ ok: false, error: "Missing key or name" }, { status: 400 });
@@ -108,13 +131,23 @@ export async function POST(req: Request) {
         unlock_level,
         unlock_points,
         enabled,
+        rule_keeper_multiplier,
+        rule_breaker_multiplier,
+        skill_pulse_multiplier,
+        spotlight_multiplier,
+        daily_free_points,
+        challenge_completion_bonus_pct,
+        mvp_bonus_pct,
+        limited_event_only,
+        limited_event_name,
+        limited_event_description,
       },
       { onConflict: "key" }
     )
     .select(SELECT_WITH_LAYER)
     .single();
 
-  if (error && /z_layer/i.test(error.message ?? "")) {
+  if (error && /z_layer|rule_keeper_multiplier|rule_breaker_multiplier|skill_pulse_multiplier|spotlight_multiplier|daily_free_points|challenge_completion_bonus_pct|mvp_bonus_pct|limited_event_/i.test(error.message ?? "")) {
     const fallback = await admin
       .from("ui_corner_borders")
       .upsert(
@@ -138,7 +171,22 @@ export async function POST(req: Request) {
       )
       .select(SELECT_NO_LAYER)
       .single();
-    data = fallback.data ? { ...fallback.data, z_layer: "above_avatar" } : fallback.data;
+    data = fallback.data
+      ? {
+          ...fallback.data,
+          z_layer: "above_avatar",
+          rule_keeper_multiplier: 1,
+          rule_breaker_multiplier: 1,
+          skill_pulse_multiplier: 1,
+          spotlight_multiplier: 1,
+          daily_free_points: 0,
+          challenge_completion_bonus_pct: 0,
+          mvp_bonus_pct: 0,
+          limited_event_only: false,
+          limited_event_name: "",
+          limited_event_description: "",
+        }
+      : fallback.data;
     error = fallback.error;
   }
 

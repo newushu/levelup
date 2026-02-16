@@ -203,27 +203,59 @@ export async function GET() {
 
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
-  const { data: skillPulseLedger, error: spErr } = await supabase
-    .from("ledger")
-    .select("student_id,points,category,note")
-    .gte("created_at", todayStart.toISOString())
-    .or("category.eq.skill_pulse,note.ilike.Battle Pulse win%");
-  if (spErr) return NextResponse.json({ ok: false, error: spErr.message }, { status: 500 });
 
-  const skillPulseToday = new Map<string, number>();
-  (skillPulseLedger ?? []).forEach((row: any) => {
-    const id = String(row.student_id ?? "");
-    const pts = Number(row.points ?? 0);
-    if (!id || pts <= 0) return;
-    skillPulseToday.set(id, (skillPulseToday.get(id) ?? 0) + pts);
+  const skillPulseRepsToday = new Map<string, number>();
+  const skillTrackerLogsRes = await supabase
+    .from("skill_tracker_logs")
+    .select("tracker_id,created_at,success")
+    .gte("created_at", todayStart.toISOString());
+  if (skillTrackerLogsRes.error) {
+    return NextResponse.json({ ok: false, error: skillTrackerLogsRes.error.message }, { status: 500 });
+  }
+  const trackerIds = Array.from(
+    new Set((skillTrackerLogsRes.data ?? []).map((row: any) => String(row?.tracker_id ?? "")).filter(Boolean))
+  );
+  const trackerToStudent = new Map<string, string>();
+  if (trackerIds.length) {
+    const trackerRes = await supabase
+      .from("skill_trackers")
+      .select("id,student_id")
+      .in("id", trackerIds);
+    if (trackerRes.error) return NextResponse.json({ ok: false, error: trackerRes.error.message }, { status: 500 });
+    (trackerRes.data ?? []).forEach((row: any) => {
+      const tid = String(row?.id ?? "");
+      const sid = String(row?.student_id ?? "");
+      if (!tid || !sid) return;
+      trackerToStudent.set(tid, sid);
+    });
+  }
+  (skillTrackerLogsRes.data ?? []).forEach((row: any) => {
+    if (row?.success !== true) return;
+    const sid = trackerToStudent.get(String(row?.tracker_id ?? "")) ?? "";
+    if (!sid) return;
+    skillPulseRepsToday.set(sid, (skillPulseRepsToday.get(sid) ?? 0) + 1);
   });
 
-  const topSkillPulseToday = topWithTies(
+  const battleLogsRes = await supabase
+    .from("battle_tracker_logs")
+    .select("student_id,created_at,success")
+    .gte("created_at", todayStart.toISOString());
+  if (battleLogsRes.error) {
+    return NextResponse.json({ ok: false, error: battleLogsRes.error.message }, { status: 500 });
+  }
+  (battleLogsRes.data ?? []).forEach((row: any) => {
+    if (row?.success !== true) return;
+    const sid = String(row?.student_id ?? "");
+    if (!sid) return;
+    skillPulseRepsToday.set(sid, (skillPulseRepsToday.get(sid) ?? 0) + 1);
+  });
+
+  const topSkillPulseRepsToday = topWithTies(
     [...pack]
     .map((r) => ({
       student_id: r.student_id,
       name: r.name,
-      points: skillPulseToday.get(r.student_id) ?? 0,
+      points: skillPulseRepsToday.get(r.student_id) ?? 0,
       level: r.level,
       is_competition_team: r.is_competition_team,
       avatar_storage_path: r.avatar_storage_path,
@@ -231,6 +263,36 @@ export async function GET() {
       avatar_effect: r.avatar_effect ?? null,
     }))
     .filter((row) => Number(row.points ?? 0) > 0),
+    true,
+    10
+  );
+
+  const taoluTodayByStudent = new Map<string, number>();
+  const taoluRes = await supabase
+    .from("taolu_sessions")
+    .select("student_id,created_at")
+    .gte("created_at", todayStart.toISOString());
+  if (!taoluRes.error) {
+    (taoluRes.data ?? []).forEach((row: any) => {
+      const sid = String(row?.student_id ?? "");
+      if (!sid) return;
+      taoluTodayByStudent.set(sid, (taoluTodayByStudent.get(sid) ?? 0) + 1);
+    });
+  }
+
+  const topTaoluToday = topWithTies(
+    [...pack]
+      .map((r) => ({
+        student_id: r.student_id,
+        name: r.name,
+        points: taoluTodayByStudent.get(r.student_id) ?? 0,
+        level: r.level,
+        is_competition_team: r.is_competition_team,
+        avatar_storage_path: r.avatar_storage_path,
+        avatar_bg: r.avatar_bg,
+        avatar_effect: r.avatar_effect ?? null,
+      }))
+      .filter((row) => Number(row.points ?? 0) > 0),
     true,
     10
   );
@@ -265,14 +327,18 @@ export async function GET() {
     total: top(pack, "points_total"),
     weekly: top(pack, "weekly_points"),
     lifetime: top(pack, "lifetime_points"),
-    skill_pulse_today: topSkillPulseToday,
+    skill_pulse_today: topSkillPulseRepsToday,
+    skill_pulse_reps_today: topSkillPulseRepsToday,
+    taolu_today: topTaoluToday,
     mvp: topMvp,
   };
   const leaderboard_labels: Record<string, string> = {
     total: "Total Points",
     weekly: "Weekly Points",
     lifetime: "Lifetime Points",
-    skill_pulse_today: "Skill Pulse Today",
+    skill_pulse_today: "Skill Pulse Successes Today",
+    skill_pulse_reps_today: "Skill Pulse Successes Today",
+    taolu_today: "Taolu Tracker Sessions Today",
     mvp: "Battle MVP",
   };
 

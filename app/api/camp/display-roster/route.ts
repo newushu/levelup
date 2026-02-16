@@ -34,6 +34,20 @@ function asInt(value: unknown, fallback = 0) {
   return Number.isFinite(n) ? Math.trunc(n) : fallback;
 }
 
+function normalizeDayCode(value: unknown) {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (raw === "th") return "r";
+  if (raw === "sat") return "sa";
+  if (raw === "sun") return "su";
+  return raw;
+}
+
+function cleanRoleDays(value: unknown) {
+  const list = Array.isArray(value) ? value : [];
+  const allowed = new Set(["m", "t", "w", "r", "f", "sa", "su"]);
+  return Array.from(new Set(list.map((v) => normalizeDayCode(v)).filter((v) => allowed.has(v))));
+}
+
 function isMissingRelation(err: any) {
   const msg = String(err?.message ?? "").toLowerCase();
   return msg.includes("does not exist") || msg.includes("relation") || msg.includes("not found");
@@ -47,6 +61,20 @@ function isMissingColumn(err: any, column: string) {
 async function hasV2Tables(admin: ReturnType<typeof supabaseAdmin>) {
   const { error } = await admin.from("camp_display_rosters").select("id").limit(1);
   return !error;
+}
+
+async function getCampRolePointConfig(admin: ReturnType<typeof supabaseAdmin>) {
+  const defaults = { seller_daily_points: 300, cleaner_daily_points: 500 };
+  const res = await admin
+    .from("camp_settings")
+    .select("seller_daily_points,cleaner_daily_points")
+    .eq("id", "default")
+    .maybeSingle();
+  if (res.error) return defaults;
+  return {
+    seller_daily_points: Number(res.data?.seller_daily_points ?? defaults.seller_daily_points),
+    cleaner_daily_points: Number(res.data?.cleaner_daily_points ?? defaults.cleaner_daily_points),
+  };
 }
 
 async function loadStudentsByIds(admin: ReturnType<typeof supabaseAdmin>, ids: string[]) {
@@ -369,23 +397,86 @@ async function loadDailyRedeemByStudent(admin: ReturnType<typeof supabaseAdmin>,
 }
 
 async function loadRecentMvpAnnouncements(admin: ReturnType<typeof supabaseAdmin>, ids: string[]) {
-  if (!ids.length) return [] as Array<{ student_id: string; name: string; created_at: string }>;
-  const { data, error } = await admin
+  if (!ids.length) return [] as Array<{ student_id: string; name: string; created_at: string; label: string; detail?: string }>;
+
+  const entries: Array<{ student_id: string; created_at: string; label: string; detail?: string }> = [];
+  const { data: mvpRows } = await admin
     .from("battle_mvp_awards")
     .select("student_id,created_at")
     .in("student_id", ids)
     .order("created_at", { ascending: false })
-    .limit(20);
-  if (error) return [];
+    .limit(50);
+  (mvpRows ?? []).forEach((row: any) => {
+    const sid = String(row.student_id ?? "");
+    if (!sid) return;
+    entries.push({
+      student_id: sid,
+      created_at: String(row.created_at ?? ""),
+      label: "MVP",
+      detail: "Battle Pulse MVP",
+    });
+  });
 
-  const studentIds = Array.from(new Set((data ?? []).map((d: any) => String(d.student_id ?? "")).filter(Boolean)));
+  const { data: ledgerRows } = await admin
+    .from("ledger")
+    .select("student_id,category,note,points,created_at")
+    .in("student_id", ids)
+    .order("created_at", { ascending: false })
+    .limit(300);
+  (ledgerRows ?? []).forEach((row: any) => {
+    const sid = String(row.student_id ?? "");
+    if (!sid) return;
+    const category = String(row.category ?? "").toLowerCase();
+    const points = Number(row.points ?? 0);
+    if (category === "camp_spotlight") {
+      entries.push({
+        student_id: sid,
+        created_at: String(row.created_at ?? ""),
+        label: "Camp Star",
+        detail: String(row.note ?? "").trim() || "Camp spotlight awarded",
+      });
+      return;
+    }
+    if (category === "rule_keeper") {
+      entries.push({
+        student_id: sid,
+        created_at: String(row.created_at ?? ""),
+        label: `Rule Keeper +${Math.max(0, Math.round(points))}`,
+        detail: String(row.note ?? "").trim() || "Rule keeper points added",
+      });
+      return;
+    }
+    if (category === "rule_breaker") {
+      entries.push({
+        student_id: sid,
+        created_at: String(row.created_at ?? ""),
+        label: `Rule Breaker -${Math.max(0, Math.round(-points))}`,
+        detail: String(row.note ?? "").trim() || "Rule breaker points removed",
+      });
+      return;
+    }
+    if (Math.abs(points) >= 15) {
+      entries.push({
+        student_id: sid,
+        created_at: String(row.created_at ?? ""),
+        label: points >= 0 ? `+${Math.round(points)} points` : `${Math.round(points)} points`,
+        detail: String(row.note ?? "").trim() || String(category || "ledger activity"),
+      });
+    }
+  });
+
+  entries.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const trimmed = entries.slice(0, 28);
+  const studentIds = Array.from(new Set(trimmed.map((d) => String(d.student_id ?? "")).filter(Boolean)));
   const { data: students } = await admin.from("students").select("id,name").in("id", studentIds);
   const byId = new Map((students ?? []).map((s: any) => [String(s.id), String(s.name ?? "Student")])) as Map<string, string>;
 
-  return (data ?? []).map((row: any) => ({
+  return trimmed.map((row) => ({
     student_id: String(row.student_id ?? ""),
     name: byId.get(String(row.student_id ?? "")) ?? "Student",
     created_at: String(row.created_at ?? ""),
+    label: row.label,
+    detail: row.detail,
   }));
 }
 
@@ -432,7 +523,7 @@ export async function GET(req: Request) {
   const [rostersRes, groupsRes, membersRes, screensRes] = await Promise.all([
     admin.from("camp_display_rosters").select("id,name,start_date,end_date,enabled,sort_order,created_at,updated_at").order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
     admin.from("camp_display_groups").select("id,roster_id,name,sort_order,enabled,created_at,updated_at").order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
-    admin.from("camp_display_members").select("id,roster_id,group_id,student_id,display_role,secondary_role,faction_id,sort_order,enabled,created_at,updated_at").order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
+    admin.from("camp_display_members").select("id,roster_id,group_id,student_id,display_role,secondary_role,secondary_role_days,faction_id,sort_order,enabled,created_at,updated_at").order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
     admin.from("camp_display_screens").select("id,title,roster_id,group_id,show_all_groups,enabled,updated_at").order("id", { ascending: true }),
   ]);
 
@@ -452,13 +543,25 @@ export async function GET(req: Request) {
 
   if (rostersRes.error) return NextResponse.json({ ok: false, error: rostersRes.error.message }, { status: 500 });
   if (groupsRes.error) return NextResponse.json({ ok: false, error: groupsRes.error.message }, { status: 500 });
-  if (membersRes.error) return NextResponse.json({ ok: false, error: membersRes.error.message }, { status: 500 });
   if (screensRes.error) return NextResponse.json({ ok: false, error: screensRes.error.message }, { status: 500 });
   if (factionsRes.error && !isMissingRelation(factionsRes.error)) return NextResponse.json({ ok: false, error: factionsRes.error.message }, { status: 500 });
 
+  let membersData = membersRes.data ?? [];
+  if (membersRes.error && isMissingColumn(membersRes.error, "secondary_role_days")) {
+    const fallbackMembersRes = await admin
+      .from("camp_display_members")
+      .select("id,roster_id,group_id,student_id,display_role,secondary_role,faction_id,sort_order,enabled,created_at,updated_at")
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true });
+    if (fallbackMembersRes.error) return NextResponse.json({ ok: false, error: fallbackMembersRes.error.message }, { status: 500 });
+    membersData = (fallbackMembersRes.data ?? []).map((m: any) => ({ ...m, secondary_role_days: [] }));
+  } else if (membersRes.error) {
+    return NextResponse.json({ ok: false, error: membersRes.error.message }, { status: 500 });
+  }
+
   const rosters = rostersRes.data ?? [];
   const groups = groupsRes.data ?? [];
-  const members = membersRes.data ?? [];
+  const members = membersData;
   const screens = screensRes.data ?? [];
   const factions = factionsRes.error ? [] : (factionsRes.data ?? []);
 
@@ -497,6 +600,7 @@ export async function GET(req: Request) {
           student_id: sid,
           display_role: "camper",
           secondary_role: "",
+          secondary_role_days: [],
           faction_id: null,
           sort_order: idx,
           enabled: true,
@@ -520,6 +624,7 @@ export async function GET(req: Request) {
 
     const announcementStudentIds = Array.from(new Set(displayMembers.map((m: any) => String(m.student_id ?? "")).filter(Boolean)));
     const announcements = await loadRecentMvpAnnouncements(admin, announcementStudentIds);
+    const campRolePointConfig = await getCampRolePointConfig(admin);
 
     return NextResponse.json({
       ok: true,
@@ -536,6 +641,7 @@ export async function GET(req: Request) {
       active_roster_id: activeRosterId,
       active_group_id: activeGroupId || null,
       show_all_groups: true,
+      camp_role_point_config: campRolePointConfig,
       display_members: displayMembers,
       announcements,
     });
@@ -600,6 +706,7 @@ export async function GET(req: Request) {
         student_id: studentId,
         display_role: String(m.display_role ?? "camper"),
         secondary_role: String(m.secondary_role ?? ""),
+        secondary_role_days: cleanRoleDays(m.secondary_role_days),
         faction_id: m.faction_id ? String(m.faction_id) : null,
         sort_order: Number(m.sort_order ?? 0),
         enabled: m.enabled !== false,
@@ -631,6 +738,7 @@ export async function GET(req: Request) {
 
   const studentIds = Array.from(new Set(membersForActive.map((m: any) => String(m.student_id ?? "")).filter(Boolean)));
   const announcements = await loadRecentMvpAnnouncements(admin, studentIds);
+  const campRolePointConfig = await getCampRolePointConfig(admin);
   const displayMembers = membersForActive.filter((m: any) => m.student);
 
   return NextResponse.json({
@@ -646,6 +754,7 @@ export async function GET(req: Request) {
     active_roster_id: activeRosterId,
     active_group_id: activeGroupId || null,
     show_all_groups: showAllGroups,
+    camp_role_point_config: campRolePointConfig,
     display_members: displayMembers,
     announcements,
   });
@@ -703,6 +812,7 @@ export async function POST(req: Request) {
         student_id: String(row?.student_id ?? "").trim(),
         display_role: String(row?.display_role ?? "camper").trim() || "camper",
         secondary_role: String(row?.secondary_role ?? "").trim().slice(0, 40),
+        secondary_role_days: cleanRoleDays(row?.secondary_role_days),
         faction_id: String(row?.faction_id ?? "").trim() || null,
         sort_order: asInt(row?.sort_order, idx),
         enabled: asBool(row?.enabled, true),
@@ -767,7 +877,11 @@ export async function POST(req: Request) {
     }
 
     if (hasMembers && members.length) {
-      const add = await admin.from("camp_display_members").insert(members);
+      let add = await admin.from("camp_display_members").insert(members);
+      if (add.error && isMissingColumn(add.error, "secondary_role_days")) {
+        const fallbackMembers = members.map(({ secondary_role_days, ...rest }: any) => rest);
+        add = await admin.from("camp_display_members").insert(fallbackMembers);
+      }
       if (add.error) return NextResponse.json({ ok: false, error: add.error.message }, { status: 500 });
     }
 

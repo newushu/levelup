@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabase/server";
+import { getStudentModifierStack } from "@/lib/modifierStack";
 
 
 export async function POST(req: Request) {
@@ -28,28 +29,20 @@ export async function POST(req: Request) {
   let adjustedPoints = points;
 
   if (categoryLower === "rule_keeper" || categoryLower === "rule_breaker") {
-    const { data: settings } = await supabase
-      .from("student_avatar_settings")
-      .select("avatar_id")
-      .eq("student_id", student_id)
-      .maybeSingle();
-    const avatarId = String(settings?.avatar_id ?? "").trim();
-    if (avatarId) {
-      const { data: avatar } = await supabase
-        .from("avatars")
-        .select("rule_keeper_multiplier,rule_breaker_multiplier")
-        .eq("id", avatarId)
-        .maybeSingle();
-      const multiplier =
-        categoryLower === "rule_keeper"
-          ? Number(avatar?.rule_keeper_multiplier ?? 1)
-          : Number(avatar?.rule_breaker_multiplier ?? 1);
-      if (Number.isFinite(multiplier) && multiplier !== 1) {
-        const magnitude = Math.round(Math.abs(points) * multiplier);
-        adjustedPoints = points >= 0 ? magnitude : -magnitude;
-        pointsBase = points;
-        pointsMultiplier = multiplier;
-      }
+    const stack = await getStudentModifierStack(student_id);
+    const multiplier =
+      categoryLower === "rule_keeper"
+        ? Number(stack.rule_keeper_multiplier ?? 1)
+        : Number(stack.rule_breaker_multiplier ?? 1);
+    if (Number.isFinite(multiplier) && multiplier !== 1) {
+      const magnitude = Math.round(Math.abs(points) * multiplier);
+      adjustedPoints = points >= 0 ? magnitude : -magnitude;
+      pointsBase = points;
+      pointsMultiplier = multiplier;
+    }
+    if (Number.isFinite(multiplier) && multiplier === 1) {
+      pointsBase = points;
+      pointsMultiplier = 1;
     }
   }
 

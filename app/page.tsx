@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import AuthGate from "../components/AuthGate";
 import AvatarEffectParticles from "@/components/AvatarEffectParticles";
 import ChallengeVaultPanel from "@/components/ChallengeVaultPanel";
+import { adminChangeLogEntries } from "@/lib/adminChangeLog";
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -50,6 +51,7 @@ type AdminPendingReward = {
 };
 
 type AwardType = { id: string; name: string; points?: number | null; enabled?: boolean | null };
+type AdminChangeLogRow = { id: string; page: string; category: string; summary: string; created_at: string };
 
 export default function HomePage() {
   return (
@@ -384,7 +386,7 @@ function HomeInner() {
 }
 
 function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
-  const [tab, setTab] = useState<"workspace" | "rewards" | "performance" | "classes" | "award" | "roster" | "camp" | "rebuild">("workspace");
+  const [tab, setTab] = useState<"workspace" | "rewards" | "performance" | "classes" | "award" | "roster" | "camp" | "changes" | "rebuild">("workspace");
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [activeCardIdx, setActiveCardIdx] = useState(0);
@@ -403,6 +405,20 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
   const [awardMsg, setAwardMsg] = useState("");
   const [snapshotBusy, setSnapshotBusy] = useState(false);
   const [snapshotMsg, setSnapshotMsg] = useState("");
+  const [changesPin, setChangesPin] = useState("");
+  const [changesMsg, setChangesMsg] = useState("");
+  const [changesBusy, setChangesBusy] = useState(false);
+  const [changesRows, setChangesRows] = useState<AdminChangeLogRow[]>([]);
+  const [changesEntryPage, setChangesEntryPage] = useState("");
+  const [changesEntryCategory, setChangesEntryCategory] = useState("General");
+  const [changesEntrySummary, setChangesEntrySummary] = useState("");
+  const [changesViewMode, setChangesViewMode] = useState<"grouped" | "timeline">("grouped");
+  const [changesSort, setChangesSort] = useState<"newest" | "oldest">("newest");
+  const [changesWindow, setChangesWindow] = useState<"all" | "24h" | "7d" | "30d">("all");
+  const [changesUnlocked, setChangesUnlocked] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.sessionStorage.getItem("admin_changes_pin_ok") === "1";
+  });
   const carouselRef = useRef<HTMLDivElement | null>(null);
 
   const workspaceCards = [
@@ -449,24 +465,19 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
       icon: "EM",
     },
     {
-      title: "Camp Display",
-      subtitle: "Manage camp settings and choose students shown on camp display",
-      href: "/admin/custom/camp-display",
+      title: "Camp Center",
+      subtitle: "Camp hub, roster config, and display tools in one place",
       tone: "violet" as const,
       icon: "CMP",
+      tab: "camp" as const,
     },
     {
-      title: "Rebuild Leaderboards",
-      subtitle: "Rebuild tonight's leaderboard snapshot and bonus pool",
-      href: "#",
+      title: "Feature Change Log",
+      subtitle: "Quick notes of what changed, grouped by page",
+      tab: "changes" as const,
       tone: "amber" as const,
-      icon: "LB",
-      tab: "rebuild" as const,
+      icon: "LOG",
     },
-    { title: "Workspace Slot 6", subtitle: "Placeholder module", href: "#", tone: "amber" as const, icon: "06" },
-    { title: "Workspace Slot 7", subtitle: "Placeholder module", href: "#", tone: "sky" as const, icon: "07" },
-    { title: "Workspace Slot 8", subtitle: "Placeholder module", href: "#", tone: "violet" as const, icon: "08" },
-    { title: "Workspace Slot 9", subtitle: "Placeholder module", href: "#", tone: "slate" as const, icon: "09" },
   ];
 
   useEffect(() => {
@@ -624,6 +635,104 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
     window.setTimeout(() => setSnapshotMsg(""), 2800);
   }
 
+  const changesCombinedRows = useMemo(() => {
+    const dbTyped = changesRows.map((row) => ({
+      id: String(row.id),
+      page: String(row.page || "General"),
+      category: String(row.category || "General"),
+      summary: String(row.summary || ""),
+      date: String(row.created_at || "").slice(0, 10) || new Date().toISOString().slice(0, 10),
+      createdAtMs: Number(new Date(String(row.created_at || "")).getTime() || 0),
+    }));
+    const staticTyped = adminChangeLogEntries.map((row) => ({
+      ...row,
+      createdAtMs: Number(new Date(`${row.date}T00:00:00`).getTime() || 0),
+    }));
+    return [...dbTyped, ...staticTyped];
+  }, [changesRows]);
+
+  const changesFilteredRows = useMemo(() => {
+    const now = Date.now();
+    let minMs = 0;
+    if (changesWindow === "24h") minMs = now - 24 * 60 * 60 * 1000;
+    if (changesWindow === "7d") minMs = now - 7 * 24 * 60 * 60 * 1000;
+    if (changesWindow === "30d") minMs = now - 30 * 24 * 60 * 60 * 1000;
+    const filtered = changesCombinedRows.filter((row) => (minMs ? Number(row.createdAtMs || 0) >= minMs : true));
+    return filtered.sort((a, b) =>
+      changesSort === "newest" ? Number(b.createdAtMs || 0) - Number(a.createdAtMs || 0) : Number(a.createdAtMs || 0) - Number(b.createdAtMs || 0)
+    );
+  }, [changesCombinedRows, changesWindow, changesSort]);
+
+  const changesGroupedRows = useMemo(() => {
+    const grouped = new Map<string, typeof changesCombinedRows>();
+    for (const row of changesFilteredRows) {
+      const page = row.page || "General";
+      const list = grouped.get(page) ?? [];
+      list.push(row);
+      grouped.set(page, list);
+    }
+    return Array.from(grouped.entries());
+  }, [changesFilteredRows]);
+
+  async function loadChangesRows() {
+    const res = await fetch("/api/admin/changelog/list", { cache: "no-store" });
+    const sj = await safeJson(res);
+    if (!sj.ok) {
+      setChangesMsg(String(sj.json?.error ?? "Failed to load change log"));
+      return;
+    }
+    setChangesRows((sj.json?.entries ?? []) as AdminChangeLogRow[]);
+    setChangesMsg("");
+  }
+
+  async function unlockChanges() {
+    setChangesMsg("");
+    const pin = changesPin.trim();
+    if (!pin) return setChangesMsg("Enter admin PIN.");
+    setChangesBusy(true);
+    const res = await fetch("/api/skill-tracker/settings/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin }),
+    });
+    const sj = await safeJson(res);
+    setChangesBusy(false);
+    if (!sj.ok) return setChangesMsg(String(sj.json?.error ?? "Invalid PIN"));
+    setChangesUnlocked(true);
+    try {
+      window.sessionStorage.setItem("admin_changes_pin_ok", "1");
+    } catch {}
+    loadChangesRows();
+  }
+
+  async function addChangeLog() {
+    setChangesMsg("");
+    const summary = changesEntrySummary.trim();
+    if (!summary) return setChangesMsg("Type a short log line first.");
+    setChangesBusy(true);
+    const res = await fetch("/api/admin/changelog/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        page: changesEntryPage.trim() || "General",
+        category: changesEntryCategory.trim() || "General",
+        summary,
+      }),
+    });
+    const sj = await safeJson(res);
+    setChangesBusy(false);
+    if (!sj.ok) return setChangesMsg(String(sj.json?.error ?? "Failed to add log"));
+    setChangesEntrySummary("");
+    setChangesEntryCategory("General");
+    setChangesEntryPage("");
+    await loadChangesRows();
+  }
+
+  useEffect(() => {
+    if (tab !== "changes" || !changesUnlocked) return;
+    loadChangesRows();
+  }, [tab, changesUnlocked]);
+
   function scrollWorkspace(direction: "left" | "right") {
     const el = carouselRef.current;
     if (!el) return;
@@ -667,6 +776,7 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
     { label: "📣 Announcements", href: "/admin/announcements" },
     { label: "👨‍👩‍👧 Parent Pairing", href: "/admin/parent-pairing" },
     { label: "💬 Parent Messages", href: "/admin/parent-messages" },
+    { label: "📝 Feature Change Log", tab: "changes" as const },
     { label: "🛠️ Rebuild Leaderboards", tab: "rebuild" as const },
   ];
   const ruleKeeper = awardTypes.find((t) => String(t.name ?? "").toLowerCase().includes("rule keeper"));
@@ -720,7 +830,7 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
                     </div>
                   </div>
                 );
-                return card.href === "#" ? (
+                return !card.href || card.href === "#" ? (
                   <button key={card.title} type="button" style={style} onClick={() => card.tab ? setTab(card.tab) : undefined}>
                     {body}
                   </button>
@@ -922,6 +1032,115 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
             </div>
           </div>
         ) : null}
+        {tab === "changes" ? (
+          <div style={adminPanelWrap()}>
+            <div style={adminPanelTitle()}>Feature Change Log</div>
+            {!changesUnlocked ? (
+              <div style={{ display: "grid", gap: 10, maxWidth: 430 }}>
+                <div style={adminInlineNotice()}>
+                  Uses the same Admin PIN from Skill Tracker settings.
+                </div>
+                <input
+                  value={changesPin}
+                  onChange={(e) => setChangesPin(e.target.value)}
+                  placeholder="Admin PIN"
+                  type="password"
+                  style={adminAwardInput()}
+                />
+                <button type="button" style={adminAwardQuickBtn("primary")} onClick={unlockChanges} disabled={changesBusy}>
+                  {changesBusy ? "Unlocking..." : "Unlock Log"}
+                </button>
+                {changesMsg ? <div style={adminInlineNotice()}>{changesMsg}</div> : null}
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 12 }}>
+                <section style={adminRewardCard()}>
+                  <div style={{ fontWeight: 1000 }}>Add Log</div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 180px", gap: 8 }}>
+                      <input
+                        value={changesEntryPage}
+                        onChange={(e) => setChangesEntryPage(e.target.value)}
+                        placeholder="Page (ex: /camp/classroom)"
+                        style={adminAwardInput()}
+                      />
+                      <input
+                        value={changesEntryCategory}
+                        onChange={(e) => setChangesEntryCategory(e.target.value)}
+                        placeholder="Category"
+                        style={adminAwardInput()}
+                      />
+                    </div>
+                    <input
+                      value={changesEntrySummary}
+                      onChange={(e) => setChangesEntrySummary(e.target.value)}
+                      placeholder="Quick plain-English summary"
+                      style={adminAwardInput()}
+                    />
+                    <button type="button" style={adminAwardQuickBtn("primary")} onClick={addChangeLog} disabled={changesBusy}>
+                      {changesBusy ? "Saving..." : "Add Log Entry"}
+                    </button>
+                  </div>
+                </section>
+                <section style={adminRewardCard()}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button type="button" style={adminAwardModeBtn(changesViewMode === "grouped")} onClick={() => setChangesViewMode("grouped")}>
+                      Grouped
+                    </button>
+                    <button type="button" style={adminAwardModeBtn(changesViewMode === "timeline")} onClick={() => setChangesViewMode("timeline")}>
+                      Timeline
+                    </button>
+                    <button type="button" style={adminAwardModeBtn(changesSort === "newest")} onClick={() => setChangesSort("newest")}>
+                      Newest
+                    </button>
+                    <button type="button" style={adminAwardModeBtn(changesSort === "oldest")} onClick={() => setChangesSort("oldest")}>
+                      Oldest
+                    </button>
+                    <button type="button" style={adminAwardModeBtn(changesWindow === "all")} onClick={() => setChangesWindow("all")}>
+                      All
+                    </button>
+                    <button type="button" style={adminAwardModeBtn(changesWindow === "24h")} onClick={() => setChangesWindow("24h")}>
+                      24h
+                    </button>
+                    <button type="button" style={adminAwardModeBtn(changesWindow === "7d")} onClick={() => setChangesWindow("7d")}>
+                      7d
+                    </button>
+                    <button type="button" style={adminAwardModeBtn(changesWindow === "30d")} onClick={() => setChangesWindow("30d")}>
+                      30d
+                    </button>
+                  </div>
+                </section>
+                <div style={{ display: "grid", gap: 10 }}>
+                  {changesViewMode === "grouped"
+                    ? changesGroupedRows.map(([page, rows]) => (
+                        <section key={page} style={adminRewardCard()}>
+                          <div style={{ fontWeight: 1000 }}>{page}</div>
+                          <div style={{ display: "grid", gap: 8 }}>
+                            {rows.map((row) => (
+                              <article key={row.id} style={{ ...adminInlineNotice(true), display: "grid", gap: 4 }}>
+                                <div style={{ fontWeight: 900 }}>{row.summary}</div>
+                                <div style={{ opacity: 0.76, fontSize: 12 }}>
+                                  {row.category} • {row.date}
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        </section>
+                      ))
+                    : changesFilteredRows.map((row) => (
+                        <article key={`timeline-${row.id}`} style={{ ...adminRewardCard(), display: "grid", gap: 4 }}>
+                          <div style={{ fontWeight: 900 }}>{row.summary}</div>
+                          <div style={{ opacity: 0.76, fontSize: 12 }}>
+                            {row.date} • {row.page} • {row.category}
+                          </div>
+                        </article>
+                      ))}
+                </div>
+                {changesMsg ? <div style={adminInlineNotice()}>{changesMsg}</div> : null}
+              </div>
+            )}
+          </div>
+        ) : null}
 
         {tab === "rebuild" ? (
           <div style={adminPanelWrap()}>
@@ -957,7 +1176,7 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
                 type="button"
                 style={{ ...adminSheetLink(), cursor: "pointer", textAlign: "left" }}
                 onClick={() => {
-                  setTab("rebuild");
+                  if (item.tab) setTab(item.tab);
                   setShortcutsOpen(false);
                 }}
               >
@@ -981,6 +1200,8 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
         <button style={adminDockBtn(tab === "classes", "classes")} onClick={() => setTab("classes")}>Classes</button>
         <button style={adminDockBtn(tab === "roster", "classes")} onClick={() => setTab("roster")}>Roster</button>
         <button style={adminDockBtn(tab === "camp", "classes")} onClick={() => setTab("camp")}>Camp</button>
+        <button style={adminDockBtn(tab === "changes", "performance")} onClick={() => setTab("changes")}>Changes</button>
+        <Link href="/classroom/checkin" style={adminDockBtn(false, "classes")}>Check-In</Link>
         <button style={adminDockBtn(shortcutsOpen, "shortcuts")} onClick={() => setShortcutsOpen((v) => !v)}>⚙️ Shortcuts</button>
       </div>
       {snapshotMsg ? (

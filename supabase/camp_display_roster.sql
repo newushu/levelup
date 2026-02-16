@@ -41,6 +41,7 @@ create table if not exists public.camp_display_members (
   student_id uuid not null references public.students(id) on delete cascade,
   display_role text not null default 'camper',
   secondary_role text not null default '',
+  secondary_role_days text[] not null default '{}',
   faction_id uuid,
   sort_order integer not null default 0,
   enabled boolean not null default true,
@@ -54,6 +55,9 @@ alter table if exists public.camp_display_members
 
 alter table if exists public.camp_display_members
   add column if not exists secondary_role text not null default '';
+
+alter table if exists public.camp_display_members
+  add column if not exists secondary_role_days text[] not null default '{}';
 
 alter table if exists public.camp_display_members
   add column if not exists faction_id uuid;

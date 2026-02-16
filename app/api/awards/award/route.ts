@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/authz";
 import { supabaseServer } from "@/lib/supabase/server";
+import { getStudentModifierStack } from "@/lib/modifierStack";
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -75,24 +76,12 @@ export async function POST(req: Request) {
   let pointsBase: number | null = null;
   let pointsMultiplier: number | null = null;
 
-  const { data: settings } = await supabase
-    .from("student_avatar_settings")
-    .select("avatar_id")
-    .eq("student_id", student_id)
-    .maybeSingle();
-  const avatarId = String(settings?.avatar_id ?? "").trim();
-  if (avatarId) {
-    const { data: avatar } = await supabase
-      .from("avatars")
-      .select("spotlight_multiplier")
-      .eq("id", avatarId)
-      .maybeSingle();
-    const multiplier = Number(avatar?.spotlight_multiplier ?? 1);
-    if (Number.isFinite(multiplier) && multiplier !== 1) {
-      adjustedPoints = Math.max(0, Math.round(basePoints * multiplier));
-      pointsBase = basePoints;
-      pointsMultiplier = multiplier;
-    }
+  const stack = await getStudentModifierStack(student_id);
+  const multiplier = Number(stack.spotlight_multiplier ?? 1);
+  if (Number.isFinite(multiplier) && multiplier !== 1) {
+    adjustedPoints = Math.max(0, Math.round(basePoints * multiplier));
+    pointsBase = basePoints;
+    pointsMultiplier = multiplier;
   }
   const { data: awardRow, error: aErr } = await supabase
     .from("class_awards")

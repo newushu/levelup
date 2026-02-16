@@ -29,6 +29,7 @@ type Member = {
   student_id: string;
   display_role: string;
   secondary_role?: string;
+  secondary_role_days?: string[];
   faction_id?: string | null;
   enabled: boolean;
   sort_order: number;
@@ -84,6 +85,16 @@ function plusDaysIso(baseIso: string, days: number) {
   return d.toISOString().slice(0, 10);
 }
 
+const ROLE_DAY_OPTIONS = [
+  { key: "m", label: "M" },
+  { key: "t", label: "T" },
+  { key: "w", label: "W" },
+  { key: "r", label: "R" },
+  { key: "f", label: "F" },
+  { key: "sa", label: "SA" },
+  { key: "su", label: "SU" },
+] as const;
+
 export default function CampDisplayAdminPage() {
   const [rosters, setRosters] = useState<Roster[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -124,6 +135,8 @@ export default function CampDisplayAdminPage() {
         group_id: null,
         student_id: String(row?.student_id ?? ""),
         display_role: String(row?.display_role ?? "camper"),
+        secondary_role: "",
+        secondary_role_days: [],
         enabled: row?.enabled !== false,
         sort_order: Number(row?.sort_order ?? idx),
         student: row?.student ?? null,
@@ -156,6 +169,8 @@ export default function CampDisplayAdminPage() {
       return {
         ...m,
         group_id: m.group_id ?? null,
+        secondary_role: String(m.secondary_role ?? ""),
+        secondary_role_days: Array.isArray((m as any).secondary_role_days) ? (m as any).secondary_role_days : [],
         student: full?.student ?? m.student ?? null,
       };
     });
@@ -260,6 +275,8 @@ export default function CampDisplayAdminPage() {
         group_id: null,
         student_id: s.id,
         display_role: "camper",
+        secondary_role: "",
+        secondary_role_days: [],
         enabled: true,
         sort_order: prev.filter((m) => m.roster_id === activeRosterId).length,
         student: { id: s.id, name: s.name, level: s.level, points_total: s.points_total },
@@ -284,6 +301,19 @@ export default function CampDisplayAdminPage() {
     setAutosaveTick((t) => t + 1);
   }
 
+  function setSecondaryRole(memberId: string, secondary: string) {
+    setMembers((prev) =>
+      prev.map((m) => {
+        if (m.id !== memberId) return m;
+        if (!secondary) return { ...m, secondary_role: "", secondary_role_days: [] };
+        const existingDays = Array.isArray(m.secondary_role_days) ? m.secondary_role_days : [];
+        const nextDays = existingDays.length ? existingDays : ROLE_DAY_OPTIONS.map((d) => d.key);
+        return { ...m, secondary_role: secondary, secondary_role_days: nextDays };
+      })
+    );
+    setAutosaveTick((t) => t + 1);
+  }
+
   function removeRoster(rosterId: string) {
     setRosters((prev) => prev.filter((r) => r.id !== rosterId));
     setGroups((prev) => prev.filter((g) => g.roster_id !== rosterId));
@@ -296,6 +326,19 @@ export default function CampDisplayAdminPage() {
       )
     );
     setActiveRosterId((prev) => (prev === rosterId ? rosters.find((r) => r.id !== rosterId)?.id ?? "" : prev));
+    setAutosaveTick((t) => t + 1);
+  }
+
+  function removeGroup(groupId: string) {
+    setGroups((prev) => prev.filter((g) => g.id !== groupId));
+    setMembers((prev) =>
+      prev.map((m) => (m.group_id === groupId ? { ...m, group_id: null } : m))
+    );
+    setScreens((prev) =>
+      prev.map((s) =>
+        s.group_id === groupId ? { ...s, group_id: null, show_all_groups: true } : s
+      )
+    );
     setAutosaveTick((t) => t + 1);
   }
 
@@ -657,7 +700,19 @@ export default function CampDisplayAdminPage() {
               setAutosaveTick((t) => t + 1);
             }}
             onSecondaryRoleChange={(id, secondary) => {
-              setMembers((prev) => prev.map((m) => (m.id === id ? { ...m, secondary_role: secondary } : m)));
+              setSecondaryRole(id, secondary);
+            }}
+            onSecondaryRoleDaysChange={(id, dayKey, enabled) => {
+              setMembers((prev) =>
+                prev.map((m) => {
+                  if (m.id !== id) return m;
+                  const current = Array.isArray(m.secondary_role_days) ? m.secondary_role_days : [];
+                  const next = enabled
+                    ? Array.from(new Set([...current, dayKey]))
+                    : current.filter((d) => d !== dayKey);
+                  return { ...m, secondary_role_days: next };
+                })
+              );
               setAutosaveTick((t) => t + 1);
             }}
             onFactionChange={(id, factionId) => {
@@ -674,6 +729,7 @@ export default function CampDisplayAdminPage() {
             <GroupColumn
               key={group.id}
               title={group.name}
+              onRemoveGroup={() => removeGroup(group.id)}
               members={membersForRoster.filter((m) => m.group_id === group.id)}
               onDropMember={(id) => moveMember(id, group.id)}
               dragMemberId={dragMemberId}
@@ -683,7 +739,19 @@ export default function CampDisplayAdminPage() {
                 setAutosaveTick((t) => t + 1);
               }}
               onSecondaryRoleChange={(id, secondary) => {
-                setMembers((prev) => prev.map((m) => (m.id === id ? { ...m, secondary_role: secondary } : m)));
+                setSecondaryRole(id, secondary);
+            }}
+              onSecondaryRoleDaysChange={(id, dayKey, enabled) => {
+                setMembers((prev) =>
+                  prev.map((m) => {
+                    if (m.id !== id) return m;
+                    const current = Array.isArray(m.secondary_role_days) ? m.secondary_role_days : [];
+                    const next = enabled
+                      ? Array.from(new Set([...current, dayKey]))
+                      : current.filter((d) => d !== dayKey);
+                    return { ...m, secondary_role_days: next };
+                  })
+                );
                 setAutosaveTick((t) => t + 1);
               }}
               onFactionChange={(id, factionId) => {
@@ -752,23 +820,27 @@ export default function CampDisplayAdminPage() {
 
 function GroupColumn({
   title,
+  onRemoveGroup,
   members,
   onDropMember,
   dragMemberId,
   setDragMemberId,
   onRoleChange,
   onSecondaryRoleChange,
+  onSecondaryRoleDaysChange,
   onFactionChange,
   factions,
   onRemoveMember,
 }: {
   title: string;
+  onRemoveGroup?: () => void;
   members: Member[];
   onDropMember: (memberId: string) => void;
   dragMemberId: string | null;
   setDragMemberId: (v: string | null) => void;
   onRoleChange: (memberId: string, role: string) => void;
   onSecondaryRoleChange: (memberId: string, secondary: string) => void;
+  onSecondaryRoleDaysChange: (memberId: string, dayKey: string, enabled: boolean) => void;
   onFactionChange: (memberId: string, factionId: string | null) => void;
   factions: Faction[];
   onRemoveMember: (memberId: string) => void;
@@ -785,7 +857,14 @@ function GroupColumn({
         setDragMemberId(null);
       }}
     >
-      <div style={{ fontWeight: 1000, fontSize: 14 }}>{title}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <div style={{ fontWeight: 1000, fontSize: 14 }}>{title}</div>
+        {onRemoveGroup ? (
+          <button type="button" onClick={onRemoveGroup} style={btnDangerSmall()}>
+            Delete group
+          </button>
+        ) : null}
+      </div>
       <div style={{ display: "grid", gap: 8 }}>
         {members.map((member) => (
           <div
@@ -815,6 +894,33 @@ function GroupColumn({
               <option value="cleaner">Cleaner</option>
               <option value="seller">Seller</option>
             </select>
+            {member.secondary_role ? (
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {ROLE_DAY_OPTIONS.map((day) => {
+                  const selected = (member.secondary_role_days ?? []).includes(day.key);
+                  return (
+                    <button
+                      key={day.key}
+                      type="button"
+                      onClick={() => onSecondaryRoleDaysChange(member.id, day.key, !selected)}
+                      style={{
+                        borderRadius: 999,
+                        border: selected ? "1px solid rgba(56,189,248,0.72)" : "1px solid rgba(148,163,184,0.35)",
+                        background: selected ? "rgba(14,165,233,0.25)" : "rgba(15,23,42,0.6)",
+                        color: "white",
+                        padding: "2px 7px",
+                        fontSize: 11,
+                        fontWeight: 900,
+                        lineHeight: 1.2,
+                      }}
+                      title={selected ? "Role active on this day" : "Role inactive on this day"}
+                    >
+                      {day.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
             <select
               value={member.faction_id ?? ""}
               onChange={(e) => onFactionChange(member.id, e.target.value || null)}

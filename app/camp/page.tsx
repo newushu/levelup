@@ -70,6 +70,13 @@ export default function CampHubPage() {
       ) : (
         <div style={{ marginTop: 8 }}>
           <div style={linkGrid()}>
+            <a href="/camp/settings" style={linkCard()}>
+              <span style={linkEmoji()}>⚙️</span>
+              <div>
+                <div style={{ fontWeight: 900 }}>Camp Settings</div>
+                <div style={{ fontSize: 12, opacity: 0.7 }}>Daily role points, leaders, coupons, and roster tools.</div>
+              </div>
+            </a>
             <a href="/camp/register" style={linkCard()}>
               <span style={linkEmoji()}>🧾</span>
               <div>

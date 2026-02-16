@@ -41,7 +41,7 @@ function buildCodeDoc(html?: string | null, css?: string | null, js?: string | n
   const safeHtml = html ?? "";
   const safeCss = css ?? "";
   const safeJs = js ?? "";
-  return `<!doctype html><html><head><meta charset="utf-8"/><style>html,body{margin:0;width:100%;height:100%;overflow:visible;background:transparent;}*{box-sizing:border-box;}img,canvas,svg{max-width:100%;max-height:100%;}</style><style>${safeCss}</style></head><body>${safeHtml}${safeJs ? `<script>${safeJs}</script>` : ""}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"/><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;scrollbar-width:none;-ms-overflow-style:none;}html::-webkit-scrollbar,body::-webkit-scrollbar{display:none;}*{box-sizing:border-box;}img,canvas,svg{max-width:100%;max-height:100%;}</style><style>${safeCss}</style></head><body>${safeHtml}${safeJs ? `<script>${safeJs}</script>` : ""}</body></html>`;
 }
 
 function CodePreviewFrame({
@@ -64,6 +64,7 @@ function CodePreviewFrame({
       title="code-preview"
       srcDoc={srcDoc}
       sandbox="allow-scripts"
+      scrolling="no"
       style={{
         position: "absolute",
         inset: -bleed,

@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AvatarRender from "@/components/AvatarRender";
 
 type Roster = { id: string; name: string };
@@ -59,6 +58,8 @@ export default function CampClassroomPage() {
   const [selectedOverlayOpen, setSelectedOverlayOpen] = useState(false);
   const [amountOverlayOpen, setAmountOverlayOpen] = useState(false);
   const [customAmount, setCustomAmount] = useState("");
+  const [actionFlash, setActionFlash] = useState("");
+  const actionLockUntilRef = useRef(0);
 
   useEffect(() => {
     (async () => {
@@ -135,6 +136,8 @@ export default function CampClassroomPage() {
 
   async function awardBulk(points: number, category: string, note: string) {
     if (!selectedIds.length) return;
+    if (busy || Date.now() < actionLockUntilRef.current) return;
+    actionLockUntilRef.current = Date.now() + 900;
     setBusy(true);
     setMsg("");
     try {
@@ -164,6 +167,8 @@ export default function CampClassroomPage() {
       } else {
         setMsg(`Updated ${selectedIds.length} students.`);
         setLastActionMsg(`${note} ${points > 0 ? "+" : ""}${points} pts to ${targetLabel}`);
+        setActionFlash(`${note} ${points > 0 ? "+" : ""}${points} pts`);
+        window.setTimeout(() => setActionFlash(""), 1200);
       }
       await load();
     } finally {
@@ -179,14 +184,23 @@ export default function CampClassroomPage() {
 
   return (
     <main style={{ minHeight: "100vh", padding: "14px 14px 120px", background: "radial-gradient(circle at top, rgba(56,189,248,0.12), rgba(2,6,23,0.98) 58%)", color: "white", display: "grid", gap: 12 }}>
-      <section style={{ ...card(), gridTemplateColumns: "minmax(0,1fr) auto auto", alignItems: "end" }}>
+      <section style={{ ...card(), gridTemplateColumns: "1fr", alignItems: "end" }}>
         <div style={{ display: "grid", gap: 4 }}>
           <div style={{ fontSize: 30, fontWeight: 1000 }}>Camp Classroom</div>
           <div style={{ opacity: 0.76 }}>Select roster/group then multi-select students.</div>
         </div>
-        <select value={activeRosterId} onChange={(e) => setActiveRosterId(e.target.value)} style={inp()}>
-          {rosters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-        </select>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {rosters.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => setActiveRosterId(r.id)}
+              style={activeRosterId === r.id ? chipOn() : chipOff()}
+            >
+              {r.name}
+            </button>
+          ))}
+        </div>
         <select value={activeGroupId} onChange={(e) => setActiveGroupId(e.target.value)} style={inp()}>
           <option value="all">All Groups</option>
           {rosterGroups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
@@ -222,29 +236,33 @@ export default function CampClassroomPage() {
                 gap: 6,
               }}
             >
-              <div style={{ width: 64, height: 64 }}>
-                <AvatarRender
-                  size={64}
-                  bg={m.student?.avatar_bg || "rgba(15,23,42,0.5)"}
-                  avatarSrc={avatarUrl(m.student?.avatar_storage_path)}
-                  effect={{ key: m.student?.avatar_effect ?? null }}
-                  border={{
-                    image_url: m.student?.corner_border_url ?? null,
-                    render_mode: m.student?.corner_border_render_mode ?? null,
-                    html: m.student?.corner_border_html ?? null,
-                    css: m.student?.corner_border_css ?? null,
-                    js: m.student?.corner_border_js ?? null,
-                    offset_x: m.student?.corner_border_offset_x ?? null,
-                    offset_y: m.student?.corner_border_offset_y ?? null,
-                    offsets_by_context: m.student?.corner_border_offsets_by_context ?? null,
-                  }}
-                  contextKey="camp_classroom"
-                  bleed={10}
-                />
+              <div style={{ display: "grid", gridTemplateColumns: "auto auto 1fr", alignItems: "center", gap: 8 }}>
+                <div style={levelBadge()}>Lv {Number(m.student?.level ?? 1)}</div>
+                <div style={{ width: 66, height: 66 }}>
+                  <AvatarRender
+                    size={66}
+                    bg={m.student?.avatar_bg || "rgba(15,23,42,0.5)"}
+                    avatarSrc={avatarUrl(m.student?.avatar_storage_path)}
+                    effect={{ key: m.student?.avatar_effect ?? null }}
+                    border={{
+                      image_url: m.student?.corner_border_url ?? null,
+                      render_mode: m.student?.corner_border_render_mode ?? null,
+                      html: m.student?.corner_border_html ?? null,
+                      css: m.student?.corner_border_css ?? null,
+                      js: m.student?.corner_border_js ?? null,
+                      offset_x: m.student?.corner_border_offset_x ?? null,
+                      offset_y: m.student?.corner_border_offset_y ?? null,
+                      offsets_by_context: m.student?.corner_border_offsets_by_context ?? null,
+                    }}
+                    contextKey="camp_classroom"
+                    bleed={12}
+                  />
+                </div>
+                <div style={{ display: "grid", gap: 4 }}>
+                  <div style={{ fontWeight: 1000, fontSize: 20, lineHeight: 1 }}>{m.student?.name ?? "Student"}</div>
+                  <div style={pointsCardChip()}>{Number(m.student?.points_total ?? 0).toLocaleString()} pts</div>
+                </div>
               </div>
-              <div style={{ fontWeight: 900, fontSize: 16 }}>{m.student?.name ?? "Student"}</div>
-              <div style={{ opacity: 0.8, fontWeight: 800 }}>Lv {Number(m.student?.level ?? 1)}</div>
-              <div style={{ opacity: 0.9, fontWeight: 900 }}>{Number(m.student?.points_total ?? 0).toLocaleString()} pts</div>
               <div style={{ opacity: 0.75, fontSize: 12, textTransform: "uppercase" }}>{m.display_role || "camper"}</div>
               {m.secondary_role ? <div style={{ opacity: 0.75, fontSize: 12, textTransform: "uppercase" }}>2nd Role: {m.secondary_role}</div> : null}
               {m.last_change ? (
@@ -288,7 +306,7 @@ export default function CampClassroomPage() {
             </div>
             <div style={{ display: "grid", gap: 4, maxHeight: 260, overflow: "auto" }}>
               {selectedMembers.map((m) => (
-                <div key={m.id} style={{ fontSize: 13, fontWeight: 800, opacity: 0.95 }}>
+                <div key={m.id} style={{ fontSize: 16, fontWeight: 900, opacity: 0.98, lineHeight: 1.2 }}>
                   {m.student?.name ?? "Student"}
                 </div>
               ))}
@@ -333,6 +351,11 @@ export default function CampClassroomPage() {
           </div>
         </div>
       ) : null}
+      {actionFlash ? (
+        <div style={quickOverlay()}>
+          <div style={quickOverlayCard()}>{actionFlash}</div>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -359,10 +382,10 @@ function actionInfo(): React.CSSProperties {
   return { borderRadius: 10, border: "1px solid rgba(52,211,153,0.55)", background: "rgba(6,78,59,0.45)", padding: "8px 10px", fontWeight: 900 };
 }
 function lastChangePos(): React.CSSProperties {
-  return { borderRadius: 8, border: "1px solid rgba(74,222,128,0.48)", background: "rgba(20,83,45,0.5)", padding: "4px 6px", fontSize: 11, fontWeight: 900 };
+  return { borderRadius: 8, border: "1px solid rgba(74,222,128,0.48)", background: "rgba(20,83,45,0.5)", padding: "5px 8px", fontSize: 12, fontWeight: 900, textAlign: "center" };
 }
 function lastChangeNeg(): React.CSSProperties {
-  return { borderRadius: 8, border: "1px solid rgba(248,113,113,0.52)", background: "rgba(127,29,29,0.5)", padding: "4px 6px", fontSize: 11, fontWeight: 900 };
+  return { borderRadius: 8, border: "1px solid rgba(248,113,113,0.52)", background: "rgba(127,29,29,0.5)", padding: "5px 8px", fontSize: 12, fontWeight: 900, textAlign: "center" };
 }
 function bottomBar(): React.CSSProperties {
   return {
@@ -456,5 +479,56 @@ function amountChip(active: boolean): React.CSSProperties {
     color: "white",
     padding: "8px 0",
     fontWeight: 900,
+  };
+}
+function levelBadge(): React.CSSProperties {
+  return {
+    borderRadius: 10,
+    border: "1px solid rgba(148,163,184,0.45)",
+    background: "rgba(15,23,42,0.7)",
+    color: "white",
+    fontWeight: 1000,
+    fontSize: 14,
+    padding: "8px 10px",
+    minWidth: 58,
+    textAlign: "center",
+  };
+}
+function pointsCardChip(): React.CSSProperties {
+  return {
+    borderRadius: 999,
+    border: "1px solid rgba(250,204,21,0.45)",
+    background: "rgba(120,53,15,0.42)",
+    color: "white",
+    fontWeight: 1000,
+    fontSize: 19,
+    lineHeight: 1,
+    padding: "7px 10px",
+    textAlign: "center",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+  };
+}
+function quickOverlay(): React.CSSProperties {
+  return {
+    position: "fixed",
+    inset: 0,
+    pointerEvents: "none",
+    zIndex: 95,
+    display: "grid",
+    placeItems: "center",
+  };
+}
+function quickOverlayCard(): React.CSSProperties {
+  return {
+    borderRadius: 12,
+    border: "1px solid rgba(52,211,153,0.62)",
+    background: "rgba(2,6,23,0.9)",
+    color: "#bbf7d0",
+    padding: "10px 14px",
+    fontWeight: 1000,
+    fontSize: 16,
+    boxShadow: "0 14px 30px rgba(0,0,0,0.35)",
   };
 }

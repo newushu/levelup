@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabase/server";
+import { getStudentModifierStack } from "@/lib/modifierStack";
 
 export async function POST(req: Request) {
   const supabase = await supabaseServer();
@@ -129,24 +130,12 @@ export async function POST(req: Request) {
       .maybeSingle();
     if (sData?.name) skillName = sData.name;
 
-    const { data: settings } = await supabase
-      .from("student_avatar_settings")
-      .select("avatar_id")
-      .eq("student_id", tracker?.student_id ?? "")
-      .maybeSingle();
-    const avatarId = String(settings?.avatar_id ?? "").trim();
-    if (avatarId) {
-      const { data: avatar } = await supabase
-        .from("avatars")
-        .select("skill_pulse_multiplier")
-        .eq("id", avatarId)
-        .maybeSingle();
-      const multiplier = Number(avatar?.skill_pulse_multiplier ?? 1);
-      if (Number.isFinite(multiplier) && multiplier !== 1) {
-        pointsBase = pointsAwarded;
-        pointsMultiplier = multiplier;
-        pointsAwarded = Math.max(0, Math.round(pointsAwarded * multiplier));
-      }
+    const stack = await getStudentModifierStack(String(tracker?.student_id ?? ""));
+    const multiplier = Number(stack.skill_pulse_multiplier ?? 1);
+    if (Number.isFinite(multiplier) && multiplier !== 1) {
+      pointsBase = pointsAwarded;
+      pointsMultiplier = multiplier;
+      pointsAwarded = Math.max(0, Math.round(pointsAwarded * multiplier));
     }
 
     const ins = await supabase.from("ledger").insert({

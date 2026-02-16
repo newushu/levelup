@@ -3,6 +3,12 @@ import { supabaseServer } from "../../../../lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getStudentCriteriaState, matchItemCriteria } from "@/lib/unlockCriteria";
 
+function isMissingColumn(err: any, column: string) {
+  const msg = String(err?.message ?? "").toLowerCase();
+  const key = column.toLowerCase();
+  return msg.includes(`column \"${key}\"`) || msg.includes(`.${key}`) || msg.includes(key);
+}
+
 export async function POST(req: Request) {
   const supabase = await supabaseServer();
   const admin = supabaseAdmin();
@@ -23,11 +29,25 @@ export async function POST(req: Request) {
 
   const { data: student, error: sErr } = await admin
     .from("students")
-    .select("id,level")
+    .select("id,level,lifetime_points")
     .eq("id", student_id)
     .maybeSingle();
   if (sErr) return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
   if (!student) return NextResponse.json({ ok: false, error: "Student not found" }, { status: 404 });
+
+  const thresholdsRes = await admin
+    .from("avatar_level_thresholds")
+    .select("level,min_lifetime_points")
+    .order("level", { ascending: true });
+  let effectiveLevel = Math.max(1, Number((student as any).level ?? 1));
+  if (!thresholdsRes.error && (thresholdsRes.data ?? []).length) {
+    const lifetime = Number((student as any).lifetime_points ?? 0);
+    for (const row of thresholdsRes.data ?? []) {
+      if (lifetime >= Number((row as any).min_lifetime_points ?? 0)) {
+        effectiveLevel = Math.max(effectiveLevel, Number((row as any).level ?? effectiveLevel));
+      }
+    }
+  }
 
   const criteriaState = await getStudentCriteriaState(admin as any, student_id);
 
@@ -35,14 +55,21 @@ export async function POST(req: Request) {
     if (!itemKey || itemKey === "none") return true;
     const table = itemType === "effect" ? "avatar_effects" : itemType === "corner_border" ? "ui_corner_borders" : "ui_card_plate_borders";
     const keyField = itemType === "effect" ? "key" : "key";
-    const itemRes = await admin.from(table).select("unlock_level,unlock_points,enabled").eq(keyField, itemKey).maybeSingle();
+    const selectColumns = itemType === "card_plate"
+      ? "unlock_level,unlock_points,enabled"
+      : "unlock_level,unlock_points,enabled,limited_event_only";
+    let itemRes = await admin.from(table).select(selectColumns).eq(keyField, itemKey).maybeSingle();
+    if (itemRes.error && isMissingColumn(itemRes.error, "limited_event_only")) {
+      itemRes = await admin.from(table).select("unlock_level,unlock_points,enabled").eq(keyField, itemKey).maybeSingle();
+    }
     if (itemRes.error) return false;
     const item = itemRes.data as any;
     if (!item || item.enabled === false) return false;
     const unlockLevel = Number(item.unlock_level ?? 1);
     const unlockPoints = Math.max(0, Math.floor(Number(item.unlock_points ?? 0)));
-    const levelOk = Number(student.level ?? 1) >= unlockLevel;
-    const unlockedByDefault = unlockPoints <= 0 && levelOk;
+    const limitedEventOnly = item?.limited_event_only === true;
+    const levelOk = effectiveLevel >= unlockLevel;
+    const unlockedByDefault = !limitedEventOnly && unlockPoints <= 0 && levelOk;
     const custom = await admin
       .from("student_custom_unlocks")
       .select("id")
@@ -53,6 +80,7 @@ export async function POST(req: Request) {
     if (custom.error) return false;
     const criteriaMatch = matchItemCriteria(itemType, itemKey, criteriaState.fulfilledKeys, criteriaState.requirementMap);
     const bypassByCriteria = criteriaMatch.hasRequirements && criteriaMatch.matched;
+    if (limitedEventOnly && !bypassByCriteria) return false;
     return bypassByCriteria || !!custom.data || unlockedByDefault;
   }
 

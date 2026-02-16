@@ -1,9 +1,10 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getStudentModifierStack } from "@/lib/modifierStack";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BOARD_POINTS_PER_TOP10 = 15;
-const BOARD_POINTS_TOP1 = 30;
-const CAMP_ROLE_DAILY_POINTS: Record<string, number> = {
+const BOARD_POINTS_TOP1 = 50;
+const DEFAULT_CAMP_ROLE_DAILY_POINTS: Record<string, number> = {
   seller: 300,
   cleaner: 500,
 };
@@ -19,6 +20,9 @@ type BoardSnapshotBundle = {
 };
 type LiveBoardAwardsResult = { ok: true; awards: BoardAward[] } | { ok: false; error: string };
 type BoardBundleResult = ({ ok: true } & BoardSnapshotBundle) | { ok: false; error: string };
+type EventDailyPointsResult =
+  | { ok: true; points: number; chips: string[]; event_keys: string[] }
+  | { ok: false; error: string };
 
 function getWeekStartUTC(now: Date) {
   const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -41,6 +45,34 @@ function getEasternDateKey(value: Date) {
   const month = parts.find((p) => p.type === "month")?.value ?? "";
   const day = parts.find((p) => p.type === "day")?.value ?? "";
   return year && month && day ? `${year}-${month}-${day}` : new Date().toISOString().slice(0, 10);
+}
+
+function getEasternHour(value: Date) {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = fmt.formatToParts(value);
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  return Number.isFinite(hour) ? hour : 0;
+}
+
+function getEasternDayCode(value: Date) {
+  const dayName = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+  })
+    .format(value)
+    .toLowerCase();
+  if (dayName.startsWith("mon")) return "m";
+  if (dayName.startsWith("tue")) return "t";
+  if (dayName.startsWith("wed")) return "w";
+  if (dayName.startsWith("thu")) return "r";
+  if (dayName.startsWith("fri")) return "f";
+  if (dayName.startsWith("sat")) return "sa";
+  if (dayName.startsWith("sun")) return "su";
+  return "";
 }
 
 function addDaysToDateKey(key: string, days: number) {
@@ -90,6 +122,47 @@ function normalizeRole(value: unknown) {
     .toLowerCase();
 }
 
+function normalizeDayCode(value: unknown) {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "monday" || v === "mon") return "m";
+  if (v === "tuesday" || v === "tues" || v === "tue") return "t";
+  if (v === "wednesday" || v === "wed") return "w";
+  if (v === "thursday" || v === "thurs" || v === "thu" || v === "th") return "r";
+  if (v === "friday" || v === "fri") return "f";
+  if (v === "saturday" || v === "sat") return "sa";
+  if (v === "sunday" || v === "sun") return "su";
+  if (v === "mtwrf") return "";
+  if (v === "th") return "r";
+  if (v === "sat") return "sa";
+  if (v === "sun") return "su";
+  return v;
+}
+
+function roleDayAllowed(role: string, days: unknown, todayCode: string) {
+  if (!todayCode) return false;
+  if (role !== "seller" && role !== "cleaner") return false;
+  const list = Array.isArray(days) ? days : [];
+  if (!list.length) return true;
+  return list.map((d) => normalizeDayCode(d)).includes(todayCode);
+}
+
+async function getCampRolePointMap(admin: AdminClient) {
+  const settingsRes = await admin
+    .from("camp_settings")
+    .select("seller_daily_points,cleaner_daily_points")
+    .eq("id", "default")
+    .maybeSingle();
+  if (settingsRes.error && isMissingRelation(settingsRes.error, "camp_settings")) {
+    return { ...DEFAULT_CAMP_ROLE_DAILY_POINTS };
+  }
+  if (settingsRes.error) return { ...DEFAULT_CAMP_ROLE_DAILY_POINTS };
+  return {
+    seller: Number(settingsRes.data?.seller_daily_points ?? DEFAULT_CAMP_ROLE_DAILY_POINTS.seller),
+    cleaner: Number(settingsRes.data?.cleaner_daily_points ?? DEFAULT_CAMP_ROLE_DAILY_POINTS.cleaner),
+  };
+}
+
 function isDateKey(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ""));
 }
@@ -106,9 +179,13 @@ function isWithinRosterWindow(todayKey: string, startDate?: string | null, endDa
 
 async function getCampRoleDailyPoints(admin: AdminClient, studentId: string) {
   const todayEt = getEasternDateKey(new Date());
+  const easternHour = getEasternHour(new Date());
+  const roleRedeemWindowOpen = easternHour >= 17;
+  const todayDayCode = getEasternDayCode(new Date());
+  const rolePoints = await getCampRolePointMap(admin);
   const membersRes = await admin
     .from("camp_display_members")
-    .select("roster_id,display_role,secondary_role")
+    .select("roster_id,display_role,secondary_role,secondary_role_days")
     .eq("student_id", studentId)
     .eq("enabled", true);
 
@@ -121,6 +198,7 @@ async function getCampRoleDailyPoints(admin: AdminClient, studentId: string) {
     roster_id?: string | null;
     display_role?: string | null;
     secondary_role?: string | null;
+    secondary_role_days?: string[] | null;
   }>;
   if (!members.length) return { points: 0, chips: [] as string[] };
 
@@ -149,15 +227,29 @@ async function getCampRoleDailyPoints(admin: AdminClient, studentId: string) {
     for (const m of members) {
       const rid = String(m.roster_id ?? "");
       if (!rid || !allActiveRosterIds.has(rid)) continue;
-      const roleSet = new Set([normalizeRole(m.display_role), normalizeRole(m.secondary_role)].filter(Boolean));
-      for (const role of roleSet) {
-        const pts = Number(CAMP_ROLE_DAILY_POINTS[role] ?? 0);
+      const displayRole = normalizeRole(m.display_role);
+      if (displayRole) {
+        const pts = Number(rolePoints[displayRole] ?? 0);
         if (pts <= 0) continue;
         fallbackPoints += pts;
-        labels.push(`${role[0]?.toUpperCase() ?? ""}${role.slice(1)}`);
+        labels.push(`${displayRole[0]?.toUpperCase() ?? ""}${displayRole.slice(1)}`);
+      }
+      const secondaryRole = normalizeRole(m.secondary_role);
+      if (secondaryRole && roleDayAllowed(secondaryRole, m.secondary_role_days, todayDayCode)) {
+        const pts = Number(rolePoints[secondaryRole] ?? 0);
+        if (pts <= 0) continue;
+        fallbackPoints += pts;
+        labels.push(`${secondaryRole[0]?.toUpperCase() ?? ""}${secondaryRole.slice(1)}`);
       }
     }
     const uniqueLabels = Array.from(new Set(labels));
+    if (!roleRedeemWindowOpen && fallbackPoints > 0) {
+      return {
+        points: 0,
+        chips: [],
+        pending_chips: [`Camp role points unlock at 5:00 PM ET (${uniqueLabels.join(", ")})`],
+      };
+    }
     return {
       points: fallbackPoints,
       chips: fallbackPoints > 0 ? [`+${fallbackPoints} camp role (${uniqueLabels.join(", ")})`] : [],
@@ -179,20 +271,99 @@ async function getCampRoleDailyPoints(admin: AdminClient, studentId: string) {
   for (const m of members) {
     const rid = String(m.roster_id ?? "");
     if (!rid || !activeRosterIds.has(rid)) continue;
-    const roleSet = new Set([normalizeRole(m.display_role), normalizeRole(m.secondary_role)].filter(Boolean));
-    for (const role of roleSet) {
-      const pts = Number(CAMP_ROLE_DAILY_POINTS[role] ?? 0);
+    const displayRole = normalizeRole(m.display_role);
+    if (displayRole) {
+      const pts = Number(rolePoints[displayRole] ?? 0);
       if (pts <= 0) continue;
       points += pts;
-      labels.push(`${role[0]?.toUpperCase() ?? ""}${role.slice(1)}`);
+      labels.push(`${displayRole[0]?.toUpperCase() ?? ""}${displayRole.slice(1)}`);
+    }
+    const secondaryRole = normalizeRole(m.secondary_role);
+    if (secondaryRole && roleDayAllowed(secondaryRole, m.secondary_role_days, todayDayCode)) {
+      const pts = Number(rolePoints[secondaryRole] ?? 0);
+      if (pts <= 0) continue;
+      points += pts;
+      labels.push(`${secondaryRole[0]?.toUpperCase() ?? ""}${secondaryRole.slice(1)}`);
     }
   }
 
   const uniqueLabels = Array.from(new Set(labels));
+  if (!roleRedeemWindowOpen && points > 0) {
+    return {
+      points: 0,
+      chips: [],
+      pending_chips: [`Camp role points unlock at 5:00 PM ET (${uniqueLabels.join(", ")})`],
+    };
+  }
   return {
     points,
     chips: points > 0 ? [`+${points} camp role (${uniqueLabels.join(", ")})`] : [],
   };
+}
+
+async function getLimitedEventDailyPoints(admin: AdminClient, studentId: string): Promise<EventDailyPointsResult> {
+  const todayKey = getEasternDateKey(new Date());
+  let defsRes = await admin
+    .from("unlock_criteria_definitions")
+    .select("key,label,enabled,start_date,end_date,daily_free_points")
+    .ilike("key", "event_%")
+    .eq("enabled", true);
+  if (defsRes.error && (isMissingColumn(defsRes.error, "start_date") || isMissingColumn(defsRes.error, "end_date") || isMissingColumn(defsRes.error, "daily_free_points"))) {
+    return { ok: true, points: 0, chips: [], event_keys: [] };
+  }
+  if (defsRes.error && isMissingRelation(defsRes.error, "unlock_criteria_definitions")) {
+    return { ok: true, points: 0, chips: [], event_keys: [] };
+  }
+  if (defsRes.error) return { ok: false, error: defsRes.error.message };
+
+  const activeDefs = (defsRes.data ?? [])
+    .map((row: any) => ({
+      key: String(row?.key ?? ""),
+      label: String(row?.label ?? "Event"),
+      start_date: String(row?.start_date ?? ""),
+      end_date: String(row?.end_date ?? ""),
+      daily_free_points: Math.max(0, Math.floor(Number(row?.daily_free_points ?? 0))),
+    }))
+    .filter((row) => row.key && row.daily_free_points > 0)
+    .filter((row) => isWithinRosterWindow(todayKey, row.start_date || null, row.end_date || null));
+  if (!activeDefs.length) return { ok: true, points: 0, chips: [], event_keys: [] };
+
+  const eligibleRes = await admin
+    .from("student_unlock_criteria")
+    .select("criteria_key,fulfilled")
+    .eq("student_id", studentId)
+    .in("criteria_key", activeDefs.map((d) => d.key));
+  if (eligibleRes.error && isMissingRelation(eligibleRes.error, "student_unlock_criteria")) {
+    return { ok: true, points: 0, chips: [], event_keys: [] };
+  }
+  if (eligibleRes.error) return { ok: false, error: eligibleRes.error.message };
+  const eligibleKeys = new Set(
+    (eligibleRes.data ?? [])
+      .filter((row: any) => row?.fulfilled === true)
+      .map((row: any) => String(row?.criteria_key ?? ""))
+      .filter(Boolean)
+  );
+  const eligibleDefs = activeDefs.filter((d) => eligibleKeys.has(d.key));
+  if (!eligibleDefs.length) return { ok: true, points: 0, chips: [], event_keys: [] };
+
+  const claimRes = await admin
+    .from("student_event_daily_claims")
+    .select("criteria_key")
+    .eq("student_id", studentId)
+    .eq("claim_date", todayKey)
+    .in("criteria_key", eligibleDefs.map((d) => d.key));
+  if (claimRes.error && isMissingRelation(claimRes.error, "student_event_daily_claims")) {
+    return { ok: true, points: 0, chips: [], event_keys: [] };
+  }
+  if (claimRes.error) return { ok: false, error: claimRes.error.message };
+  const claimedSet = new Set((claimRes.data ?? []).map((row: any) => String(row?.criteria_key ?? "")).filter(Boolean));
+  const claimableDefs = eligibleDefs.filter((d) => !claimedSet.has(d.key));
+  if (!claimableDefs.length) return { ok: true, points: 0, chips: [], event_keys: [] };
+
+  const points = claimableDefs.reduce((sum, row) => sum + row.daily_free_points, 0);
+  const chips = claimableDefs.map((row) => `+${row.daily_free_points} limited event (${row.label})`);
+  const eventKeys = claimableDefs.map((row) => row.key);
+  return { ok: true, points, chips, event_keys: eventKeys };
 }
 
 function rankWithTies(rows: RankedRow[], boardKey: string, higherIsBetter = true, excludeNonPositive = false): BoardAward[] {
@@ -279,13 +450,12 @@ export async function getRoleAccess(userId: string, studentId: string) {
 async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<LiveBoardAwardsResult> {
   const { data: students, error: sErr } = await admin
     .from("students")
-    .select("id,points_total,lifetime_points");
+    .select("id,points_total");
   if (sErr) return { ok: false as const, error: sErr.message };
 
   const rows = (students ?? []).map((s: any) => ({
     student_id: String(s.id ?? ""),
     total: Number(s.points_total ?? 0),
-    lifetime: Number(s.lifetime_points ?? 0),
   }));
 
   const weekStart = getWeekStartUTC(new Date()).toISOString();
@@ -304,20 +474,82 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
 
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
-  const { data: pulseLedger, error: pErr } = await admin
-    .from("ledger")
-    .select("student_id,points,category,note")
-    .gte("created_at", todayStart.toISOString())
-    .or("category.eq.skill_pulse,note.ilike.Battle Pulse win%");
-  if (pErr) return { ok: false as const, error: pErr.message };
+  const taoluCountById = new Map<string, number>();
+  const taoluLatestAtById = new Map<string, string>();
+  const taoluRes = await admin
+    .from("taolu_sessions")
+    .select("student_id,created_at")
+    .gte("created_at", todayStart.toISOString());
+  if (!taoluRes.error) {
+    (taoluRes.data ?? []).forEach((row: any) => {
+      const sid = String(row?.student_id ?? "");
+      const createdAt = String(row?.created_at ?? "");
+      if (!sid) return;
+      taoluCountById.set(sid, (taoluCountById.get(sid) ?? 0) + 1);
+      const prev = taoluLatestAtById.get(sid) ?? "";
+      if (createdAt > prev) taoluLatestAtById.set(sid, createdAt);
+    });
+  } else if (!isMissingRelation(taoluRes.error, "taolu_sessions")) {
+    return { ok: false as const, error: taoluRes.error.message };
+  }
 
-  const pulseById = new Map<string, number>();
-  (pulseLedger ?? []).forEach((r: any) => {
-    const sid = String(r.student_id ?? "");
-    const pts = Number(r.points ?? 0);
-    if (!sid || pts <= 0) return;
-    pulseById.set(sid, (pulseById.get(sid) ?? 0) + pts);
-  });
+  const pulseRepsById = new Map<string, number>();
+  const pulseLatestAtById = new Map<string, string>();
+
+  const skillLogRes = await admin
+    .from("skill_tracker_logs")
+    .select("tracker_id,created_at,success")
+    .gte("created_at", todayStart.toISOString());
+  if (!skillLogRes.error) {
+    const trackerIds = Array.from(
+      new Set((skillLogRes.data ?? []).map((row: any) => String(row?.tracker_id ?? "")).filter(Boolean))
+    );
+    const trackerToStudent = new Map<string, string>();
+    if (trackerIds.length) {
+      const trackerRes = await admin
+        .from("skill_trackers")
+        .select("id,student_id")
+        .in("id", trackerIds);
+      if (trackerRes.error && !isMissingRelation(trackerRes.error, "skill_trackers")) {
+        return { ok: false as const, error: trackerRes.error.message };
+      }
+      (trackerRes.data ?? []).forEach((tracker: any) => {
+        const tid = String(tracker?.id ?? "");
+        const sid = String(tracker?.student_id ?? "");
+        if (!tid || !sid) return;
+        trackerToStudent.set(tid, sid);
+      });
+    }
+    (skillLogRes.data ?? []).forEach((row: any) => {
+      if (row?.success !== true) return;
+      const sid = trackerToStudent.get(String(row?.tracker_id ?? "")) ?? "";
+      const createdAt = String(row?.created_at ?? "");
+      if (!sid) return;
+      pulseRepsById.set(sid, (pulseRepsById.get(sid) ?? 0) + 1);
+      const prev = pulseLatestAtById.get(sid) ?? "";
+      if (createdAt > prev) pulseLatestAtById.set(sid, createdAt);
+    });
+  } else if (!isMissingRelation(skillLogRes.error, "skill_tracker_logs")) {
+    return { ok: false as const, error: skillLogRes.error.message };
+  }
+
+  const battleLogRes = await admin
+    .from("battle_tracker_logs")
+    .select("student_id,created_at,success")
+    .gte("created_at", todayStart.toISOString());
+  if (!battleLogRes.error) {
+    (battleLogRes.data ?? []).forEach((row: any) => {
+      if (row?.success !== true) return;
+      const sid = String(row?.student_id ?? "");
+      const createdAt = String(row?.created_at ?? "");
+      if (!sid) return;
+      pulseRepsById.set(sid, (pulseRepsById.get(sid) ?? 0) + 1);
+      const prev = pulseLatestAtById.get(sid) ?? "";
+      if (createdAt > prev) pulseLatestAtById.set(sid, createdAt);
+    });
+  } else if (!isMissingRelation(battleLogRes.error, "battle_tracker_logs")) {
+    return { ok: false as const, error: battleLogRes.error.message };
+  }
 
   const { data: mvpRows, error: mErr } = await admin
     .from("battle_mvp_awards")
@@ -334,10 +566,27 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
 
   const awards: BoardAward[] = [];
   awards.push(
-    ...rankWithTies(rows.map((r) => ({ student_id: r.student_id, points: r.total })), "total", true),
     ...rankWithTies(rows.map((r) => ({ student_id: r.student_id, points: weeklyById.get(r.student_id) ?? 0 })), "weekly", true),
-    ...rankWithTies(rows.map((r) => ({ student_id: r.student_id, points: r.lifetime })), "lifetime", true),
-    ...rankWithTies(rows.map((r) => ({ student_id: r.student_id, points: pulseById.get(r.student_id) ?? 0 })), "skill_pulse_today", true, true),
+    ...rankWithTies(
+      rows.map((r) => ({
+        student_id: r.student_id,
+        points: taoluCountById.get(r.student_id) ?? 0,
+        recorded_at: taoluLatestAtById.get(r.student_id) ?? "",
+      })),
+      "taolu_today",
+      true,
+      true
+    ),
+    ...rankWithTies(
+      rows.map((r) => ({
+        student_id: r.student_id,
+        points: pulseRepsById.get(r.student_id) ?? 0,
+        recorded_at: pulseLatestAtById.get(r.student_id) ?? "",
+      })),
+      "skill_pulse_reps_today",
+      true,
+      true
+    ),
     ...rankWithTies(rows.map((r) => ({ student_id: r.student_id, points: mvpById.get(r.student_id) ?? 0 })), "mvp", true)
   );
 
@@ -407,6 +656,8 @@ export async function getLeaderboardBoardMapForDate(admin: AdminClient, snapshot
   const snapshotTableAvailable = !existing.error;
 
   if (snapshotTableAvailable && (existing.data ?? []).length) {
+    const hasLegacyBonus = (existing.data ?? []).some((row: any) => Number(row?.board_points ?? 0) === 30);
+    if (!hasLegacyBonus) {
     const awards = (existing.data ?? []).map((row: any) => ({
       board_key: String(row.board_key ?? ""),
       student_id: String(row.student_id ?? ""),
@@ -414,6 +665,7 @@ export async function getLeaderboardBoardMapForDate(admin: AdminClient, snapshot
       board_points: Number(row.board_points ?? BOARD_POINTS_PER_TOP10),
     }));
     return { ok: true as const, ...summarizeAwards(awards) };
+    }
   }
 
   const live = await computeLiveLeaderboardBoardAwards(admin);
@@ -494,16 +746,16 @@ export async function computeDailyRedeemStatus(
     return { ok: false as const, error: grantRes.error.message };
   }
 
-  const avatarPoints = Math.max(0, Math.round(Number(avatar?.daily_free_points ?? 0)));
+  const stack = await getStudentModifierStack(studentId);
+  const avatarPointsBase = Math.max(0, Math.round(Number(stack.daily_free_points ?? avatar?.daily_free_points ?? 0)));
   const campRoleRes = await getCampRoleDailyPoints(admin, studentId);
   if ("error" in campRoleRes) {
     return { ok: false as const, error: campRoleRes.error };
   }
-  const campRolePoints = Math.max(0, Math.round(Number(campRoleRes.points ?? 0)));
+  const campRolePointsBase = Math.max(0, Math.round(Number(campRoleRes.points ?? 0)));
   const boardKeys = boardBundle.boardMap.get(studentId) ?? [];
   const boardAwardRows = boardBundle.boardAwardsByStudent.get(studentId) ?? [];
-  const leaderboardPoints = Math.max(0, Math.round(Number(boardBundle.boardPointsByStudent.get(studentId) ?? 0)));
-  const totalPoints = Math.max(0, Math.round(avatarPoints + leaderboardPoints + campRolePoints));
+  const leaderboardPointsBase = Math.max(0, Math.round(Number(boardBundle.boardPointsByStudent.get(studentId) ?? 0)));
 
   const avatarGrantedAt = avatarSettings?.avatar_daily_granted_at ? Date.parse(String(avatarSettings.avatar_daily_granted_at)) : Number.NaN;
   const boardGrantedAt = grantRow?.last_granted_at ? Date.parse(String(grantRow.last_granted_at)) : Number.NaN;
@@ -512,18 +764,41 @@ export async function computeDailyRedeemStatus(
   const nowMs = Date.now();
   const nextRedeemAtMs = lastGrantedMs > 0 ? lastGrantedMs + DAY_MS : nowMs;
   const cooldownMs = Math.max(0, nextRedeemAtMs - nowMs);
-  const canRedeem = totalPoints > 0 && cooldownMs === 0;
+  const regularReady = cooldownMs === 0;
+  const avatarPoints = regularReady ? avatarPointsBase : 0;
+  const leaderboardPoints = regularReady ? leaderboardPointsBase : 0;
+  const campRolePoints = regularReady ? campRolePointsBase : 0;
+  const regularPoints = Math.max(0, Math.round(avatarPoints + leaderboardPoints + campRolePoints));
+
+  const eventRes = await getLimitedEventDailyPoints(admin, studentId);
+  if (!eventRes.ok) {
+    return { ok: false as const, error: "error" in eventRes ? eventRes.error : "Failed to load limited event daily points" };
+  }
+  const limitedEventDailyPoints = Math.max(0, Math.round(Number(eventRes.points ?? 0)));
+  const totalPoints = Math.max(0, Math.round(regularPoints + limitedEventDailyPoints));
+  const canRedeem = totalPoints > 0;
 
   const contributions: string[] = [];
   if (avatarPoints > 0) contributions.push(`+${avatarPoints} avatar points`);
-  if (campRolePoints > 0) contributions.push(...campRoleRes.chips);
+  if (!regularReady && (avatarPointsBase > 0 || leaderboardPointsBase > 0 || campRolePointsBase > 0)) {
+    contributions.push(`Base daily points unlock at ${new Date(nextRedeemAtMs).toLocaleString("en-US", { timeZone: "America/New_York" })} ET`);
+  }
+  if (campRolePoints > 0) {
+    contributions.push("Camp role points ready to redeem");
+    contributions.push(...campRoleRes.chips);
+  }
+  if (Array.isArray((campRoleRes as any).pending_chips) && (campRoleRes as any).pending_chips.length) {
+    contributions.push("Camp role points pending");
+    contributions.push(...(campRoleRes as any).pending_chips);
+  }
   const top1Count = boardAwardRows.filter((r) => Number(r.rank ?? 999) === 1).length;
   const nonTop1Count = Math.max(0, boardAwardRows.length - top1Count);
-  if (top1Count > 0) contributions.push(`+${top1Count * BOARD_POINTS_TOP1} #1 in ${top1Count} leaderboard${top1Count === 1 ? "" : "s"}`);
-  if (nonTop1Count > 0) contributions.push(`+${nonTop1Count * BOARD_POINTS_PER_TOP10} top 10 in ${nonTop1Count} leaderboard${nonTop1Count === 1 ? "" : "s"}`);
+  if (top1Count > 0) contributions.push(`Top #1 bonus: +${BOARD_POINTS_TOP1} each (${top1Count} board${top1Count === 1 ? "" : "s"})`);
+  if (nonTop1Count > 0) contributions.push(`Top 10 bonus: +${BOARD_POINTS_PER_TOP10} each (${nonTop1Count} board${nonTop1Count === 1 ? "" : "s"})`);
+  if (limitedEventDailyPoints > 0) contributions.push(...eventRes.chips);
 
   const skillBase = Math.max(0, Math.round(Number(bonusSettings?.skill_tracker_points_per_rep ?? 2)));
-  const skillMultiplier = Number(avatar?.skill_pulse_multiplier ?? 1);
+  const skillMultiplier = Number(stack.skill_pulse_multiplier ?? avatar?.skill_pulse_multiplier ?? 1);
 
   return {
     ok: true as const,
@@ -536,20 +811,22 @@ export async function computeDailyRedeemStatus(
       leaderboard_points: leaderboardPoints,
       avatar_points: avatarPoints,
       camp_role_points: campRolePoints,
+      limited_event_daily_points: limitedEventDailyPoints,
+      claimable_event_keys: eventRes.event_keys,
       leaderboard_boards: boardKeys,
       leaderboard_awards: boardAwardRows,
       leaderboard_snapshot_date: snapshotDateKey ?? getSnapshotCycleDateKey(new Date()),
       contribution_chips: contributions,
       avatar_name: String(avatar?.name ?? "Avatar"),
       modifiers: {
-        rule_keeper_multiplier: Number(avatar?.rule_keeper_multiplier ?? 1),
-        rule_breaker_multiplier: Number(avatar?.rule_breaker_multiplier ?? 1),
-        spotlight_multiplier: Number(avatar?.spotlight_multiplier ?? 1),
+        rule_keeper_multiplier: Number(stack.rule_keeper_multiplier ?? avatar?.rule_keeper_multiplier ?? 1),
+        rule_breaker_multiplier: Number(stack.rule_breaker_multiplier ?? avatar?.rule_breaker_multiplier ?? 1),
+        spotlight_multiplier: Number(stack.spotlight_multiplier ?? avatar?.spotlight_multiplier ?? 1),
         skill_pulse_multiplier: skillMultiplier,
         daily_free_points: avatarPoints,
         camp_role_daily_points: campRolePoints,
-        challenge_completion_bonus_pct: Number(avatar?.challenge_completion_bonus_pct ?? 0),
-        mvp_bonus_pct: Number(avatar?.mvp_bonus_pct ?? 0),
+        challenge_completion_bonus_pct: Number(stack.challenge_completion_bonus_pct ?? avatar?.challenge_completion_bonus_pct ?? 0),
+        mvp_bonus_pct: Number(stack.mvp_bonus_pct ?? avatar?.mvp_bonus_pct ?? 0),
         base_skill_pulse_points_per_rep: skillBase,
         skill_pulse_points_per_rep: Math.max(0, Math.round(skillBase * skillMultiplier)),
       },

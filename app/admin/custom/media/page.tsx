@@ -81,6 +81,7 @@ type CornerBorderRow = {
   name: string;
   image_url?: string | null;
   render_mode?: string | null;
+  z_layer?: string | null;
   offset_x?: number | null;
   offset_y?: number | null;
   offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null }> | null;
@@ -90,6 +91,16 @@ type CornerBorderRow = {
   unlock_level?: number | null;
   unlock_points?: number | null;
   enabled?: boolean;
+  rule_keeper_multiplier?: number | string | null;
+  rule_breaker_multiplier?: number | string | null;
+  skill_pulse_multiplier?: number | string | null;
+  spotlight_multiplier?: number | string | null;
+  daily_free_points?: number | string | null;
+  challenge_completion_bonus_pct?: number | string | null;
+  mvp_bonus_pct?: number | string | null;
+  limited_event_only?: boolean | null;
+  limited_event_name?: string | null;
+  limited_event_description?: string | null;
 };
 
 type CornerBorderPositions = {
@@ -394,6 +405,11 @@ export default function MediaVaultAdminPage() {
   const [effects, setEffects] = useState<SoundEffectRow[]>([]);
   const [library, setLibrary] = useState<BadgeLibraryRow[]>([]);
   const [avatars, setAvatars] = useState<AvatarRow[]>([]);
+  const avatarsRef = useRef<AvatarRow[]>([]);
+  const avatarAutosaveTimersRef = useRef<Record<string, number>>({});
+  const avatarSignaturesRef = useRef<Record<string, string>>({});
+  const [autoSavingAvatarIds, setAutoSavingAvatarIds] = useState<Record<string, boolean>>({});
+  const [copyOpenAvatarId, setCopyOpenAvatarId] = useState<string>("");
   const [avatarEffects, setAvatarEffects] = useState<AvatarEffectRow[]>([]);
   const [cornerBorders, setCornerBorders] = useState<CornerBorderRow[]>([]);
   const [cornerPositions, setCornerPositions] = useState<CornerBorderPositions>({
@@ -447,6 +463,7 @@ export default function MediaVaultAdminPage() {
   const [cardPlatePositionsDirty, setCardPlatePositionsDirty] = useState(false);
   const [previewAvatarId, setPreviewAvatarId] = useState<string>("");
   const [cornerPreviewAvatarId, setCornerPreviewAvatarId] = useState<string>("");
+  const [cornerPositionPreviewKey, setCornerPositionPreviewKey] = useState<string>("");
   const [timerSettings, setTimerSettings] = useState<TimerSettings>({
     music_url: "",
     end_sound_key: "",
@@ -503,11 +520,25 @@ export default function MediaVaultAdminPage() {
     name: "",
     image_url: "",
     render_mode: "image",
+    z_layer: "above_avatar",
     offset_x: 0,
     offset_y: 0,
     offsets_by_context: {},
+    html: "",
+    css: "",
+    js: "",
     unlock_level: 1,
     unlock_points: 0,
+    rule_keeper_multiplier: 1,
+    rule_breaker_multiplier: 1,
+    skill_pulse_multiplier: 1,
+    spotlight_multiplier: 1,
+    daily_free_points: 0,
+    challenge_completion_bonus_pct: 0,
+    mvp_bonus_pct: 0,
+    limited_event_only: false,
+    limited_event_name: "",
+    limited_event_description: "",
     enabled: true,
   });
   const [newCardPlate, setNewCardPlate] = useState<CardPlateRow>({
@@ -771,6 +802,12 @@ export default function MediaVaultAdminPage() {
     if (avatars[0]?.id) setCornerPreviewAvatarId(String(avatars[0].id));
   }, [avatars, cornerPreviewAvatarId]);
 
+  useEffect(() => {
+    if (cornerPositionPreviewKey || !cornerBorders.length) return;
+    const first = cornerBorders.find((row) => row.enabled !== false) ?? cornerBorders[0];
+    if (first?.key) setCornerPositionPreviewKey(String(first.key));
+  }, [cornerBorders, cornerPositionPreviewKey]);
+
   const recentWindowMs = 7 * 24 * 60 * 60 * 1000;
   const recentCutoffMs = Date.now() - recentWindowMs;
   const isRecentDate = useCallback(
@@ -853,7 +890,10 @@ export default function MediaVaultAdminPage() {
     await loadAll();
   }
 
-  async function saveAvatar(row: AvatarRow) {
+  async function saveAvatar(
+    row: AvatarRow,
+    opts?: { skipReload?: boolean; silent?: boolean; suppressSavedChip?: boolean }
+  ) {
     setSaving(true);
     const level = Number(row.unlock_level ?? 1);
     const unlock_level = Number.isFinite(level) && level > 0 ? Math.floor(level) : 1;
@@ -887,9 +927,14 @@ export default function MediaVaultAdminPage() {
     });
     const sj = await safeJson(res);
     setSaving(false);
-    if (!sj.ok) return setMsg(sj.json?.error || "Failed to save avatar");
-    setSavedId(row.id ?? row.name);
-    window.setTimeout(() => setSavedId(null), 1600);
+    if (!sj.ok) {
+      if (!opts?.silent) setMsg(sj.json?.error || "Failed to save avatar");
+      return;
+    }
+    if (!opts?.suppressSavedChip) {
+      setSavedId(row.id ?? row.name);
+      window.setTimeout(() => setSavedId(null), 1600);
+    }
     if (!row.id) {
       setNewAvatar({
         name: "",
@@ -913,7 +958,9 @@ export default function MediaVaultAdminPage() {
         limited_event_description: "",
       });
     }
-    await loadAll();
+    if (!opts?.skipReload || !row.id) {
+      await loadAll();
+    }
   }
 
   async function saveAvatarEffect(row: AvatarEffectRow) {
@@ -955,11 +1002,25 @@ export default function MediaVaultAdminPage() {
         name: "",
         image_url: "",
         render_mode: "image",
+        z_layer: "above_avatar",
         offset_x: 0,
         offset_y: 0,
         offsets_by_context: {},
+        html: "",
+        css: "",
+        js: "",
         unlock_level: 1,
         unlock_points: 0,
+        rule_keeper_multiplier: 1,
+        rule_breaker_multiplier: 1,
+        skill_pulse_multiplier: 1,
+        spotlight_multiplier: 1,
+        daily_free_points: 0,
+        challenge_completion_bonus_pct: 0,
+        mvp_bonus_pct: 0,
+        limited_event_only: false,
+        limited_event_name: "",
+        limited_event_description: "",
         enabled: true,
       });
     }
@@ -1455,9 +1516,17 @@ export default function MediaVaultAdminPage() {
   const cornerPreviewSrc = cornerPreviewAvatarItem?.storage_path && avatarBase
     ? `${avatarBase}/storage/v1/object/public/avatars/${cornerPreviewAvatarItem.storage_path}`
     : "";
+  const selectedPreviewCorner =
+    cornerBorders.find((row) => String(row.key) === String(cornerPositionPreviewKey)) ??
+    cornerBorders.find((row) => row.enabled !== false) ??
+    null;
   const previewCornerUrl =
     String(newCornerBorder.image_url ?? "").trim() ||
-    String(cornerBorders.find((row) => row.enabled !== false && row.image_url)?.image_url ?? "");
+    String(selectedPreviewCorner?.image_url ?? "");
+  const previewCornerCode =
+    selectedPreviewCorner?.render_mode === "code"
+      ? buildCodePreview(selectedPreviewCorner?.html, selectedPreviewCorner?.css)
+      : "";
   const previewPlateUrl =
     String(newCardPlate.image_url ?? "").trim() ||
     String(cardPlates.find((row) => row.enabled !== false && row.image_url)?.image_url ?? "");
@@ -1468,6 +1537,92 @@ export default function MediaVaultAdminPage() {
     return acc;
   }, {});
   const avatarLevels = Object.keys(avatarsByLevel).sort((a, b) => Number(a) - Number(b));
+
+  function avatarSignature(row: AvatarRow) {
+    return JSON.stringify({
+      name: String(row.name ?? ""),
+      storage_path: String(row.storage_path ?? ""),
+      enabled: row.enabled !== false,
+      is_secondary: row.is_secondary === true,
+      unlock_level: Number(row.unlock_level ?? 1),
+      unlock_points: Number(row.unlock_points ?? 0),
+      rule_keeper_multiplier: Number(row.rule_keeper_multiplier ?? 1),
+      rule_breaker_multiplier: Number(row.rule_breaker_multiplier ?? 1),
+      skill_pulse_multiplier: Number(row.skill_pulse_multiplier ?? 1),
+      spotlight_multiplier: Number(row.spotlight_multiplier ?? 1),
+      daily_free_points: Number(row.daily_free_points ?? 0),
+      challenge_completion_bonus_pct: Number(row.challenge_completion_bonus_pct ?? 0),
+      mvp_bonus_pct: Number(row.mvp_bonus_pct ?? 0),
+      zoom_pct: Number(row.zoom_pct ?? 100),
+      competition_only: row.competition_only === true,
+      competition_discount_pct: Number(row.competition_discount_pct ?? 0),
+      limited_event_only: row.limited_event_only === true,
+      limited_event_name: String(row.limited_event_name ?? ""),
+      limited_event_description: String(row.limited_event_description ?? ""),
+    });
+  }
+
+  function copyAvatarSettingsFrom(targetId: string, source: AvatarRow) {
+    setAvatars((prev) =>
+      prev.map((r) =>
+        String(r.id ?? "") === String(targetId)
+          ? {
+              ...r,
+              unlock_level: source.unlock_level ?? 1,
+              unlock_points: source.unlock_points ?? 0,
+              rule_keeper_multiplier: source.rule_keeper_multiplier ?? 1,
+              rule_breaker_multiplier: source.rule_breaker_multiplier ?? 1,
+              skill_pulse_multiplier: source.skill_pulse_multiplier ?? 1,
+              spotlight_multiplier: source.spotlight_multiplier ?? 1,
+              daily_free_points: source.daily_free_points ?? 0,
+              challenge_completion_bonus_pct: source.challenge_completion_bonus_pct ?? 0,
+              mvp_bonus_pct: source.mvp_bonus_pct ?? 0,
+              zoom_pct: source.zoom_pct ?? 100,
+            }
+          : r
+      )
+    );
+    setCopyOpenAvatarId("");
+  }
+
+  useEffect(() => {
+    avatarsRef.current = avatars;
+  }, [avatars]);
+
+  useEffect(() => {
+    const nextSigs: Record<string, string> = {};
+    avatars.forEach((row) => {
+      const id = String(row.id ?? "");
+      if (!id) return;
+      const sig = avatarSignature(row);
+      nextSigs[id] = sig;
+      const prevSig = avatarSignaturesRef.current[id];
+      if (prevSig !== undefined && prevSig !== sig) {
+        if (avatarAutosaveTimersRef.current[id]) {
+          window.clearTimeout(avatarAutosaveTimersRef.current[id]);
+        }
+        avatarAutosaveTimersRef.current[id] = window.setTimeout(async () => {
+          const latest = avatarsRef.current.find((a) => String(a.id ?? "") === id);
+          if (!latest) return;
+          setAutoSavingAvatarIds((prev) => ({ ...prev, [id]: true }));
+          await saveAvatar(latest, { skipReload: true, silent: true, suppressSavedChip: true });
+          setAutoSavingAvatarIds((prev) => {
+            const next = { ...prev };
+            delete next[id];
+            return next;
+          });
+        }, 700);
+      }
+    });
+    avatarSignaturesRef.current = nextSigs;
+  }, [avatars]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(avatarAutosaveTimersRef.current).forEach((timerId) => window.clearTimeout(timerId));
+    };
+  }, []);
+
   if (!pinOk) return null;
 
   return (
@@ -1778,6 +1933,36 @@ export default function MediaVaultAdminPage() {
                     onChange={(e) => setNewCornerBorder((prev) => ({ ...prev, image_url: e.target.value }))}
                     style={input()}
                   />
+                  <select
+                    value={String(newCornerBorder.render_mode ?? "image")}
+                    onChange={(e) => setNewCornerBorder((prev) => ({ ...prev, render_mode: e.target.value }))}
+                    style={input()}
+                  >
+                    <option value="image">image</option>
+                    <option value="code">code</option>
+                  </select>
+                  {newCornerBorder.render_mode === "code" ? (
+                    <>
+                      <textarea
+                        placeholder="HTML"
+                        value={newCornerBorder.html ?? ""}
+                        onChange={(e) => setNewCornerBorder((prev) => ({ ...prev, html: e.target.value }))}
+                        style={{ ...input(), minHeight: 72, resize: "vertical", fontFamily: "monospace" }}
+                      />
+                      <textarea
+                        placeholder="CSS"
+                        value={newCornerBorder.css ?? ""}
+                        onChange={(e) => setNewCornerBorder((prev) => ({ ...prev, css: e.target.value }))}
+                        style={{ ...input(), minHeight: 84, resize: "vertical", fontFamily: "monospace" }}
+                      />
+                      <textarea
+                        placeholder="JS"
+                        value={newCornerBorder.js ?? ""}
+                        onChange={(e) => setNewCornerBorder((prev) => ({ ...prev, js: e.target.value }))}
+                        style={{ ...input(), minHeight: 72, resize: "vertical", fontFamily: "monospace" }}
+                      />
+                    </>
+                  ) : null}
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <button style={ghostButton()} onClick={() => openCornerPicker({ type: "new" })}>
                       Browse Bucket
@@ -1806,6 +1991,26 @@ export default function MediaVaultAdminPage() {
                   placeholder="unlock points"
                   value={newCornerBorder.unlock_points ?? ""}
                   onChange={(e) => setNewCornerBorder((prev) => ({ ...prev, unlock_points: clampPoints(e.target.value) }))}
+                  style={input()}
+                />
+                <label style={checkboxWrap()}>
+                  <input
+                    type="checkbox"
+                    checked={newCornerBorder.limited_event_only === true}
+                    onChange={(e) => setNewCornerBorder((prev) => ({ ...prev, limited_event_only: e.target.checked }))}
+                  />
+                  Limited event only
+                </label>
+                <input
+                  placeholder="limited event name"
+                  value={newCornerBorder.limited_event_name ?? ""}
+                  onChange={(e) => setNewCornerBorder((prev) => ({ ...prev, limited_event_name: e.target.value }))}
+                  style={input()}
+                />
+                <input
+                  placeholder="limited event description"
+                  value={newCornerBorder.limited_event_description ?? ""}
+                  onChange={(e) => setNewCornerBorder((prev) => ({ ...prev, limited_event_description: e.target.value }))}
                   style={input()}
                 />
                   <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -1860,7 +2065,36 @@ export default function MediaVaultAdminPage() {
                       onChange={(e) => setCornerBorders((prev) => prev.map((r) => (r === row ? { ...r, image_url: e.target.value } : r)))}
                       style={input()}
                     />
-                    {isCode ? <div style={{ fontSize: 11, opacity: 0.7 }}>Render mode: Code</div> : null}
+                    <select
+                      value={String(row.render_mode ?? "image")}
+                      onChange={(e) => setCornerBorders((prev) => prev.map((r) => (r === row ? { ...r, render_mode: e.target.value } : r)))}
+                      style={input()}
+                    >
+                      <option value="image">image</option>
+                      <option value="code">code</option>
+                    </select>
+                    {isCode ? (
+                      <>
+                        <textarea
+                          placeholder="HTML"
+                          value={row.html ?? ""}
+                          onChange={(e) => setCornerBorders((prev) => prev.map((r) => (r === row ? { ...r, html: e.target.value } : r)))}
+                          style={{ ...input(), minHeight: 72, resize: "vertical", fontFamily: "monospace" }}
+                        />
+                        <textarea
+                          placeholder="CSS"
+                          value={row.css ?? ""}
+                          onChange={(e) => setCornerBorders((prev) => prev.map((r) => (r === row ? { ...r, css: e.target.value } : r)))}
+                          style={{ ...input(), minHeight: 84, resize: "vertical", fontFamily: "monospace" }}
+                        />
+                        <textarea
+                          placeholder="JS"
+                          value={row.js ?? ""}
+                          onChange={(e) => setCornerBorders((prev) => prev.map((r) => (r === row ? { ...r, js: e.target.value } : r)))}
+                          style={{ ...input(), minHeight: 72, resize: "vertical", fontFamily: "monospace" }}
+                        />
+                      </>
+                    ) : null}
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                         <button style={ghostButton()} onClick={() => openCornerPicker({ type: "row", id: row.id })}>
                           Browse
@@ -1897,6 +2131,28 @@ export default function MediaVaultAdminPage() {
                     }
                     style={input()}
                   />
+                    <label style={checkboxWrap()}>
+                      <input
+                        type="checkbox"
+                        checked={row.limited_event_only === true}
+                        onChange={(e) =>
+                          setCornerBorders((prev) => prev.map((r) => (r === row ? { ...r, limited_event_only: e.target.checked } : r)))
+                        }
+                      />
+                      Limited event only
+                    </label>
+                    <input
+                      placeholder="limited event name"
+                      value={row.limited_event_name ?? ""}
+                      onChange={(e) => setCornerBorders((prev) => prev.map((r) => (r === row ? { ...r, limited_event_name: e.target.value } : r)))}
+                      style={input()}
+                    />
+                    <input
+                      placeholder="limited event description"
+                      value={row.limited_event_description ?? ""}
+                      onChange={(e) => setCornerBorders((prev) => prev.map((r) => (r === row ? { ...r, limited_event_description: e.target.value } : r)))}
+                      style={input()}
+                    />
                     <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                       <Link
                         href={builderHref}
@@ -1930,10 +2186,24 @@ export default function MediaVaultAdminPage() {
           </div>
 
           <div style={{ display: "grid", gap: 10 }}>
-            <div style={{ fontWeight: 1000 }}>Corner Badge Positioning</div>
-            <div style={{ opacity: 0.7, fontSize: 12 }}>
-              Adjust X/Y offsets (px) for each surface. Offsets apply to both corners consistently.
-            </div>
+          <div style={{ fontWeight: 1000 }}>Corner Badge Positioning</div>
+          <div style={{ opacity: 0.7, fontSize: 12 }}>
+            Adjust X/Y offsets (px) for each surface. Offsets apply to both corners consistently.
+          </div>
+            <label style={{ fontSize: 12, opacity: 0.8, maxWidth: 320 }}>
+              Position preview border
+              <select
+                value={cornerPositionPreviewKey}
+                onChange={(e) => setCornerPositionPreviewKey(e.target.value)}
+                style={{ ...input(), marginTop: 6 }}
+              >
+                {cornerBorders.map((b) => (
+                  <option key={b.id ?? b.key} value={String(b.key ?? "")}>
+                    {b.name ?? b.key}
+                  </option>
+                ))}
+              </select>
+            </label>
             <div style={positionGrid()}>
               {[
                 { key: "dashboard", label: "Dashboard student card", size: 150, bg: "rgba(15,23,42,0.6)" },
@@ -1952,7 +2222,9 @@ export default function MediaVaultAdminPage() {
                   <div key={row.key} style={positionCard()}>
                     <div style={{ fontWeight: 900 }}>{row.label}</div>
                     <div style={offsetPreviewWrap(row.size, row.bg)}>
-                      {previewCornerUrl ? (
+                      {previewCornerCode ? (
+                        <div style={offsetPreviewCodeLayer()} dangerouslySetInnerHTML={{ __html: previewCornerCode }} />
+                      ) : previewCornerUrl ? (
                         <>
                           <img src={previewCornerUrl} alt="" style={cornerBadgeOffsetTopLeft(offset, badgeSize)} />
                           <img src={previewCornerUrl} alt="" style={cornerBadgeOffsetBottomRight(offset, badgeSize)} />
@@ -2902,12 +3174,81 @@ export default function MediaVaultAdminPage() {
                         <div style={{ fontSize: 12, opacity: 0.8 }}>
                           Used by {avatarUsage[row.id ?? ""]?.count ?? 0} students
                         </div>
+                        <div style={fieldStack()}>
+                          <div style={fieldLabel()}>Copy Settings</div>
+                          <div style={{ position: "relative" }}>
+                            <button
+                              type="button"
+                              style={ghostButton(false)}
+                              onClick={() =>
+                                setCopyOpenAvatarId((prev) =>
+                                  prev === String(row.id ?? "") ? "" : String(row.id ?? "")
+                                )
+                              }
+                            >
+                              Copy from another avatar
+                            </button>
+                            {copyOpenAvatarId === String(row.id ?? "") ? (
+                              <div style={copyPickerMenu()}>
+                                {avatars
+                                  .filter((src) => String(src.id ?? "") !== String(row.id ?? ""))
+                                  .map((src) => {
+                                    const srcThumb =
+                                      src.storage_path && avatarBase
+                                        ? `${avatarBase}/storage/v1/object/public/avatars/${src.storage_path}`
+                                        : "";
+                                    const rk = `${multiplierPercent(src.rule_keeper_multiplier ?? 1)}%`;
+                                    const rb = `${multiplierPercent(src.rule_breaker_multiplier ?? 1)}%`;
+                                    const sp = `${multiplierPercent(src.skill_pulse_multiplier ?? 1)}%`;
+                                    const ss = `${multiplierPercent(src.spotlight_multiplier ?? 1)}%`;
+                                    const mvp = `${Math.round(Number(src.mvp_bonus_pct ?? 0))}%`;
+                                    const ch = `${Math.round(Number(src.challenge_completion_bonus_pct ?? 0))}%`;
+                                    const free = `${Math.max(0, Math.floor(Number(src.daily_free_points ?? 0)))}`;
+                                    return (
+                                      <button
+                                        key={`copy-${row.id}-${src.id}`}
+                                        type="button"
+                                        style={copyPickerOption()}
+                                        onClick={() => copyAvatarSettingsFrom(String(row.id ?? ""), src)}
+                                      >
+                                        <div style={copyPickerThumbWrap()}>
+                                          {srcThumb ? (
+                                            <img src={srcThumb} alt={src.name} style={copyPickerThumb()} />
+                                          ) : (
+                                            <div style={{ fontSize: 10, opacity: 0.75 }}>No img</div>
+                                          )}
+                                        </div>
+                                        <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                                          <div style={{ fontWeight: 900, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                            {src.name}
+                                          </div>
+                                          <div style={{ fontSize: 10, opacity: 0.78 }}>Lvl {Math.max(1, Number(src.unlock_level ?? 1))}</div>
+                                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                                            <span style={copyModifierChip("#60a5fa")}>RK {rk}</span>
+                                            <span style={copyModifierChip("#f87171")}>RB {rb}</span>
+                                            <span style={copyModifierChip("#22d3ee")}>SP {sp}</span>
+                                            <span style={copyModifierChip("#fbbf24")}>SS {ss}</span>
+                                            <span style={copyModifierChip("#a78bfa")}>MVP {mvp}</span>
+                                            <span style={copyModifierChip("#34d399")}>CH {ch}</span>
+                                            <span style={copyModifierChip("#f59e0b")}>FREE {free}</span>
+                                          </div>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {hasRecentUpload(row) ? (
                             <span style={{ ...pillChip(), borderColor: "rgba(251,191,36,0.6)", color: "#fde68a" }}>Uploaded recently</span>
                           ) : null}
                           {hasRecentUpdate(row) ? (
                             <span style={{ ...pillChip(), borderColor: "rgba(34,197,94,0.6)", color: "#86efac" }}>Updated recently</span>
+                          ) : null}
+                          {autoSavingAvatarIds[String(row.id ?? "")] ? (
+                            <span style={{ ...pillChip(), borderColor: "rgba(56,189,248,0.6)", color: "#67e8f9" }}>Autosaving...</span>
                           ) : null}
                         </div>
                         <div style={fieldStack()}>
@@ -3813,6 +4154,76 @@ function pillChip(): React.CSSProperties {
   };
 }
 
+function copyPickerMenu(): React.CSSProperties {
+  return {
+    position: "absolute",
+    top: "calc(100% + 6px)",
+    left: 0,
+    right: 0,
+    maxHeight: 280,
+    overflowY: "auto",
+    borderRadius: 10,
+    border: "1px solid rgba(148,163,184,0.35)",
+    background: "rgba(2,6,23,0.97)",
+    zIndex: 30,
+    display: "grid",
+    gap: 6,
+    padding: 8,
+    boxShadow: "0 14px 34px rgba(0,0,0,0.45)",
+  };
+}
+
+function copyPickerOption(): React.CSSProperties {
+  return {
+    width: "100%",
+    display: "grid",
+    gridTemplateColumns: "52px 1fr",
+    gap: 8,
+    alignItems: "center",
+    borderRadius: 10,
+    border: "1px solid rgba(148,163,184,0.28)",
+    background: "rgba(15,23,42,0.9)",
+    padding: 6,
+    textAlign: "left",
+    cursor: "pointer",
+    color: "white",
+  };
+}
+
+function copyPickerThumbWrap(): React.CSSProperties {
+  return {
+    width: 52,
+    height: 52,
+    borderRadius: 10,
+    border: "1px solid rgba(148,163,184,0.4)",
+    background: "rgba(15,23,42,0.9)",
+    display: "grid",
+    placeItems: "center",
+    overflow: "hidden",
+  };
+}
+
+function copyPickerThumb(): React.CSSProperties {
+  return {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+  };
+}
+
+function copyModifierChip(color: string): React.CSSProperties {
+  return {
+    borderRadius: 999,
+    padding: "1px 6px",
+    border: `1px solid ${color}66`,
+    color,
+    fontSize: 10,
+    fontWeight: 900,
+    letterSpacing: 0.2,
+    background: "rgba(15,23,42,0.7)",
+  };
+}
+
 function clampLevel(value: string) {
   const cleaned = value.replace(/[^\d]/g, "");
   if (!cleaned) return null;
@@ -4199,6 +4610,17 @@ function offsetPreviewImg(): React.CSSProperties {
     objectFit: "contain",
     position: "relative",
     zIndex: 1,
+  };
+}
+
+function offsetPreviewCodeLayer(): React.CSSProperties {
+  return {
+    position: "absolute",
+    inset: 8,
+    borderRadius: 12,
+    overflow: "hidden",
+    pointerEvents: "none",
+    zIndex: 2,
   };
 }
 

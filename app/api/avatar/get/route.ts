@@ -3,6 +3,12 @@ import { supabaseServer } from "../../../../lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getStudentCriteriaState, matchItemCriteria } from "@/lib/unlockCriteria";
 
+function isMissingColumn(err: any, column: string) {
+  const msg = String(err?.message ?? "").toLowerCase();
+  const key = column.toLowerCase();
+  return msg.includes(`column \"${key}\"`) || msg.includes(`.${key}`) || msg.includes(key);
+}
+
 type LevelRow = { level: number; min_lifetime_points: number };
 
 const MAX_LEVEL = 99;
@@ -72,11 +78,21 @@ export async function POST(req: Request) {
     effectiveLevel = Math.max(lvl, 1);
   }
 
-  const { data: avatars, error: aErr } = await admin
+  let avatarQuery = admin
     .from("avatars")
-    .select("id,unlock_level,unlock_points,enabled,is_secondary")
+    .select("id,unlock_level,unlock_points,enabled,is_secondary,limited_event_only")
     .order("unlock_level", { ascending: true })
     .order("name", { ascending: true });
+  let { data: avatars, error: aErr } = await avatarQuery;
+  if (aErr && isMissingColumn(aErr, "limited_event_only")) {
+    const fallback = await admin
+      .from("avatars")
+      .select("id,unlock_level,unlock_points,enabled,is_secondary")
+      .order("unlock_level", { ascending: true })
+      .order("name", { ascending: true });
+    avatars = fallback.data as any;
+    aErr = fallback.error as any;
+  }
   if (aErr) return NextResponse.json({ ok: false, error: aErr.message }, { status: 500 });
 
   const enabledAvatars = (avatars ?? []).filter((a: any) => a.enabled !== false);
@@ -94,25 +110,38 @@ export async function POST(req: Request) {
   const selectedRow = selectedId ? enabledAvatars.find((a: any) => String(a.id) === selectedId) : null;
   const selectedUnlock = Number(selectedRow?.unlock_level ?? 1);
   const selectedPoints = Math.max(0, Number(selectedRow?.unlock_points ?? 0));
+  const selectedLimitedOnly = (selectedRow as any)?.limited_event_only === true;
   const selectedCustomUnlock = customUnlockSet.has(`avatar:${selectedId}`);
   const selectedCriteria = matchItemCriteria("avatar", selectedId, criteriaState.fulfilledKeys, criteriaState.requirementMap);
   const selectedCriteriaOk = selectedCriteria.hasRequirements && selectedCriteria.matched;
+  const selectedByDefault = !selectedLimitedOnly && selectedUnlock <= effectiveLevel && selectedPoints <= 0;
+  const selectedEventAllowed = !selectedLimitedOnly || selectedCriteriaOk;
   const selectedValid =
     !!selectedRow &&
-    (selectedUnlock <= effectiveLevel && selectedPoints <= 0 || selectedCustomUnlock || selectedCriteriaOk);
+    selectedEventAllowed &&
+    (selectedByDefault || selectedCustomUnlock || selectedCriteriaOk);
 
-  const { data: borders } = await admin
+  let bordersRes = await admin
     .from("ui_corner_borders")
-    .select("key,unlock_level,unlock_points,enabled");
+    .select("key,unlock_level,unlock_points,enabled,limited_event_only");
+  if (bordersRes.error && isMissingColumn(bordersRes.error, "limited_event_only")) {
+    bordersRes = await admin
+      .from("ui_corner_borders")
+      .select("key,unlock_level,unlock_points,enabled");
+  }
+  const borders = bordersRes.data;
   const borderByKey = new Map((borders ?? []).map((b: any) => [String(b.key), b]));
   const selectedBorderKey = String(settings?.corner_border_key ?? "").trim();
   const selectedBorder = selectedBorderKey ? borderByKey.get(selectedBorderKey) : null;
   const borderLevelUnlocked = selectedBorder ? Number(selectedBorder.unlock_level ?? 1) <= effectiveLevel : false;
+  const borderLimitedOnly = selectedBorder ? (selectedBorder as any).limited_event_only === true : false;
   const borderPoints = Math.max(0, Number((selectedBorder as any)?.unlock_points ?? 0));
   const borderCustomUnlock = customUnlockSet.has(`corner_border:${selectedBorderKey}`);
   const borderCriteria = matchItemCriteria("corner_border", selectedBorderKey, criteriaState.fulfilledKeys, criteriaState.requirementMap);
   const borderCriteriaOk = borderCriteria.hasRequirements && borderCriteria.matched;
-  const borderUnlocked = borderLevelUnlocked && borderPoints <= 0 || borderCustomUnlock || borderCriteriaOk;
+  const borderByDefault = !borderLimitedOnly && borderLevelUnlocked && borderPoints <= 0;
+  const borderEventAllowed = !borderLimitedOnly || borderCriteriaOk;
+  const borderUnlocked = borderEventAllowed && (borderByDefault || borderCustomUnlock || borderCriteriaOk);
   const borderEnabled = selectedBorder ? selectedBorder.enabled !== false : false;
   const borderValid = !!selectedBorder && borderUnlocked && borderEnabled;
 

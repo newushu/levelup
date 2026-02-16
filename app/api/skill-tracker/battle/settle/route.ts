@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "../../../../../lib/supabase/server";
+import { getStudentModifierStack } from "@/lib/modifierStack";
 
 export async function POST(req: Request) {
   const supabase = await supabaseServer();
@@ -136,31 +137,12 @@ export async function POST(req: Request) {
 
   const mvpBonusPctByStudent = new Map<string, number>();
   if (mvpIds.length) {
-    const { data: avatarSettings, error: asErr } = await supabase
-      .from("student_avatar_settings")
-      .select("student_id,avatar_id")
-      .in("student_id", mvpIds);
-    if (asErr) return NextResponse.json({ ok: false, error: asErr.message }, { status: 500 });
-    const avatarIds = Array.from(
-      new Set((avatarSettings ?? []).map((row: any) => String(row.avatar_id ?? "").trim()).filter(Boolean))
+    await Promise.all(
+      mvpIds.map(async (sid) => {
+        const stack = await getStudentModifierStack(sid);
+        mvpBonusPctByStudent.set(sid, Math.max(0, Number(stack.mvp_bonus_pct ?? 0)));
+      })
     );
-    const pctByAvatarId = new Map<string, number>();
-    if (avatarIds.length) {
-      const { data: avatarRows, error: avErr } = await supabase
-        .from("avatars")
-        .select("id,mvp_bonus_pct")
-        .in("id", avatarIds);
-      if (avErr) return NextResponse.json({ ok: false, error: avErr.message }, { status: 500 });
-      (avatarRows ?? []).forEach((row: any) => {
-        pctByAvatarId.set(String(row.id ?? ""), Math.max(0, Number(row.mvp_bonus_pct ?? 0)));
-      });
-    }
-    (avatarSettings ?? []).forEach((row: any) => {
-      const sid = String(row.student_id ?? "");
-      const aid = String(row.avatar_id ?? "");
-      if (!sid || !aid) return;
-      mvpBonusPctByStudent.set(sid, pctByAvatarId.get(aid) ?? 0);
-    });
   }
 
   let limitReached = false;

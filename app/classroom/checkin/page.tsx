@@ -714,6 +714,10 @@ export default function ClassroomCheckinPage() {
   );
   const suggestedTop = useMemo(() => suggestedFiltered.slice(0, 5), [suggestedFiltered]);
   const suggestedOverflow = useMemo(() => suggestedFiltered.slice(5), [suggestedFiltered]);
+  const typedSuggestions = useMemo(() => {
+    if (!query.trim()) return [];
+    return searchRows.slice(0, 8);
+  }, [query, searchRows]);
 
   if (blockedMsg) {
     return (
@@ -1015,9 +1019,70 @@ export default function ClassroomCheckinPage() {
         }
         .input-box { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(148,163,184,0.35); background: rgba(255,255,255,0.92); color: #0f172a; font-size: 22px; font-weight: 900; }
         .search-list { display: grid; gap: 8px; max-height: 280px; overflow: auto; }
+        .search-top-bar {
+          position: sticky;
+          top: 0;
+          z-index: 24;
+          display: flex;
+          gap: 10px;
+          overflow-x: auto;
+          overflow-y: hidden;
+          padding: 10px 10px;
+          margin: -6px -6px 8px;
+          border-radius: 14px;
+          border: 1px solid rgba(14,165,233,0.28);
+          background: linear-gradient(150deg, rgba(236,254,255,0.97), rgba(224,242,254,0.98));
+          box-shadow: 0 10px 24px rgba(2,6,23,0.14);
+          -webkit-overflow-scrolling: touch;
+          scrollbar-width: none;
+        }
+        .search-top-bar::-webkit-scrollbar { display: none; }
+        .search-top-suggestion {
+          min-width: 320px;
+          max-width: 360px;
+          border-radius: 14px;
+          border: 1px solid rgba(14,165,233,0.32);
+          background: rgba(255,255,255,0.88);
+          padding: 10px;
+          display: grid;
+          gap: 8px;
+          box-shadow: 0 8px 18px rgba(2,6,23,0.12);
+        }
+        .search-top-name {
+          font-size: 24px;
+          line-height: 1.05;
+          font-weight: 1000;
+          color: #0f172a;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .search-top-actions {
+          display: inline-flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 8px;
+        }
+        .search-top-checkin {
+          border-radius: 999px;
+          border: 2px solid rgba(34,197,94,0.44);
+          background: linear-gradient(140deg, rgba(34,197,94,0.2), rgba(22,163,74,0.1));
+          color: #14532d;
+          padding: 9px 16px;
+          font-weight: 1000;
+          font-size: 16px;
+          cursor: pointer;
+          white-space: nowrap;
+        }
         .search-row {
           border-radius: 12px; border: 1px solid rgba(148,163,184,0.26); background: rgba(255,255,255,0.92); padding: 8px 10px;
-          display: flex; justify-content: space-between; align-items: center; gap: 10px;
+          display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 8px;
+        }
+        .search-row-actions {
+          display: inline-flex;
+          justify-self: end;
+          align-items: center;
+          gap: 6px;
         }
         .redeem-mini {
           border-radius: 999px;
@@ -1191,6 +1256,38 @@ export default function ClassroomCheckinPage() {
             onTouchStart={markOverlayInteraction}
             onKeyDown={markOverlayInteraction}
           >
+            {typedSuggestions.length ? (
+              <div className="search-top-bar" aria-label="name-suggestions-top-bar">
+                {typedSuggestions.map((s) => (
+                  <div key={`top-${s.id}`} className="search-top-suggestion">
+                    <div className="search-top-name">{s.name}</div>
+                    <div className="search-top-actions">
+                      {redeemByStudent[s.id]?.can_redeem ? (
+                        <button
+                          className="redeem-mini"
+                          onClick={() => {
+                            markOverlayInteraction();
+                            redeemStudentDaily({ id: s.id, name: s.name });
+                          }}
+                        >
+                          Redeem +{Math.round(Number(redeemByStudent[s.id]?.available_points ?? 0))}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="search-top-checkin"
+                        onClick={() => {
+                          markOverlayInteraction();
+                          checkIn({ id: s.id, name: s.name });
+                        }}
+                      >
+                        Check In
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12 }}>
               <div style={{ display: "grid", gap: 2 }}>
                 <div style={{ fontSize: 26, fontWeight: 1000, color: "#0f172a" }}>{activeCard.name}</div>
@@ -1202,7 +1299,6 @@ export default function ClassroomCheckinPage() {
                 ✕ Close
               </button>
             </div>
-
             <div className="checkin-panel">
               <div style={{ display: "grid", gridTemplateColumns: "1.08fr 0.92fr", gap: 14 }}>
                 <div style={{ display: "grid", gap: 8 }}>
@@ -1275,12 +1371,14 @@ export default function ClassroomCheckinPage() {
                             <div style={{ fontSize: 13, opacity: 0.75, color: "#334155" }}>Lv {s.level} • {s.points_total} pts</div>
                           </div>
                         </div>
-                        <button className="suggested-chip" onClick={() => checkIn({ id: s.id, name: s.name })}>Check In</button>
                         {redeemByStudent[s.id]?.can_redeem ? (
                           <button className="redeem-mini" onClick={() => redeemStudentDaily({ id: s.id, name: s.name })}>
                             Daily Redeem +{Math.round(Number(redeemByStudent[s.id]?.available_points ?? 0))}
                           </button>
-                        ) : null}
+                        ) : <span style={{ width: 1, height: 1 }} />}
+                        <div className="search-row-actions">
+                          <button className="suggested-chip" onClick={() => checkIn({ id: s.id, name: s.name })}>Check In</button>
+                        </div>
                       </div>
                     ))}
                   </div>

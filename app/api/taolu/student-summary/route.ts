@@ -17,9 +17,11 @@ async function getUserScope() {
   const roleList = (roles ?? []).map((r: any) => String(r.role ?? "").toLowerCase());
   const isAdmin = roleList.includes("admin");
   const isCoach = roleList.includes("coach");
+  const isClassroom = roleList.includes("classroom");
+  const isCheckin = roleList.includes("checkin");
   const studentId = String((roles ?? []).find((r: any) => String(r.role ?? "").toLowerCase() === "student")?.student_id ?? "");
 
-  return { ok: true as const, isAdmin, isCoach, studentId };
+  return { ok: true as const, isAdmin, isCoach, isClassroom, isCheckin, studentId };
 }
 
 export async function GET(req: Request) {
@@ -30,7 +32,8 @@ export async function GET(req: Request) {
   const requestedId = String(searchParams.get("student_id") ?? "").trim();
   const startParam = String(searchParams.get("start_date") ?? "").trim();
   const endParam = String(searchParams.get("end_date") ?? "").trim();
-  const studentId = gate.isAdmin || gate.isCoach ? requestedId : gate.studentId;
+  const canReadRequestedStudent = gate.isAdmin || gate.isCoach || gate.isClassroom || gate.isCheckin;
+  const studentId = canReadRequestedStudent ? (requestedId || gate.studentId) : gate.studentId;
   if (!studentId) return NextResponse.json({ ok: false, error: "Missing student_id" }, { status: 400 });
   const startMs = startParam ? new Date(startParam).getTime() : Number.NaN;
   const endMs = endParam ? new Date(endParam).getTime() + 24 * 60 * 60 * 1000 - 1 : Number.NaN;

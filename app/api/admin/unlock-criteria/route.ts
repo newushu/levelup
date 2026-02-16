@@ -2,17 +2,35 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/authz";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+function isMissingColumn(err: any, column: string) {
+  const msg = String(err?.message ?? "").toLowerCase();
+  const key = column.toLowerCase();
+  return msg.includes(`column \"${key}\"`) || msg.includes(`.${key}`) || msg.includes(key);
+}
+
 async function loadAll(studentId?: string) {
   const admin = supabaseAdmin();
-  const [defsRes, reqRes, studentsRes, avatarsRes, effectsRes, studentCriteriaRes] = await Promise.all([
-    admin.from("unlock_criteria_definitions").select("key,label,description,enabled,created_at,updated_at").order("label", { ascending: true }),
+  let defsRes: any = await admin
+    .from("unlock_criteria_definitions")
+    .select("key,label,description,enabled,start_date,end_date,daily_free_points,created_at,updated_at")
+    .order("label", { ascending: true });
+  if (defsRes.error && (isMissingColumn(defsRes.error, "start_date") || isMissingColumn(defsRes.error, "end_date") || isMissingColumn(defsRes.error, "daily_free_points"))) {
+    defsRes = await admin
+      .from("unlock_criteria_definitions")
+      .select("key,label,description,enabled,created_at,updated_at")
+      .order("label", { ascending: true });
+  }
+
+  const [reqRes, studentsRes, avatarsRes, effectsRes, studentCriteriaRes] = await Promise.all([
     admin.from("unlock_criteria_item_requirements").select("id,item_type,item_key,criteria_key,created_at").order("created_at", { ascending: true }),
     admin.from("students").select("id,name").order("name", { ascending: true }),
     admin.from("avatars").select("id,name,enabled").order("name", { ascending: true }),
     admin.from("avatar_effects").select("key,name,enabled").order("name", { ascending: true }),
     studentId
       ? admin.from("student_unlock_criteria").select("student_id,criteria_key,fulfilled,note,fulfilled_at,updated_at").eq("student_id", studentId)
-      : Promise.resolve({ data: [], error: null } as any),
+      : admin
+          .from("student_unlock_criteria")
+          .select("student_id,criteria_key,fulfilled,note,fulfilled_at,updated_at"),
   ]);
 
   if (defsRes.error) return NextResponse.json({ ok: false, error: defsRes.error.message }, { status: 500 });
@@ -54,10 +72,18 @@ export async function POST(req: Request) {
     const label = String(body?.label ?? "").trim();
     const description = String(body?.description ?? "").trim();
     const enabled = body?.enabled !== false;
+    const start_date = String(body?.start_date ?? "").trim() || null;
+    const end_date = String(body?.end_date ?? "").trim() || null;
+    const daily_free_points = Math.max(0, Math.floor(Number(body?.daily_free_points ?? 0) || 0));
     if (!key || !label) return NextResponse.json({ ok: false, error: "key and label are required" }, { status: 400 });
-    const up = await admin
+    let up = await admin
       .from("unlock_criteria_definitions")
-      .upsert({ key, label, description, enabled }, { onConflict: "key" });
+      .upsert({ key, label, description, enabled, start_date, end_date, daily_free_points }, { onConflict: "key" });
+    if (up.error && (isMissingColumn(up.error, "start_date") || isMissingColumn(up.error, "end_date") || isMissingColumn(up.error, "daily_free_points"))) {
+      up = await admin
+        .from("unlock_criteria_definitions")
+        .upsert({ key, label, description, enabled }, { onConflict: "key" });
+    }
     if (up.error) return NextResponse.json({ ok: false, error: up.error.message }, { status: 500 });
     return loadAll();
   }

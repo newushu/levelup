@@ -15,6 +15,7 @@ export default function ClientShell({ children }: { children: React.ReactNode })
   const isHome = path === "/";
   const isLogin = path.startsWith("/login");
   const isClassroom = path.startsWith("/classroom");
+  const isCampClassroom = path.startsWith("/camp/classroom");
   const isAdmin = path.startsWith("/admin");
   const isEmbed = useSearchParams().get("embed") === "1";
   const isParentAllowed =
@@ -25,7 +26,7 @@ export default function ClientShell({ children }: { children: React.ReactNode })
     path.startsWith("/reset-password") ||
     path.startsWith("/logout");
   const [role, setRole] = useState("");
-  const showBanner = !isEmbed && !isHome && !isLogin && !isClassroom && ["student", "parent"].includes(role);
+  const showBanner = !isEmbed && !isHome && !isLogin && !isClassroom && !isCampClassroom && ["student", "parent"].includes(role);
 
   useEffect(() => {
     (async () => {
@@ -77,7 +78,7 @@ export default function ClientShell({ children }: { children: React.ReactNode })
           <div style={{ height: 150 }} />
         </>
       ) : null}
-      {!isEmbed && !isHome && !isLogin && !isClassroom ? <AnnouncementBar /> : null}
+      {!isEmbed && !isHome && !isLogin && !isClassroom && !isCampClassroom ? <AnnouncementBar /> : null}
       {isAdmin ? <div style={{ height: 20 }} /> : null}
       <BadgeOverlayManager />
       {children}

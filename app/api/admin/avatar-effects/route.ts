@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/authz";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-const SELECT_WITH_LAYER = "id,key,name,unlock_level,unlock_points,config,render_mode,z_layer,html,css,js,enabled,limited_event_only,limited_event_name,limited_event_description";
+const SELECT_WITH_LAYER =
+  "id,key,name,unlock_level,unlock_points,config,render_mode,z_layer,html,css,js,enabled,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,mvp_bonus_pct,limited_event_only,limited_event_name,limited_event_description";
 
 export async function GET() {
   const gate = await requireAdmin();
@@ -21,7 +22,7 @@ export async function GET() {
     .order("unlock_level", { ascending: true })
     .order("name", { ascending: true });
 
-  if (error && /z_layer|limited_event_/i.test(error.message ?? "")) {
+  if (error && /z_layer|limited_event_|rule_keeper_multiplier|rule_breaker_multiplier|skill_pulse_multiplier|spotlight_multiplier|daily_free_points|challenge_completion_bonus_pct|mvp_bonus_pct/i.test(error.message ?? "")) {
     const fallback = await admin
       .from("avatar_effects")
       .select("id,key,name,unlock_level,unlock_points,config,render_mode,html,css,js,enabled")
@@ -30,6 +31,13 @@ export async function GET() {
     data = (fallback.data ?? []).map((row: any) => ({
       ...row,
       z_layer: "behind_avatar",
+      rule_keeper_multiplier: 1,
+      rule_breaker_multiplier: 1,
+      skill_pulse_multiplier: 1,
+      spotlight_multiplier: 1,
+      daily_free_points: 0,
+      challenge_completion_bonus_pct: 0,
+      mvp_bonus_pct: 0,
       limited_event_only: false,
       limited_event_name: "",
       limited_event_description: "",
@@ -58,6 +66,13 @@ export async function POST(req: Request) {
   const css = typeof body?.css === "string" ? body.css : "";
   const js = typeof body?.js === "string" ? body.js : "";
   const enabled = body?.enabled !== false;
+  const rule_keeper_multiplier = Number(body?.rule_keeper_multiplier ?? 1);
+  const rule_breaker_multiplier = Number(body?.rule_breaker_multiplier ?? 1);
+  const skill_pulse_multiplier = Number(body?.skill_pulse_multiplier ?? 1);
+  const spotlight_multiplier = Number(body?.spotlight_multiplier ?? 1);
+  const daily_free_points = Math.max(0, Math.floor(Number(body?.daily_free_points ?? 0)));
+  const challenge_completion_bonus_pct = Math.max(0, Number(body?.challenge_completion_bonus_pct ?? 0));
+  const mvp_bonus_pct = Math.max(0, Number(body?.mvp_bonus_pct ?? 0));
   const limited_event_only = body?.limited_event_only === true;
   const limited_event_name = String(body?.limited_event_name ?? "").trim();
   const limited_event_description = String(body?.limited_event_description ?? "").trim();
@@ -77,6 +92,13 @@ export async function POST(req: Request) {
     css,
     js,
     enabled,
+    rule_keeper_multiplier,
+    rule_breaker_multiplier,
+    skill_pulse_multiplier,
+    spotlight_multiplier,
+    daily_free_points,
+    challenge_completion_bonus_pct,
+    mvp_bonus_pct,
     limited_event_only,
     limited_event_name,
     limited_event_description,
@@ -95,15 +117,41 @@ export async function POST(req: Request) {
       .upsert({ id, ...payload }, { onConflict: "id" })
       .select(SELECT_WITH_LAYER)
       .single();
-    if (error && /z_layer|limited_event_/i.test(error.message ?? "")) {
-      const { z_layer: _ignored, limited_event_only: _x, limited_event_name: _y, limited_event_description: _z, ...legacyPayload } = payload;
+    if (error && /z_layer|limited_event_|rule_keeper_multiplier|rule_breaker_multiplier|skill_pulse_multiplier|spotlight_multiplier|daily_free_points|challenge_completion_bonus_pct|mvp_bonus_pct/i.test(error.message ?? "")) {
+      const {
+        z_layer: _ignored,
+        limited_event_only: _x,
+        limited_event_name: _y,
+        limited_event_description: _z,
+        rule_keeper_multiplier: _a,
+        rule_breaker_multiplier: _b,
+        skill_pulse_multiplier: _c,
+        spotlight_multiplier: _d,
+        daily_free_points: _e,
+        challenge_completion_bonus_pct: _f,
+        mvp_bonus_pct: _g,
+        ...legacyPayload
+      } = payload;
       const fallback = await admin
         .from("avatar_effects")
         .upsert({ id, ...legacyPayload }, { onConflict: "id" })
         .select("id,key,name,unlock_level,unlock_points,config,render_mode,html,css,js,enabled")
         .single();
       data = fallback.data
-        ? { ...fallback.data, z_layer: "behind_avatar", limited_event_only: false, limited_event_name: "", limited_event_description: "" }
+        ? {
+            ...fallback.data,
+            z_layer: "behind_avatar",
+            rule_keeper_multiplier: 1,
+            rule_breaker_multiplier: 1,
+            skill_pulse_multiplier: 1,
+            spotlight_multiplier: 1,
+            daily_free_points: 0,
+            challenge_completion_bonus_pct: 0,
+            mvp_bonus_pct: 0,
+            limited_event_only: false,
+            limited_event_name: "",
+            limited_event_description: "",
+          }
         : fallback.data;
       error = fallback.error;
     }
@@ -122,15 +170,41 @@ export async function POST(req: Request) {
     .upsert(payload, { onConflict: "key" })
     .select(SELECT_WITH_LAYER)
     .single();
-  if (error && /z_layer|limited_event_/i.test(error.message ?? "")) {
-    const { z_layer: _ignored, limited_event_only: _x, limited_event_name: _y, limited_event_description: _z, ...legacyPayload } = payload;
+  if (error && /z_layer|limited_event_|rule_keeper_multiplier|rule_breaker_multiplier|skill_pulse_multiplier|spotlight_multiplier|daily_free_points|challenge_completion_bonus_pct|mvp_bonus_pct/i.test(error.message ?? "")) {
+    const {
+      z_layer: _ignored,
+      limited_event_only: _x,
+      limited_event_name: _y,
+      limited_event_description: _z,
+      rule_keeper_multiplier: _a,
+      rule_breaker_multiplier: _b,
+      skill_pulse_multiplier: _c,
+      spotlight_multiplier: _d,
+      daily_free_points: _e,
+      challenge_completion_bonus_pct: _f,
+      mvp_bonus_pct: _g,
+      ...legacyPayload
+    } = payload;
     const fallback = await admin
       .from("avatar_effects")
       .upsert(legacyPayload, { onConflict: "key" })
       .select("id,key,name,unlock_level,unlock_points,config,render_mode,html,css,js,enabled")
       .single();
     data = fallback.data
-      ? { ...fallback.data, z_layer: "behind_avatar", limited_event_only: false, limited_event_name: "", limited_event_description: "" }
+      ? {
+          ...fallback.data,
+          z_layer: "behind_avatar",
+          rule_keeper_multiplier: 1,
+          rule_breaker_multiplier: 1,
+          skill_pulse_multiplier: 1,
+          spotlight_multiplier: 1,
+          daily_free_points: 0,
+          challenge_completion_bonus_pct: 0,
+          mvp_bonus_pct: 0,
+          limited_event_only: false,
+          limited_event_name: "",
+          limited_event_description: "",
+        }
       : fallback.data;
     error = fallback.error;
   }

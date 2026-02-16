@@ -535,7 +535,7 @@ function pageStyles() {
   return `
     .student-challenges {
       min-height: 80vh;
-      padding: 20px 4px 54px 70px;
+      padding: 20px 4px 54px 260px;
       display: flex;
       width: 100%;
       box-sizing: border-box;

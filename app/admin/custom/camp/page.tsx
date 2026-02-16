@@ -16,6 +16,8 @@ type StudentPick = { id: string; name: string };
 type CampSettings = {
   daily_points: number;
   helper_points: number;
+  seller_daily_points: number;
+  cleaner_daily_points: number;
 };
 
 type CouponType = {
@@ -30,7 +32,12 @@ type CouponType = {
 type MenuItem = { id: string; name: string };
 
 export default function CampAdminSettingsPage() {
-  const [settings, setSettings] = useState<CampSettings>({ daily_points: 0, helper_points: 0 });
+  const [settings, setSettings] = useState<CampSettings>({
+    daily_points: 0,
+    helper_points: 0,
+    seller_daily_points: 300,
+    cleaner_daily_points: 500,
+  });
   const [campPin, setCampPin] = useState("");
   const [msg, setMsg] = useState("");
 
@@ -59,6 +66,8 @@ export default function CampAdminSettingsPage() {
         setSettings({
           daily_points: Number(data.settings.daily_points ?? 0),
           helper_points: Number(data.settings.helper_points ?? 0),
+          seller_daily_points: Number(data.settings.seller_daily_points ?? 300),
+          cleaner_daily_points: Number(data.settings.cleaner_daily_points ?? 500),
         });
       }
     })();
@@ -179,6 +188,8 @@ export default function CampAdminSettingsPage() {
       body: JSON.stringify({
         daily_points: settings.daily_points,
         helper_points: settings.helper_points,
+        seller_daily_points: settings.seller_daily_points,
+        cleaner_daily_points: settings.cleaner_daily_points,
         camp_pin: campPin.trim() || undefined,
       }),
     });
@@ -304,6 +315,22 @@ export default function CampAdminSettingsPage() {
             <input
               value={settings.helper_points}
               onChange={(e) => setSettings((prev) => ({ ...prev, helper_points: Number(e.target.value) || 0 }))}
+              style={input()}
+            />
+          </label>
+          <label style={label()}>
+            Seller daily redeem points
+            <input
+              value={settings.seller_daily_points}
+              onChange={(e) => setSettings((prev) => ({ ...prev, seller_daily_points: Number(e.target.value) || 0 }))}
+              style={input()}
+            />
+          </label>
+          <label style={label()}>
+            Cleaner daily redeem points
+            <input
+              value={settings.cleaner_daily_points}
+              onChange={(e) => setSettings((prev) => ({ ...prev, cleaner_daily_points: Number(e.target.value) || 0 }))}
               style={input()}
             />
           </label>

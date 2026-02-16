@@ -61,8 +61,16 @@ create table if not exists camp_settings (
   id text primary key default 'default',
   daily_points integer not null default 0,
   helper_points integer not null default 0,
+  seller_daily_points integer not null default 300,
+  cleaner_daily_points integer not null default 500,
   camp_pin_hash text
 );
+
+alter table if exists camp_settings
+  add column if not exists seller_daily_points integer not null default 300;
+
+alter table if exists camp_settings
+  add column if not exists cleaner_daily_points integer not null default 500;
 
 create table if not exists camp_leaders (
   id uuid primary key default gen_random_uuid(),

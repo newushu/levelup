@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import AvatarRender from "@/components/AvatarRender";
 import { supabaseClient } from "@/lib/supabase/client";
 
@@ -10,6 +11,7 @@ type CampDisplayMember = {
   student_id: string;
   display_role: string;
   secondary_role?: string;
+  secondary_role_days?: string[];
   faction_id?: string | null;
   student: {
     id: string;
@@ -60,10 +62,11 @@ type ApiPayload = {
   show_all_groups?: boolean;
   groups?: Array<{ id: string; roster_id: string; name: string }>;
   rosters?: Array<{ id: string; name: string }>;
+  camp_role_point_config?: { seller_daily_points?: number; cleaner_daily_points?: number };
   factions?: Array<{ id: string; name: string; color?: string | null; icon?: string | null; logo_url?: string | null }>;
   active_roster_id?: string;
   display_members?: CampDisplayMember[];
-  announcements?: Array<{ student_id: string; name: string; created_at: string }>;
+  announcements?: Array<{ student_id: string; name: string; created_at: string; label?: string; detail?: string }>;
 };
 
 async function safeJson(res: Response) {
@@ -102,6 +105,54 @@ function relativeTime(iso?: string) {
   return `${days}d ago`;
 }
 
+function rolePointValue(role: string, config: { seller_daily_points: number; cleaner_daily_points: number }) {
+  const key = String(role ?? "").trim().toLowerCase();
+  if (key === "seller") return Number(config.seller_daily_points ?? 0);
+  if (key === "cleaner") return Number(config.cleaner_daily_points ?? 0);
+  return 0;
+}
+
+function dayLabel(day: string) {
+  const key = String(day ?? "").trim().toLowerCase();
+  if (key === "m") return "M";
+  if (key === "t") return "T";
+  if (key === "w") return "W";
+  if (key === "r") return "R";
+  if (key === "f") return "F";
+  if (key === "sa") return "SA";
+  if (key === "su") return "SU";
+  return "";
+}
+
+function normalizeDayKey(value: unknown) {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (v === "monday" || v === "mon") return "m";
+  if (v === "tuesday" || v === "tues" || v === "tue") return "t";
+  if (v === "wednesday" || v === "wed") return "w";
+  if (v === "thursday" || v === "thurs" || v === "thu" || v === "th") return "r";
+  if (v === "friday" || v === "fri") return "f";
+  if (v === "saturday" || v === "sat") return "sa";
+  if (v === "sunday" || v === "sun") return "su";
+  return v;
+}
+
+function getEasternDayCodeNow() {
+  const dayName = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+  })
+    .format(new Date())
+    .toLowerCase();
+  if (dayName.startsWith("mon")) return "m";
+  if (dayName.startsWith("tue")) return "t";
+  if (dayName.startsWith("wed")) return "w";
+  if (dayName.startsWith("thu")) return "r";
+  if (dayName.startsWith("fri")) return "f";
+  if (dayName.startsWith("sat")) return "sa";
+  if (dayName.startsWith("sun")) return "su";
+  return "";
+}
+
 export default function CampDisplayPage() {
   const searchParams = useSearchParams();
   const screenId = Math.min(3, Math.max(1, Number(searchParams.get("screen") ?? 1) || 1));
@@ -115,11 +166,26 @@ export default function CampDisplayPage() {
   const [activeRosterId, setActiveRosterId] = useState("");
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [showAllGroups, setShowAllGroups] = useState(true);
-  const [announcements, setAnnouncements] = useState<Array<{ student_id: string; name: string; created_at: string }>>([]);
+  const [announcements, setAnnouncements] = useState<Array<{ student_id: string; name: string; created_at: string; label?: string; detail?: string }>>([]);
+  const [campRolePoints, setCampRolePoints] = useState<{ seller_daily_points: number; cleaner_daily_points: number }>({
+    seller_daily_points: 300,
+    cleaner_daily_points: 500,
+  });
   const [factions, setFactions] = useState<Array<{ id: string; name: string; color?: string | null; icon?: string | null; logo_url?: string | null }>>([]);
   const [effectConfigByKey, setEffectConfigByKey] = useState<Record<string, { config?: any; render_mode?: string | null; html?: string | null; css?: string | null; js?: string | null }>>({});
   const [debugOpen, setDebugOpen] = useState(false);
   const [copyMsg, setCopyMsg] = useState("");
+  const [menuBarHover, setMenuBarHover] = useState(false);
+  const [canHover, setCanHover] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(hover: hover)");
+    const sync = () => setCanHover(media.matches);
+    sync();
+    media.addEventListener?.("change", sync);
+    return () => media.removeEventListener?.("change", sync);
+  }, []);
 
   async function load() {
     const rosterUrl = instanceId
@@ -162,6 +228,10 @@ export default function CampDisplayPage() {
       setShowAllGroups(showAll);
       setRows((payload.display_members ?? []).filter((r) => r.student));
       setAnnouncements(payload.announcements ?? []);
+      setCampRolePoints({
+        seller_daily_points: Number(payload.camp_role_point_config?.seller_daily_points ?? 300),
+        cleaner_daily_points: Number(payload.camp_role_point_config?.cleaner_daily_points ?? 500),
+      });
       setFactions(payload.factions ?? []);
     }
 
@@ -202,7 +272,7 @@ export default function CampDisplayPage() {
 
   const uniqueAnnouncements = useMemo(() => {
     const used = new Set<string>();
-    const out: Array<{ student_id: string; name: string; created_at: string }> = [];
+    const out: Array<{ student_id: string; name: string; created_at: string; label?: string; detail?: string }> = [];
     for (const a of announcements) {
       const key = `${a.student_id}-${a.created_at}`;
       if (used.has(key)) continue;
@@ -264,7 +334,7 @@ export default function CampDisplayPage() {
 
   return (
     <main style={wrap()}>
-      <div style={{ display: "grid", gridTemplateColumns: "240px minmax(0,1fr)", gap: 12, alignItems: "stretch", minHeight: "calc(100vh - 40px)" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "180px minmax(0,1fr)", gap: 8, alignItems: "stretch", minHeight: "calc(100vh - 40px)" }}>
         <aside style={infoRail()}>
           <section style={titleCard()}>
             <div style={railTitle()}>{rosterName || title}</div>
@@ -276,19 +346,51 @@ export default function CampDisplayPage() {
             <div style={infoCardLine()}>Collect <strong>10 stars</strong> to unlock a <strong>+500 bonus</strong>.</div>
           </section>
           <section style={infoCard()}>
+            <div style={infoCardTitle()}>Role Redeem (Daily)</div>
+            <div style={infoCardLine()}>Seller: <strong>+{Math.round(Number(campRolePoints.seller_daily_points ?? 0))}</strong></div>
+            <div style={infoCardLine()}>Cleaner: <strong>+{Math.round(Number(campRolePoints.cleaner_daily_points ?? 0))}</strong></div>
+          </section>
+          <section style={infoCard()}>
             <div style={infoCardTitle()}>Legend</div>
             <div style={legendRow()}><span>⭐</span><span>Camp spotlight progress</span></div>
-            <div style={legendRow()}><span>🟢</span><span>Rule keeper count</span></div>
-            <div style={legendRow()}><span>❌</span><span>Rule breaker count</span></div>
-            <div style={legendRow()}><span>✨</span><span>Redeem points ready</span></div>
+            <div style={legendRow()}><span>🛡️</span><span>Rule keeper tally + earned pts</span></div>
+            <div style={legendRow()}><span>⚠️</span><span>Rule breaker tally + lost pts</span></div>
+            <div style={legendRow()}><span>💠</span><span>Daily redeem points available</span></div>
+          </section>
+          <section style={logRailCard()}>
+            <div style={infoCardTitle()}>Notable Feed</div>
+            <div style={logRailList()}>
+              {uniqueAnnouncements.length ? (
+                uniqueAnnouncements.map((a, idx) => (
+                  <div key={`${a.student_id}-${a.created_at}-${idx}`} style={logFeedItem()}>
+                    <div style={{ display: "grid", gap: 2 }}>
+                      <span style={{ fontWeight: 900 }}>{a.name}</span>
+                      <span style={{ opacity: 0.84, fontSize: 9 }}>{a.label || "Activity"}</span>
+                      {a.detail ? <span style={{ opacity: 0.74, fontSize: 9 }}>{a.detail}</span> : null}
+                    </div>
+                    <span style={{ opacity: 0.84, fontSize: 9 }}>
+                      {relativeTime(a.created_at)}{" "}
+                      {new Date(a.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div style={{ fontSize: 10, opacity: 0.75 }}>No notable activity yet.</div>
+              )}
+            </div>
           </section>
         </aside>
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ display: "flex", justifyContent: "flex-end", flexWrap: "wrap", gap: 6, alignItems: "flex-start", marginTop: -2 }}>
-            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-              <a href="/display/camp?screen=1" style={screenChip(screenId === 1)}>Display 1</a>
-              <a href="/display/camp?screen=2" style={screenChip(screenId === 2)}>Display 2</a>
-              <a href="/display/camp?screen=3" style={screenChip(screenId === 3)}>Display 3</a>
+            <div
+              style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}
+              onMouseEnter={() => setMenuBarHover(true)}
+              onMouseLeave={() => setMenuBarHover(false)}
+            >
+              <Link href="/display/camp?screen=1" style={screenChip(screenId === 1)}>Display 1</Link>
+              <Link href="/display/camp?screen=2" style={screenChip(screenId === 2)}>Display 2</Link>
+              <Link href="/display/camp?screen=3" style={screenChip(screenId === 3)}>Display 3</Link>
+              <Link href="/display" style={menuChip(!canHover || menuBarHover)}>Menu</Link>
             </div>
           </div>
           {msg ? <div style={notice()}>{msg}</div> : null}
@@ -319,6 +421,12 @@ export default function CampDisplayPage() {
               const redeem = row.redeem_status ?? { can_redeem: false, available_points: 0 };
               const faction = row.faction_id ? factionById.get(String(row.faction_id)) : undefined;
               const cardTone = faction?.color ? buildCardToneFromColor(faction.color) : defaultCardTone();
+              const secondaryRolePoints = rolePointValue(String(row.secondary_role ?? ""), campRolePoints);
+              const todayDayCode = getEasternDayCodeNow();
+              const roleDayList = Array.isArray(row.secondary_role_days) ? row.secondary_role_days : [];
+              const secondaryRoleActiveToday =
+                !!String(row.secondary_role ?? "").trim() &&
+                (roleDayList.length === 0 || roleDayList.map((d) => normalizeDayKey(d)).includes(todayDayCode));
               const starCount = Math.max(0, Math.min(10, Number(tally.spotlight_stars ?? 0)));
               const initials = String(s.name ?? "S")
                 .split(" ")
@@ -327,29 +435,36 @@ export default function CampDisplayPage() {
                 .map((p) => p[0]?.toUpperCase() ?? "")
                 .join("");
               return (
-                <section key={row.id} style={card(cardTone)}>
+                <section key={row.id} style={card(cardTone, Boolean(faction))}>
                   <div style={roleChip()}>{row.display_role || "camper"}</div>
                   {faction ? <div style={factionNameChip(faction.color ?? "#64748b")}>{faction.name}</div> : null}
-                  {row.secondary_role ? <div style={secondaryRoleChip()}>{row.secondary_role}</div> : null}
+                  {secondaryRoleActiveToday ? (
+                    <div style={secondaryRoleWrap()}>
+                      <div style={secondaryRoleChip()}>{row.secondary_role}</div>
+                      <div style={secondaryRolePointsChip()}>
+                        +{Math.round(secondaryRolePoints)} today
+                      </div>
+                    </div>
+                  ) : null}
                   <div style={avatarRow()}>
                     <div style={levelCluster()}>
                       {faction ? (
                         <div style={factionMiniBox(faction.color ?? "#64748b")} title={faction.name || "Faction"}>
                           {faction.logo_url ? (
-                            <img src={faction.logo_url} alt={faction.name} style={{ width: 34, height: 34, objectFit: "cover", borderRadius: 8 }} />
+                            <img src={faction.logo_url} alt={faction.name} style={{ width: 24, height: 24, objectFit: "cover", borderRadius: 6 }} />
                           ) : (
-                            <span style={{ fontSize: 24, lineHeight: 1 }}>{faction.icon || "🏕️"}</span>
+                            <span style={{ fontSize: 16, lineHeight: 1 }}>{faction.icon || "🏕️"}</span>
                           )}
                         </div>
                       ) : null}
                       <div style={levelDisplayBig()}>
-                        <div style={{ opacity: 0.82, fontSize: 11, letterSpacing: 0.7 }}>LV</div>
-                        <div style={{ fontSize: 34, lineHeight: 1, fontWeight: 1100 }}>{Number(s.level ?? 1)}</div>
+                        <div style={{ opacity: 0.82, fontSize: 8, letterSpacing: 0.5 }}>LV</div>
+                        <div style={{ fontSize: 23, lineHeight: 1, fontWeight: 1100 }}>{Number(s.level ?? 1)}</div>
                       </div>
                     </div>
-                  <div style={{ width: 164, height: 164, position: "relative" }}>
+                  <div style={{ width: 110, height: 110, position: "relative" }}>
                     <AvatarRender
-                      size={164}
+                      size={110}
                       bg={s.avatar_bg || "rgba(15,23,42,0.45)"}
                       avatarSrc={avatarUrl(s.avatar_storage_path)}
                       avatarZoomPct={Math.max(50, Math.min(200, Number(s.avatar_zoom_pct ?? 100)))}
@@ -386,7 +501,7 @@ export default function CampDisplayPage() {
                   </div>
                   </div>
                   <div style={{ display: "grid", gap: 4, textAlign: "center" }}>
-                    <div style={{ fontSize: 22, fontWeight: 1000, lineHeight: 1 }}>{s.name}</div>
+                    <div style={{ fontSize: 15, fontWeight: 1000, lineHeight: 1 }}>{s.name}</div>
                     <div style={pointsChip()}>{Number(s.points_total ?? 0).toLocaleString()} pts</div>
                   </div>
                   {row.last_change ? (
@@ -435,19 +550,6 @@ export default function CampDisplayPage() {
           </div>
         </div>
       </div>
-      {uniqueAnnouncements.length ? (
-        <section style={annBottomBar()}>
-          <div style={{ fontWeight: 1000, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5 }}>Notable Announcements</div>
-          <div style={annBottomTrack()}>
-            {uniqueAnnouncements.map((a, idx) => (
-              <div key={`${a.student_id}-${a.created_at}-${idx}`} style={annBottomChip()}>
-                <span style={{ fontWeight: 900 }}>{a.name}</span>
-                <span style={{ opacity: 0.84 }}>MVP • {relativeTime(a.created_at)}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
       <button type="button" style={debugToggleBtn()} onClick={() => setDebugOpen((v) => !v)}>
         Debug
       </button>
@@ -481,17 +583,17 @@ function wrap(): React.CSSProperties {
 }
 function titleCard(): React.CSSProperties {
   return {
-    borderRadius: 12,
+    borderRadius: 10,
     border: "1px solid rgba(56,189,248,0.38)",
     background: "linear-gradient(150deg, rgba(8,47,73,0.75), rgba(2,6,23,0.92))",
-    padding: "12px 10px",
+    padding: "8px 8px",
     display: "grid",
     gap: 6,
   };
 }
 function railTitle(): React.CSSProperties {
   return {
-    fontSize: 30,
+    fontSize: 20,
     lineHeight: 1.02,
     fontWeight: 1100,
     letterSpacing: 0.2,
@@ -503,7 +605,7 @@ function railSubTitle(): React.CSSProperties {
     fontWeight: 900,
     textTransform: "uppercase",
     letterSpacing: 0.7,
-    fontSize: 12,
+    fontSize: 10,
   };
 }
 function notice(): React.CSSProperties {
@@ -518,67 +620,70 @@ function notice(): React.CSSProperties {
 function grid(columns: number): React.CSSProperties {
   return {
     display: "grid",
-    gap: 12,
+    gap: 8,
     gridTemplateColumns: `repeat(${Math.max(1, columns)}, minmax(0, 1fr))`,
   };
 }
 function placeholderCard(): React.CSSProperties {
   return {
-    borderRadius: 16,
+    borderRadius: 12,
     border: "1px dashed rgba(148,163,184,0.5)",
     background: "linear-gradient(165deg, rgba(15,23,42,0.45), rgba(2,6,23,0.62))",
-    minHeight: 462,
+    minHeight: 308,
     display: "grid",
     placeItems: "center",
   };
 }
 function placeholderLabel(): React.CSSProperties {
   return {
-    fontSize: 16,
+    fontSize: 12,
     fontWeight: 900,
     letterSpacing: 0.5,
     textTransform: "uppercase",
     color: "rgba(148,163,184,0.9)",
   };
 }
-function card(tone: { border: string; glow: string; bgA: string; bgB: string }): React.CSSProperties {
+function card(tone: { border: string; glow: string; bgA: string; bgB: string }, factionActive: boolean): React.CSSProperties {
   return {
-    borderRadius: 16,
+    borderRadius: 12,
     border: `1px solid ${tone.border}`,
-    background: `linear-gradient(165deg, ${tone.bgA}, ${tone.bgB})`,
-    padding: 12,
+    background: factionActive
+      ? `radial-gradient(circle at 12% 18%, ${tone.glow}, transparent 44%), radial-gradient(circle at 84% 76%, ${tone.glow}, transparent 42%), linear-gradient(165deg, ${tone.bgA}, ${tone.bgB})`
+      : `linear-gradient(165deg, ${tone.bgA}, ${tone.bgB})`,
+    padding: 8,
     display: "grid",
     justifyItems: "center",
-    gap: 10,
+    gap: 6,
     position: "relative",
     boxShadow: `inset 0 0 0 1px ${tone.glow}, 0 10px 24px rgba(0,0,0,0.36)`,
   };
 }
 function infoRail(): React.CSSProperties {
   return {
-    borderRadius: 14,
+    borderRadius: 10,
     border: "1px solid rgba(125,211,252,0.28)",
     background: "linear-gradient(165deg, rgba(6,24,46,0.84), rgba(2,6,23,0.92))",
-    padding: 12,
+    padding: 8,
     display: "grid",
     gap: 8,
-    placeContent: "center",
+    alignContent: "start",
     height: "100%",
+    overflow: "hidden",
   };
 }
 function infoCard(): React.CSSProperties {
   return {
-    borderRadius: 12,
+    borderRadius: 10,
     border: "1px solid rgba(125,211,252,0.3)",
     background: "linear-gradient(160deg, rgba(15,23,42,0.84), rgba(2,6,23,0.92))",
-    padding: 10,
+    padding: 8,
     display: "grid",
     gap: 8,
   };
 }
 function infoCardTitle(): React.CSSProperties {
   return {
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: 1000,
     letterSpacing: 0.6,
     textTransform: "uppercase",
@@ -587,7 +692,7 @@ function infoCardTitle(): React.CSSProperties {
 }
 function infoCardLine(): React.CSSProperties {
   return {
-    fontSize: 12,
+    fontSize: 10,
     lineHeight: 1.35,
     color: "rgba(241,245,249,0.92)",
   };
@@ -595,57 +700,81 @@ function infoCardLine(): React.CSSProperties {
 function legendRow(): React.CSSProperties {
   return {
     display: "grid",
-    gridTemplateColumns: "18px minmax(0,1fr)",
+    gridTemplateColumns: "14px minmax(0,1fr)",
     alignItems: "center",
     gap: 8,
-    fontSize: 12,
+    fontSize: 10,
     color: "rgba(226,232,240,0.95)",
   };
 }
 function roleChip(): React.CSSProperties {
   return {
     position: "absolute",
-    top: 10,
-    right: 10,
+    top: 8,
+    right: 8,
     borderRadius: 999,
     border: "1px solid rgba(251,191,36,0.52)",
     background: "rgba(120,53,15,0.55)",
     color: "#fef3c7",
-    padding: "3px 9px",
-    fontSize: 11,
+    padding: "2px 7px",
+    fontSize: 10,
     fontWeight: 900,
     textTransform: "uppercase",
   };
 }
 function secondaryRoleChip(): React.CSSProperties {
   return {
-    position: "absolute",
-    top: 36,
-    left: 10,
     borderRadius: 999,
     border: "1px solid rgba(34,197,94,0.42)",
     background: "rgba(6,78,59,0.55)",
     color: "#dcfce7",
-    padding: "3px 8px",
-    fontSize: 11,
+    padding: "2px 6px",
+    fontSize: 10,
     fontWeight: 900,
     textTransform: "uppercase",
+  };
+}
+function secondaryRoleWrap(): React.CSSProperties {
+  return {
+    position: "absolute",
+    top: 26,
+    left: 8,
+    display: "grid",
+    gap: 2,
+    justifyItems: "start",
+    maxWidth: 132,
+  };
+}
+function secondaryRolePointsChip(): React.CSSProperties {
+  return {
+    borderRadius: 999,
+    border: "1px solid rgba(74,222,128,0.35)",
+    background: "rgba(6,78,59,0.45)",
+    color: "#bbf7d0",
+    padding: "1px 6px",
+    fontSize: 9,
+    fontWeight: 900,
+    lineHeight: 1.2,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    maxWidth: 132,
   };
 }
 function factionNameChip(color: string): React.CSSProperties {
   return {
     position: "absolute",
-    top: 10,
-    left: 10,
+    top: 8,
+    left: 8,
     borderRadius: 999,
     border: `1px solid ${color}`,
     background: "rgba(2,6,23,0.78)",
     color: "white",
-    padding: "3px 8px",
-    fontSize: 11,
+    padding: "2px 6px",
+    fontSize: 10,
     fontWeight: 900,
     textTransform: "uppercase",
-    maxWidth: 140,
+    maxWidth: 96,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -665,16 +794,16 @@ function pointsChip(): React.CSSProperties {
     borderRadius: 999,
     border: "1px solid rgba(250,204,21,0.45)",
     background: "rgba(120,53,15,0.4)",
-    padding: "9px 14px",
+    padding: "6px 10px",
     fontWeight: 1000,
-    fontSize: 36,
+    fontSize: 24,
     lineHeight: 1,
     boxShadow: "0 0 16px rgba(250,204,21,0.14)",
     letterSpacing: 0.3,
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    minHeight: 56,
+    minHeight: 38,
     textAlign: "center",
   };
 }
@@ -694,15 +823,15 @@ function keeperBreakerGrid(): React.CSSProperties {
     width: "100%",
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
-    gap: 8,
+    gap: 6,
   };
 }
 function keeperBox(): React.CSSProperties {
   return {
-    borderRadius: 10,
+    borderRadius: 8,
     border: "1px solid rgba(5,150,105,0.78)",
     background: "linear-gradient(165deg, rgba(6,78,59,0.82), rgba(2,44,34,0.9))",
-    padding: "8px 8px 6px",
+    padding: "6px 6px 5px",
     display: "grid",
     justifyItems: "center",
     gap: 2,
@@ -713,10 +842,10 @@ function keeperBox(): React.CSSProperties {
 }
 function breakerBox(): React.CSSProperties {
   return {
-    borderRadius: 10,
+    borderRadius: 8,
     border: "1px solid rgba(220,38,38,0.82)",
     background: "linear-gradient(165deg, rgba(127,29,29,0.84), rgba(68,10,10,0.92))",
-    padding: "8px 8px 6px",
+    padding: "6px 6px 5px",
     display: "grid",
     justifyItems: "center",
     gap: 2,
@@ -727,15 +856,15 @@ function breakerBox(): React.CSSProperties {
 }
 function keeperBreakerValue(): React.CSSProperties {
   return {
-    fontSize: 34,
+    fontSize: 22,
     lineHeight: 1,
     fontWeight: 1100,
-    marginTop: 4,
+    marginTop: 2,
   };
 }
 function keeperBreakerLabel(): React.CSSProperties {
   return {
-    fontSize: 13,
+    fontSize: 10,
     lineHeight: 1.1,
     fontWeight: 900,
     textTransform: "uppercase",
@@ -745,7 +874,7 @@ function keeperBreakerLabel(): React.CSSProperties {
 }
 function keeperBreakerSubline(): React.CSSProperties {
   return {
-    fontSize: 11,
+    fontSize: 9,
     lineHeight: 1.1,
     fontWeight: 800,
     opacity: 0.88,
@@ -779,17 +908,17 @@ function particleDot(index: number, keeper: boolean): React.CSSProperties {
 function redeemMiniChip(): React.CSSProperties {
   return {
     position: "absolute",
-    right: 10,
-    bottom: 10,
+    right: 8,
+    bottom: 8,
     borderRadius: 8,
-    border: "1px solid rgba(250,204,21,0.65)",
-    background: "rgba(120,53,15,0.55)",
+    border: "2px dashed rgba(250,204,21,0.72)",
+    background: "linear-gradient(135deg, rgba(120,53,15,0.62), rgba(92,38,8,0.72))",
     color: "#fef3c7",
-    padding: "4px 7px",
+    padding: "3px 6px",
     fontWeight: 900,
-    fontSize: 11,
-    boxShadow: "0 0 10px rgba(250,204,21,0.15)",
-    maxWidth: 145,
+    fontSize: 10,
+    boxShadow: "0 0 12px rgba(250,204,21,0.24), inset 0 0 10px rgba(251,191,36,0.2)",
+    maxWidth: 96,
     textAlign: "right",
   };
 }
@@ -797,21 +926,24 @@ function starTrackWrap(): React.CSSProperties {
   return {
     display: "grid",
     gridTemplateColumns: "repeat(10, minmax(0, 1fr))",
-    gap: 4,
-    width: "calc(100% - 156px)",
-    maxWidth: 300,
-    minWidth: 160,
+    gap: 3,
+    width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
     marginRight: "auto",
-    marginBottom: 16,
+    marginBottom: 12,
+    paddingRight: 104,
+    boxSizing: "border-box",
+    overflow: "hidden",
   };
 }
 function starTrackStar(active: boolean): React.CSSProperties {
   return {
     display: "grid",
     placeItems: "center",
-    height: 34,
+    height: 24,
     borderRadius: 6,
-    fontSize: 24,
+    fontSize: 16,
     fontWeight: 900,
     border: active ? "1px solid rgba(250,204,21,0.85)" : "1px solid rgba(100,116,139,0.45)",
     background: active ? "linear-gradient(135deg, rgba(250,204,21,0.38), rgba(245,158,11,0.24))" : "rgba(30,41,59,0.58)",
@@ -823,13 +955,13 @@ function avatarFallback(): React.CSSProperties {
   return {
     width: "100%",
     height: "100%",
-    borderRadius: 20,
+    borderRadius: 14,
     display: "grid",
     placeItems: "center",
     background: "linear-gradient(145deg, rgba(15,23,42,0.88), rgba(30,41,59,0.66))",
     color: "rgba(226,232,240,0.95)",
     fontWeight: 1000,
-    fontSize: 34,
+    fontSize: 24,
     textTransform: "uppercase",
   };
 }
@@ -837,7 +969,7 @@ function avatarFallback(): React.CSSProperties {
 function avatarRow(): React.CSSProperties {
   return {
     display: "flex",
-    gap: 10,
+    gap: 8,
     alignItems: "center",
   };
 }
@@ -845,21 +977,21 @@ function levelCluster(): React.CSSProperties {
   return {
     display: "flex",
     alignItems: "center",
-    gap: 6,
+    gap: 4,
   };
 }
 function factionMiniBox(color: string): React.CSSProperties {
   return {
-    width: 56,
-    height: 56,
-    borderRadius: 12,
+    width: 38,
+    height: 38,
+    borderRadius: 9,
     border: `1px solid ${color}`,
     background: "rgba(2,6,23,0.85)",
     boxShadow: `inset 0 0 10px ${color}33`,
     display: "grid",
     placeItems: "center",
     overflow: "hidden",
-    fontSize: 24,
+    fontSize: 16,
     fontWeight: 900,
     flex: "0 0 auto",
   };
@@ -899,9 +1031,9 @@ function annBottomChip(): React.CSSProperties {
 
 function levelDisplayBig(): React.CSSProperties {
   return {
-    width: 76,
-    height: 90,
-    borderRadius: 14,
+    width: 50,
+    height: 60,
+    borderRadius: 10,
     border: "1px solid rgba(148,163,184,0.45)",
     background: "rgba(15,23,42,0.66)",
     boxShadow: "inset 0 0 14px rgba(255,255,255,0.08)",
@@ -912,6 +1044,40 @@ function levelDisplayBig(): React.CSSProperties {
     overflow: "visible",
     lineHeight: 1,
     position: "relative",
+  };
+}
+function logRailCard(): React.CSSProperties {
+  return {
+    borderRadius: 10,
+    border: "1px solid rgba(125,211,252,0.3)",
+    background: "linear-gradient(160deg, rgba(15,23,42,0.82), rgba(2,6,23,0.92))",
+    padding: 8,
+    display: "grid",
+    gap: 6,
+    minHeight: 220,
+  };
+}
+function logRailList(): React.CSSProperties {
+  return {
+    display: "grid",
+    gap: 6,
+    alignContent: "start",
+    overflowY: "auto",
+    maxHeight: 260,
+    paddingRight: 2,
+  };
+}
+function logFeedItem(): React.CSSProperties {
+  return {
+    borderRadius: 8,
+    border: "1px solid rgba(148,163,184,0.28)",
+    background: "rgba(15,23,42,0.58)",
+    padding: "5px 7px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+    fontSize: 10,
   };
 }
 function screenChip(active: boolean): React.CSSProperties {
@@ -927,39 +1093,59 @@ function screenChip(active: boolean): React.CSSProperties {
     lineHeight: 1.1,
   };
 }
+function menuChip(visible: boolean): React.CSSProperties {
+  return {
+    borderRadius: 999,
+    border: "1px solid rgba(148,163,184,0.45)",
+    background: "rgba(15,23,42,0.72)",
+    color: "white",
+    padding: visible ? "4px 8px" : "4px 0",
+    textDecoration: "none",
+    fontWeight: 900,
+    fontSize: 11,
+    lineHeight: 1.1,
+    opacity: visible ? 1 : 0,
+    maxWidth: visible ? 72 : 0,
+    pointerEvents: visible ? "auto" : "none",
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    transform: visible ? "translateX(0)" : "translateX(10px)",
+    transition: "opacity 160ms ease, max-width 160ms ease, transform 160ms ease, padding 160ms ease",
+  };
+}
 function posDeltaChip(): React.CSSProperties {
   return {
-    borderRadius: 10,
+    borderRadius: 8,
     border: "1px solid rgba(74,222,128,0.5)",
     background: "rgba(20,83,45,0.52)",
-    padding: "8px 10px",
+    padding: "6px 8px",
     fontWeight: 900,
     display: "grid",
     gap: 2,
     justifyItems: "center",
     width: "100%",
-    minHeight: 82,
+    minHeight: 56,
     alignContent: "center",
   };
 }
 function negDeltaChip(): React.CSSProperties {
   return {
-    borderRadius: 10,
+    borderRadius: 8,
     border: "1px solid rgba(248,113,113,0.55)",
     background: "rgba(127,29,29,0.55)",
-    padding: "8px 10px",
+    padding: "6px 8px",
     fontWeight: 900,
     display: "grid",
     gap: 2,
     justifyItems: "center",
     width: "100%",
-    minHeight: 82,
+    minHeight: 56,
     alignContent: "center",
   };
 }
 function deltaMainLine(): React.CSSProperties {
   return {
-    fontSize: 36,
+    fontSize: 24,
     lineHeight: 1,
     fontWeight: 1000,
     textAlign: "center",
@@ -967,7 +1153,7 @@ function deltaMainLine(): React.CSSProperties {
 }
 function deltaReasonLine(): React.CSSProperties {
   return {
-    fontSize: 12,
+    fontSize: 10,
     lineHeight: 1.2,
     opacity: 0.86,
     textAlign: "center",
