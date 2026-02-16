@@ -73,7 +73,7 @@ export async function POST(req: Request) {
     id,
     name,
     description: description || null,
-    category: category || null,
+    category: category || "General",
     tier,
     enabled,
     badge_id,

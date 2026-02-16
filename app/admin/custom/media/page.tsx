@@ -894,6 +894,10 @@ export default function MediaVaultAdminPage() {
     row: AvatarRow,
     opts?: { skipReload?: boolean; silent?: boolean; suppressSavedChip?: boolean }
   ) {
+    if (!row.id && !String(row.storage_path ?? "").trim()) {
+      if (!opts?.silent) setMsg("Upload or browse an avatar image first (storage path is empty).");
+      return;
+    }
     setSaving(true);
     const level = Number(row.unlock_level ?? 1);
     const unlock_level = Number.isFinite(level) && level > 0 ? Math.floor(level) : 1;

@@ -43,7 +43,7 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const id = String(body?.id ?? "").trim();
   const name = String(body?.name ?? "").trim();
-  const storage_path = String(body?.storage_path ?? "").trim();
+  let storage_path = String(body?.storage_path ?? "").trim();
   const enabled = body?.enabled !== false;
   const is_secondary = body?.is_secondary === true;
   const unlock_level = Number(body?.unlock_level ?? 1);
@@ -63,10 +63,20 @@ export async function POST(req: Request) {
   const limited_event_description = String(body?.limited_event_description ?? "").trim();
 
   if (!name) return NextResponse.json({ ok: false, error: "Name is required" }, { status: 400 });
-  if (!storage_path) return NextResponse.json({ ok: false, error: "Storage path is required" }, { status: 400 });
   if (!Number.isFinite(unlock_level) || unlock_level < 1) {
     return NextResponse.json({ ok: false, error: "Unlock level must be 1 or higher" }, { status: 400 });
   }
+
+  const admin = supabaseAdmin();
+  if (id && !storage_path) {
+    const { data: existing } = await admin
+      .from("avatars")
+      .select("storage_path")
+      .eq("id", id)
+      .maybeSingle();
+    storage_path = String(existing?.storage_path ?? "").trim();
+  }
+  if (!storage_path) return NextResponse.json({ ok: false, error: "Storage path is required" }, { status: 400 });
 
   const payload: any = {
     name,
@@ -90,7 +100,6 @@ export async function POST(req: Request) {
     limited_event_description,
   };
 
-  const admin = supabaseAdmin();
   const selectWithLimited =
     "id,name,storage_path,enabled,is_secondary,unlock_level,unlock_points,rule_keeper_multiplier,rule_breaker_multiplier,skill_pulse_multiplier,spotlight_multiplier,daily_free_points,challenge_completion_bonus_pct,mvp_bonus_pct,zoom_pct,competition_only,competition_discount_pct,limited_event_only,limited_event_name,limited_event_description,created_at,updated_at";
   const selectLegacy =

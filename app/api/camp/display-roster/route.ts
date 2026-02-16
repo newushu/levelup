@@ -244,7 +244,11 @@ async function loadStudentsByIds(admin: ReturnType<typeof supabaseAdmin>, ids: s
   return studentsById;
 }
 
-async function loadRecentLedgerByStudent(admin: ReturnType<typeof supabaseAdmin>, ids: string[]) {
+async function loadRecentLedgerByStudent(
+  admin: ReturnType<typeof supabaseAdmin>,
+  ids: string[],
+  opts?: { includeCampOrders?: boolean }
+) {
   const map = new Map<string, { points: number; note: string; category: string; created_at: string }>();
   if (!ids.length) return map;
 
@@ -272,6 +276,8 @@ async function loadRecentLedgerByStudent(admin: ReturnType<typeof supabaseAdmin>
     if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
     return a > b;
   };
+
+  if (opts?.includeCampOrders === false) return map;
 
   const { data: recentOrders } = await admin
     .from("camp_orders")
@@ -519,6 +525,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const screenId = Math.min(3, Math.max(1, asInt(url.searchParams.get("screen"), 1)));
   const classroomInstanceId = String(url.searchParams.get("instance_id") ?? "").trim();
+  const liteMode = String(url.searchParams.get("lite") ?? "").trim().toLowerCase() === "camp_classroom";
 
   const [rostersRes, groupsRes, membersRes, screensRes] = await Promise.all([
     admin.from("camp_display_rosters").select("id,name,start_date,end_date,enabled,sort_order,created_at,updated_at").order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
@@ -582,9 +589,11 @@ export async function GET(req: Request) {
       new Set((checkins ?? []).map((r: any) => String(r.student_id ?? "")).filter(Boolean))
     );
     const studentsByIdFromCheckin = await loadStudentsByIds(admin, studentIdsFromCheckin);
-    const recentLedgerByStudent = await loadRecentLedgerByStudent(admin, studentIdsFromCheckin);
-    const redeemByStudent = await loadDailyRedeemByStudent(admin, studentIdsFromCheckin);
-    const tallyByStudent = await loadCampTallyByStudent(admin, studentIdsFromCheckin);
+    const recentLedgerByStudent = await loadRecentLedgerByStudent(admin, studentIdsFromCheckin, {
+      includeCampOrders: !liteMode,
+    });
+    const redeemByStudent = liteMode ? new Map() : await loadDailyRedeemByStudent(admin, studentIdsFromCheckin);
+    const tallyByStudent = liteMode ? new Map() : await loadCampTallyByStudent(admin, studentIdsFromCheckin);
 
     const displayMembers = (checkins ?? [])
       .map((row: any, idx: number) => {
@@ -623,7 +632,7 @@ export async function GET(req: Request) {
       .filter((m: any) => m && m.student);
 
     const announcementStudentIds = Array.from(new Set(displayMembers.map((m: any) => String(m.student_id ?? "")).filter(Boolean)));
-    const announcements = await loadRecentMvpAnnouncements(admin, announcementStudentIds);
+    const announcements = liteMode ? [] : await loadRecentMvpAnnouncements(admin, announcementStudentIds);
     const campRolePointConfig = await getCampRolePointConfig(admin);
 
     return NextResponse.json({
@@ -649,14 +658,21 @@ export async function GET(req: Request) {
 
   const allStudentIds = Array.from(new Set(members.map((m: any) => String(m.student_id ?? "")).filter(Boolean)));
   const studentsById = await loadStudentsByIds(admin, allStudentIds);
-  const recentLedgerByStudent = await loadRecentLedgerByStudent(admin, allStudentIds);
-  const redeemByStudent = await loadDailyRedeemByStudent(admin, allStudentIds);
+  const recentLedgerByStudent = await loadRecentLedgerByStudent(admin, allStudentIds, {
+    includeCampOrders: !liteMode,
+  });
+  const redeemByStudent = liteMode ? new Map() : await loadDailyRedeemByStudent(admin, allStudentIds);
 
   const rosterById = new Map((rosters ?? []).map((r: any) => [String(r.id), r]));
   const groupById = new Map((groups ?? []).map((g: any) => [String(g.id), g]));
   const activeRoster = rosterById.get(activeRosterId) ?? null;
   const { startIso, endIsoExclusive } = rosterWindowBounds(activeRoster);
-  const campTallyByStudent = await (async () => {
+  const campTallyByStudent = liteMode
+    ? new Map<
+        string,
+        { spotlight: number; rule_keeper: number; rule_breaker: number; rule_keeper_points: number; rule_breaker_points: number }
+      >()
+    : await (async () => {
     const map = new Map<
       string,
       { spotlight: number; rule_keeper: number; rule_breaker: number; rule_keeper_points: number; rule_breaker_points: number }
@@ -737,7 +753,7 @@ export async function GET(req: Request) {
   });
 
   const studentIds = Array.from(new Set(membersForActive.map((m: any) => String(m.student_id ?? "")).filter(Boolean)));
-  const announcements = await loadRecentMvpAnnouncements(admin, studentIds);
+  const announcements = liteMode ? [] : await loadRecentMvpAnnouncements(admin, studentIds);
   const campRolePointConfig = await getCampRolePointConfig(admin);
   const displayMembers = membersForActive.filter((m: any) => m.student);
 

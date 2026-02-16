@@ -6,7 +6,12 @@ import NavBar from "./NavBar";
 export default function RouteNav() {
   const path = usePathname();
   const isParent = path.startsWith("/parent");
-  const hideNav = isParent || path === "/camp" || path.startsWith("/camp/register") || path === "/classroom";
+  const hideNav =
+    isParent ||
+    path === "/camp" ||
+    path.startsWith("/camp/register") ||
+    path.startsWith("/camp/classroom") ||
+    path === "/classroom";
   if (hideNav) return null;
   return (
     <>

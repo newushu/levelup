@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/authz";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function GET() {
-  const supabase = await supabaseServer();
-  const { data: u } = await supabase.auth.getUser();
-  if (!u.user) return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
+  const auth = await requireUser();
+  if (!auth.ok) return NextResponse.json({ ok: false, error: auth.error }, { status: 401 });
+  const admin = supabaseAdmin();
 
-  const { data, error } = await supabase
+  const { data, error } = await admin
     .from("season_settings")
     .select("id,name,start_date,weeks,updated_at")
     .limit(1)

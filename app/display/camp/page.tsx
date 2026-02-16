@@ -408,7 +408,8 @@ export default function CampDisplayPage() {
               const effect = effectKey ? effectConfigByKey[effectKey] : undefined;
               const delta = Number(row.last_change?.points ?? 0);
               const deltaUp = delta >= 0;
-              const reason = String(row.last_change?.note ?? row.last_change?.category ?? "").trim();
+              const rawReason = String(row.last_change?.note ?? row.last_change?.category ?? "").trim();
+              const reason = rawReason.toLowerCase() === "given" ? "Points Awarded" : rawReason;
               const tally = row.camp_tally ?? {
                 spotlight_stars: 0,
                 rule_keepers: 0,

@@ -71,7 +71,7 @@ export default function CampClassroomPage() {
 
   async function load() {
     setMsg("");
-    const res = await fetch("/api/camp/display-roster", { cache: "no-store" });
+    const res = await fetch("/api/camp/display-roster?lite=camp_classroom", { cache: "no-store" });
     const sj = await safeJson(res);
     if (!sj.ok) return setMsg(String(sj.json?.error ?? "Failed to load camp classroom"));
 
@@ -171,6 +171,8 @@ export default function CampClassroomPage() {
         window.setTimeout(() => setActionFlash(""), 1200);
       }
       await load();
+      setSelectedIds([]);
+      setSelectedOverlayOpen(false);
     } finally {
       setBusy(false);
     }
@@ -267,7 +269,7 @@ export default function CampClassroomPage() {
               {m.secondary_role ? <div style={{ opacity: 0.75, fontSize: 12, textTransform: "uppercase" }}>2nd Role: {m.secondary_role}</div> : null}
               {m.last_change ? (
                 <div style={m.last_change.points >= 0 ? lastChangePos() : lastChangeNeg()}>
-                  {m.last_change.points >= 0 ? "+" : ""}{m.last_change.points} • {m.last_change.note || m.last_change.category}
+                  {m.last_change.points >= 0 ? "+" : ""}{m.last_change.points} • {(String(m.last_change.note ?? "").trim().toLowerCase() === "given" ? "Points Awarded" : (m.last_change.note || m.last_change.category))}
                 </div>
               ) : null}
             </button>
@@ -290,8 +292,8 @@ export default function CampClassroomPage() {
         >
           {Math.max(1, Number(amount) || 1)} pts
         </button>
-        <button type="button" style={actionBtn("green")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(Math.max(1, Number(amount) || 1), "camp_bulk", "Given")}>+ Points</button>
-        <button type="button" style={actionBtn("red")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(-Math.max(1, Number(amount) || 1), "camp_bulk", "Given")}>- Points</button>
+        <button type="button" style={actionBtn("green")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(Math.max(1, Number(amount) || 1), "camp_bulk", "Points Awarded")}>+ Points</button>
+        <button type="button" style={actionBtn("red")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(-Math.max(1, Number(amount) || 1), "camp_bulk", "Points Awarded")}>- Points</button>
         <button type="button" style={actionBtn("spotlight")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(20, "camp_spotlight", "Camp Spotlight star")}>Camp Star +20</button>
         <button type="button" style={actionBtn("keeper")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(30, "rule_keeper", "Camp classroom rule keeper")}>Rule Keeper</button>
         <button type="button" style={actionBtn("breaker")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(-15, "rule_breaker", "Camp classroom rule breaker")}>Rule Breaker</button>
@@ -306,8 +308,25 @@ export default function CampClassroomPage() {
             </div>
             <div style={{ display: "grid", gap: 4, maxHeight: 260, overflow: "auto" }}>
               {selectedMembers.map((m) => (
-                <div key={m.id} style={{ fontSize: 16, fontWeight: 900, opacity: 0.98, lineHeight: 1.2 }}>
-                  {m.student?.name ?? "Student"}
+                <div key={m.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ fontSize: 16, fontWeight: 900, opacity: 0.98, lineHeight: 1.2 }}>
+                    {m.student?.name ?? "Student"}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedIds((prev) => prev.filter((id) => id !== m.student_id))}
+                    style={{
+                      borderRadius: 8,
+                      border: "1px solid rgba(248,113,113,0.62)",
+                      background: "rgba(127,29,29,0.55)",
+                      color: "white",
+                      padding: "6px 10px",
+                      fontWeight: 900,
+                      fontSize: 12,
+                    }}
+                  >
+                    Remove
+                  </button>
                 </div>
               ))}
               {!selectedMembers.length ? <div style={{ opacity: 0.75 }}>No students selected.</div> : null}
