@@ -179,7 +179,7 @@ export default function SpinPage() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const size = Math.min(520, Math.max(280, wheelWrapRef.current?.offsetWidth ?? 420));
+    const size = Math.min(860, Math.max(360, wheelWrapRef.current?.offsetWidth ?? 640));
     canvas.width = size;
     canvas.height = size;
     const center = size / 2;
@@ -821,9 +821,10 @@ export default function SpinPage() {
 function page(): React.CSSProperties {
   return {
     display: "grid",
-    gridTemplateColumns: "minmax(280px, 360px) minmax(0, 1fr)",
+    gridTemplateColumns: "minmax(260px, 320px) minmax(0, 1fr)",
     gap: 18,
     alignItems: "start",
+    minHeight: "calc(100vh - 24px)",
   };
 }
 
@@ -846,7 +847,7 @@ function rightPane(): React.CSSProperties {
     borderRadius: 24,
     border: "1px solid rgba(255,255,255,0.12)",
     background: "radial-gradient(circle at top, rgba(15,23,42,0.75), rgba(2,6,23,0.95))",
-    minHeight: 520,
+    minHeight: "calc(100vh - 32px)",
   };
 }
 
@@ -1082,7 +1083,8 @@ function wheelWrap(): React.CSSProperties {
     position: "relative",
     display: "grid",
     placeItems: "center",
-    padding: 16,
+    padding: 6,
+    minHeight: 620,
   };
 }
 

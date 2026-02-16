@@ -43,6 +43,7 @@ async function safeJson(res: Response) {
 
 export default function CampClassroomPage() {
   const [role, setRole] = useState("");
+  const [seasonSettings, setSeasonSettings] = useState<{ start_date?: string | null; weeks?: number | null }>({});
   const [rosters, setRosters] = useState<Roster[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
@@ -66,6 +67,9 @@ export default function CampClassroomPage() {
       const meRes = await fetch("/api/auth/me", { cache: "no-store" });
       const me = await safeJson(meRes);
       if (me.ok) setRole(String(me.json?.role ?? ""));
+      const seasonRes = await fetch("/api/season-settings", { cache: "no-store" });
+      const season = await safeJson(seasonRes);
+      if (season.ok) setSeasonSettings((season.json as any)?.settings ?? {});
     })();
   }, []);
 
@@ -132,6 +136,20 @@ export default function CampClassroomPage() {
     if (!p || !base) return "";
     if (p.startsWith("http")) return p;
     return `${base}/storage/v1/object/public/avatars/${p}`;
+  }
+
+  function currentWeek() {
+    const start = seasonSettings.start_date ? new Date(`${seasonSettings.start_date}T00:00:00`) : null;
+    if (!start || Number.isNaN(start.getTime())) return 1;
+    const now = new Date();
+    const diffMs = now.getTime() - start.getTime();
+    const diffWeeks = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1;
+    return Math.max(1, diffWeeks);
+  }
+
+  function currentRulePoints() {
+    const week = currentWeek();
+    return Math.min(50, Math.max(5, week * 5));
   }
 
   async function awardBulk(points: number, category: string, note: string) {
@@ -295,8 +313,30 @@ export default function CampClassroomPage() {
         <button type="button" style={actionBtn("green")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(Math.max(1, Number(amount) || 1), "camp_bulk", "Points Awarded")}>+ Points</button>
         <button type="button" style={actionBtn("red")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(-Math.max(1, Number(amount) || 1), "camp_bulk", "Points Awarded")}>- Points</button>
         <button type="button" style={actionBtn("spotlight")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(20, "camp_spotlight", "Camp Spotlight star")}>Camp Star +20</button>
-        <button type="button" style={actionBtn("keeper")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(30, "rule_keeper", "Camp classroom rule keeper")}>Rule Keeper</button>
-        <button type="button" style={actionBtn("breaker")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(-15, "rule_breaker", "Camp classroom rule breaker")}>Rule Breaker</button>
+        <button
+          type="button"
+          style={actionBtn("keeper")}
+          disabled={busy || !selectedIds.length}
+          onClick={() => {
+            const pts = currentRulePoints();
+            const week = currentWeek();
+            awardBulk(pts, "rule_keeper", `Rule Keeper Week ${week} (+${pts})`);
+          }}
+        >
+          Rule Keeper
+        </button>
+        <button
+          type="button"
+          style={actionBtn("breaker")}
+          disabled={busy || !selectedIds.length}
+          onClick={() => {
+            const pts = currentRulePoints();
+            const week = currentWeek();
+            awardBulk(-pts, "rule_breaker", `Rule Breaker Week ${week} (-${pts})`);
+          }}
+        >
+          Rule Breaker
+        </button>
       </div>
 
       {selectedOverlayOpen ? (

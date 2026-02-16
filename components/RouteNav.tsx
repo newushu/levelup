@@ -11,6 +11,7 @@ export default function RouteNav() {
     path === "/camp" ||
     path.startsWith("/camp/register") ||
     path.startsWith("/camp/classroom") ||
+    path.startsWith("/spin") ||
     path === "/classroom";
   if (hideNav) return null;
   return (
