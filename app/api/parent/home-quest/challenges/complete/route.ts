@@ -59,11 +59,20 @@ export async function POST(req: Request) {
     }
   }
 
-  const { data: challenge, error: cErr } = await admin
+  let { data: challenge, error: cErr } = await admin
     .from("challenges")
-    .select("id,name,tier,points_awarded,enabled,limit_mode,limit_count,limit_window_days,home_available,home_origin,home_parent_id,home_approved_at")
+    .select("id,name,tier,points_awarded,enabled,limit_mode,limit_count,limit_window_days,daily_limit_count,home_available,home_origin,home_parent_id,home_approved_at")
     .eq("id", challenge_id)
     .maybeSingle();
+  if (cErr && String(cErr.message || "").toLowerCase().includes("daily_limit_count")) {
+    const retry = await admin
+      .from("challenges")
+      .select("id,name,tier,points_awarded,enabled,limit_mode,limit_count,limit_window_days,home_available,home_origin,home_parent_id,home_approved_at")
+      .eq("id", challenge_id)
+      .maybeSingle();
+    challenge = retry.data as any;
+    cErr = retry.error as any;
+  }
   if (cErr) return NextResponse.json({ ok: false, error: cErr.message }, { status: 500 });
   if (!challenge?.id) return NextResponse.json({ ok: false, error: "Challenge not found" }, { status: 404 });
 
@@ -144,6 +153,18 @@ export async function POST(req: Request) {
       count = Number(windowCount ?? 0);
     }
     if (count >= limitCount) allowAward = false;
+    if (allowAward) {
+      const dailyLimit = Math.max(0, Number(challenge?.daily_limit_count ?? 0));
+      if (dailyLimit > 0) {
+        const { count: dailyCount } = await admin
+          .from("challenge_completions")
+          .select("id", { count: "exact", head: true })
+          .eq("student_id", student_id)
+          .eq("challenge_id", challenge_id)
+          .gte("completed_at", new Date(now - dayMs).toISOString());
+        if (Number(dailyCount ?? 0) >= dailyLimit) allowAward = false;
+      }
+    }
   } catch {
     allowAward = true;
   }

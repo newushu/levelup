@@ -23,19 +23,23 @@ const LIVE_ACTIVITY_TYPES = [
 ] as const;
 
 const DEFAULT_LEADERBOARD_SLOTS = [
-  { metric: "points_total", title: "Points Balance" },
-  { metric: "lifetime_points", title: "Lifetime Points" },
-  { metric: "weekly_points", title: "Weekly Points" },
-  { metric: "today_points", title: "Today Points" },
-  { metric: "skill_pulse_today", title: "Skill Pulse Today" },
-  { metric: "mvp_count", title: "MVP Awards" },
-  { metric: "points_total", title: "Points Balance" },
-  { metric: "weekly_points", title: "Weekly Points" },
-  { metric: "lifetime_points", title: "Lifetime Points" },
-  { metric: "today_points", title: "Today Points" },
+  { metric: "lifetime_points", title: "Lifetime Points", rank_window: "top5" },
+  { metric: "points_total", title: "Points Balance", rank_window: "top5" },
+  { metric: "mvp_count", title: "Total MVPs", rank_window: "top5" },
+  { metric: "rule_keeper_total", title: "Rule Keeper Total", rank_window: "top5" },
+  { metric: "skill_pulse_today", title: "Skill Pulse Today", rank_window: "top10" },
+  { metric: "today_points", title: "Today Points", rank_window: "top10" },
+  { metric: "weekly_points", title: "Weekly Points", rank_window: "top10" },
+  { metric: "points_total", title: "Points Balance", rank_window: "top10" },
+  { metric: "lifetime_points", title: "Lifetime Points", rank_window: "top10" },
+  { metric: "mvp_count", title: "Total MVPs", rank_window: "top10" },
 ];
 
 const DEFAULT_LARGE_ROTATIONS = [
+  { slot: 1, rotation: [1, 8, 2] },
+  { slot: 2, rotation: [2, 9, 3] },
+  { slot: 3, rotation: [3, 10, 4] },
+  { slot: 4, rotation: [4, 7, 1] },
   { slot: 5, rotation: [5, 6, 7] },
   { slot: 6, rotation: [8, 9, 10] },
 ];
@@ -70,6 +74,11 @@ function normalizeCoachTypes(input: any) {
 
 function normalizeLeaderboardSlots(input: any) {
   const raw = Array.isArray(input) ? input : [];
+  const normalizeRankWindow = (value: unknown) => {
+    const raw = String(value ?? "").trim().toLowerCase();
+    if (raw === "top5" || raw === "next5" || raw === "top10") return raw;
+    return "top10";
+  };
   return DEFAULT_LEADERBOARD_SLOTS.map((fallback, index) => {
     const candidate =
       raw[index] ||
@@ -77,7 +86,8 @@ function normalizeLeaderboardSlots(input: any) {
       {};
     const metric = String(candidate?.metric ?? fallback.metric ?? "").trim() || fallback.metric || "none";
     const title = String(candidate?.title ?? fallback.title ?? "").trim() || fallback.title;
-    return { slot: index + 1, metric, title };
+    const rank_window = normalizeRankWindow(candidate?.rank_window ?? (fallback as any).rank_window ?? "top10");
+    return { slot: index + 1, metric, title, rank_window };
   });
 }
 
@@ -86,7 +96,7 @@ function normalizeLargeRotations(input: any) {
   const clampSlot = (value: any, fallback: number) => {
     const num = Number(value ?? fallback);
     if (!Number.isFinite(num)) return fallback;
-    return Math.max(1, Math.min(10, Math.round(num)));
+    return Math.max(1, Math.min(DEFAULT_LEADERBOARD_SLOTS.length, Math.round(num)));
   };
   return DEFAULT_LARGE_ROTATIONS.map((fallback, idx) => {
     const candidate =

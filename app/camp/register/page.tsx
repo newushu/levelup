@@ -12,7 +12,14 @@ type MenuItem = {
   image_url?: string | null;
   image_text?: string | null;
   use_text?: boolean | null;
+  image_x?: number | null;
+  image_y?: number | null;
+  image_zoom?: number | null;
   enabled: boolean;
+  visible_on_menu?: boolean | null;
+  visible_on_pos?: boolean | null;
+  sold_out?: boolean | null;
+  display_order?: number | null;
 };
 
 type Menu = { id: string; name: string; enabled: boolean; items: MenuItem[] };
@@ -20,6 +27,17 @@ type Menu = { id: string; name: string; enabled: boolean; items: MenuItem[] };
 type StudentPick = { id: string; name: string };
 
 type Payer = { student: StudentPick; amount: string };
+
+const CAMP_MENU_SYNC_CHANNEL = "camp-menu-sync";
+
+function broadcastCampMenuSync(reason: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const channel = new BroadcastChannel(CAMP_MENU_SYNC_CHANNEL);
+    channel.postMessage({ type: "refresh", reason, at: Date.now() });
+    channel.close();
+  } catch {}
+}
 
 export default function CampRegisterPage() {
   const [role, setRole] = useState("student");
@@ -62,6 +80,12 @@ export default function CampRegisterPage() {
   const [auraName, setAuraName] = useState("");
   const [hubGateChecked, setHubGateChecked] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState("");
+
+  async function loadMenus() {
+    const res = await fetch("/api/camp/menus?items=1", { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) setMenus((data.menus ?? []) as Menu[]);
+  }
 
   useEffect(() => {
     (async () => {
@@ -110,19 +134,36 @@ export default function CampRegisterPage() {
   const canAccess = ["admin", "coach", "camp"].some((r) => roleSet.has(r)) || isLeader;
   const canRegister = ["admin", "camp"].some((r) => roleSet.has(r)) || isLeader;
   const canRefund = ["admin", "camp"].some((r) => roleSet.has(r));
+  const canManageMenuStock = ["admin", "camp"].some((r) => roleSet.has(r));
 
   useEffect(() => {
     if (!hubGateChecked) return;
     (async () => {
-      const res = await fetch("/api/camp/menus?items=1", { cache: "no-store" });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) setMenus((data.menus ?? []) as Menu[]);
+      await loadMenus();
     })();
     (async () => {
       const res = await fetch("/api/camp/orders/list", { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
       if (res.ok) setOrders(data.orders ?? []);
     })();
+  }, [hubGateChecked]);
+
+  useEffect(() => {
+    if (!hubGateChecked) return;
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel(CAMP_MENU_SYNC_CHANNEL);
+      channel.onmessage = (event) => {
+        if (event?.data?.type === "refresh") {
+          loadMenus();
+        }
+      };
+    } catch {}
+    return () => {
+      try {
+        channel?.close();
+      } catch {}
+    };
   }, [hubGateChecked]);
 
   useEffect(() => {
@@ -224,10 +265,54 @@ export default function CampRegisterPage() {
       .map((menu) => ({
         id: menu.id,
         name: menu.name,
-        items: (menu.items ?? []).filter((i) => i.enabled !== false),
+        items: (menu.items ?? []).filter((i) => i.enabled !== false && i.visible_on_pos !== false),
       }))
       .filter((menu) => menu.items.length);
   }, [menus]);
+
+  async function toggleSoldOut(item: MenuItem) {
+    if (!canManageMenuStock) return;
+    const nextSoldOut = item.sold_out !== true;
+    const prompt = nextSoldOut
+      ? `Mark "${item.name}" as SOLD OUT?`
+      : `Set "${item.name}" back to IN STOCK?`;
+    if (typeof window !== "undefined" && !window.confirm(prompt)) return;
+    const res = await fetch("/api/camp/items/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items: [
+          {
+            id: item.id,
+            menu_id: item.menu_id,
+            name: item.name,
+            price_points: item.price_points,
+            allow_second: item.allow_second,
+            second_price_points: item.second_price_points ?? null,
+            image_url: item.image_url ?? "",
+            image_text: item.image_text ?? "",
+            use_text: item.use_text === true,
+            image_x: item.image_x ?? null,
+            image_y: item.image_y ?? null,
+            image_zoom: item.image_zoom ?? null,
+            enabled: item.enabled !== false,
+            visible_on_menu: item.visible_on_menu !== false,
+            visible_on_pos: item.visible_on_pos !== false,
+            sold_out: nextSoldOut,
+            display_order: Number.isFinite(Number(item.display_order)) ? Number(item.display_order) : 0,
+          },
+        ],
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setMsg(data?.error || "Failed to update sold out status.");
+      return;
+    }
+    await loadMenus();
+    broadcastCampMenuSync(nextSoldOut ? "item_sold_out" : "item_in_stock");
+    setMsg(nextSoldOut ? `${item.name} marked SOLD OUT.` : `${item.name} marked IN STOCK.`);
+  }
 
   useEffect(() => {
     if (!menuSections.length) {
@@ -666,11 +751,15 @@ export default function CampRegisterPage() {
                   <div style={itemsGrid()}>
                     {activeMenuSection.items.map((item) => {
                       const selected = !!selectedItems[item.id];
+                      const soldOut = item.sold_out === true;
                       return (
                         <button
                           key={item.id}
                           type="button"
                           onClick={() =>
+                            soldOut
+                              ? null
+                              :
                             setSelectedItems((prev) => {
                               if (selected) {
                                 return {
@@ -681,20 +770,35 @@ export default function CampRegisterPage() {
                               return { ...prev, [item.id]: { qty: 1, second: false } };
                             })
                           }
-                          style={itemCard(selected, item.name)}
+                          style={itemCard(selected, item.name, soldOut)}
                         >
+                          {canManageMenuStock ? (
+                            <span
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                toggleSoldOut(item);
+                              }}
+                              style={stockToggleChip(soldOut)}
+                            >
+                              {soldOut ? "Sold Out" : "In Stock"}
+                            </span>
+                          ) : null}
                           <div style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "flex-start" }}>
                             <div style={itemThumb(item)}>
                               {!item.image_url || item.use_text ? (
                                 <span style={{ fontSize: 12, fontWeight: 800 }}>{item.image_text || item.name.slice(0, 2)}</span>
                               ) : null}
+                              {soldOut ? <div style={soldOutOverlay()}>SOLD OUT</div> : null}
                             </div>
                             <div style={{ display: "grid", gap: 4, textAlign: "left" }}>
                               <div style={{ fontWeight: 900, fontSize: 22 }}>{item.name}</div>
                               <div style={{ opacity: 0.9, fontSize: 16 }}>{item.price_points} pts</div>
                             </div>
                           </div>
-                          {selected ? (
+                          {soldOut ? (
+                            <div style={soldOutHint()}>Unavailable right now</div>
+                          ) : selected ? (
                             <div style={selectedBadge()}>Qty {selectedItems[item.id]?.qty ?? 1}</div>
                           ) : (
                             <div style={tapHint()}>Tap to add</div>
@@ -1273,7 +1377,7 @@ function itemThumb(item: MenuItem): React.CSSProperties {
   };
 }
 
-function itemCard(active: boolean, label: string): React.CSSProperties {
+function itemCard(active: boolean, label: string, soldOut: boolean): React.CSSProperties {
   const palettes = [
     "linear-gradient(135deg, rgba(14,116,144,0.5), rgba(2,132,199,0.25))",
     "linear-gradient(135deg, rgba(34,197,94,0.5), rgba(22,163,74,0.25))",
@@ -1301,6 +1405,7 @@ function itemCard(active: boolean, label: string): React.CSSProperties {
     overflow: "hidden",
     boxShadow: active ? "0 0 0 1px rgba(56,189,248,0.4), 0 18px 40px rgba(0,0,0,0.35)" : "0 14px 30px rgba(0,0,0,0.3)",
     backdropFilter: "blur(6px)",
+    opacity: soldOut ? 0.72 : 1,
   };
 }
 
@@ -1325,6 +1430,52 @@ function tapHint(): React.CSSProperties {
     justifySelf: "center",
     fontSize: 11,
     opacity: 0.6,
+  };
+}
+
+function soldOutHint(): React.CSSProperties {
+  return {
+    justifySelf: "center",
+    fontSize: 11,
+    fontWeight: 800,
+    color: "#fecaca",
+  };
+}
+
+function soldOutOverlay(): React.CSSProperties {
+  return {
+    position: "absolute",
+    left: "-24%",
+    right: "-24%",
+    top: "45%",
+    transform: "rotate(-24deg)",
+    textAlign: "center",
+    background: "rgba(220,38,38,0.9)",
+    border: "2px solid rgba(254,226,226,0.95)",
+    color: "white",
+    fontSize: 13,
+    fontWeight: 1000,
+    letterSpacing: 1,
+    padding: "4px 0",
+    boxShadow: "0 8px 20px rgba(127,29,29,0.5)",
+    pointerEvents: "none",
+  };
+}
+
+function stockToggleChip(soldOut: boolean): React.CSSProperties {
+  return {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    zIndex: 3,
+    borderRadius: 999,
+    padding: "4px 10px",
+    border: soldOut ? "1px solid rgba(248,113,113,0.95)" : "1px solid rgba(74,222,128,0.9)",
+    background: soldOut ? "rgba(185,28,28,0.88)" : "rgba(22,163,74,0.88)",
+    color: "white",
+    fontSize: 11,
+    fontWeight: 900,
+    cursor: "pointer",
   };
 }
 

@@ -44,6 +44,7 @@ type LeaderboardSlot = {
   metric: string;
   title: string;
   unit: string | null;
+  rank_window?: "top5" | "next5" | "top10";
   rows: LeaderboardRow[];
 };
 
@@ -68,7 +69,7 @@ export default function LeaderboardsDisplayPage() {
   const [menuValue, setMenuValue] = useState("/display/leaderboards");
   const [cornerOffsets, setCornerOffsets] = useState<{ x: number; y: number; size: number }>({ x: -10, y: -10, size: 72 });
   const [plateOffsets, setPlateOffsets] = useState<{ x: number; y: number; size: number }>({ x: 0, y: 0, size: 200 });
-  const [rotationIndex, setRotationIndex] = useState<Record<number, number>>({ 5: 0, 6: 0 });
+  const [rotationIndex, setRotationIndex] = useState<Record<number, number>>({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -104,10 +105,13 @@ export default function LeaderboardsDisplayPage() {
   useEffect(() => {
     const interval = Math.max(5, rotationSeconds) * 1000;
     const timer = setInterval(() => {
-      setRotationIndex((prev) => ({
-        5: ((prev[5] ?? 0) + 1) % 3,
-        6: ((prev[6] ?? 0) + 1) % 3,
-      }));
+      setRotationIndex((prev) => {
+        const next: Record<number, number> = { ...prev };
+        for (const slot of [1, 2, 3, 4, 5, 6]) {
+          next[slot] = ((prev[slot] ?? 0) + 1) % 3;
+        }
+        return next;
+      });
     }, interval);
     return () => clearInterval(timer);
   }, [rotationSeconds]);
@@ -171,8 +175,6 @@ export default function LeaderboardsDisplayPage() {
     return map;
   }, [rowsBySlot]);
 
-  const smallSlots = useMemo(() => rowsBySlot.filter((slot) => slot.slot >= 1 && slot.slot <= 4), [rowsBySlot]);
-
   const resolveLargeSlot = (slotNumber: number) => {
     const config = largeRotations.find((rot) => rot.slot === slotNumber);
     const rotation = config?.rotation?.length ? config.rotation : [slotNumber];
@@ -190,6 +192,27 @@ export default function LeaderboardsDisplayPage() {
       rotation,
     };
   };
+
+  const smallBundles = useMemo(() => {
+    return [1, 2, 3, 4].map((slotNumber) => {
+      const config = largeRotations.find((rot) => rot.slot === slotNumber);
+      const rotation = config?.rotation?.length ? config.rotation : [slotNumber];
+      const idx = rotationIndex[slotNumber] ?? 0;
+      const pick = rotation[idx % rotation.length] ?? slotNumber;
+      return {
+        slotNumber: pick,
+        slot: slotMap.get(pick) ?? {
+          slot: pick,
+          metric: "none",
+          title: "",
+          unit: null,
+          rows: [],
+        },
+        rotation,
+        slotKey: slotNumber,
+      };
+    });
+  }, [largeRotations, rotationIndex, slotMap]);
 
   const largeA = resolveLargeSlot(5);
   const largeB = resolveLargeSlot(6);
@@ -224,16 +247,19 @@ export default function LeaderboardsDisplayPage() {
 
       <div style={layout()}>
         <div style={smallGrid()}>
-          {smallSlots.map((slot) => (
-            <section key={slot.slot} style={card()}>
+          {smallBundles.map((bundle) => (
+            <section key={`small-${bundle.slotKey}`} style={card()}>
               <div style={cardHeader()}>
                 <div>
-                  <div style={cardTitle()}>{slot.title || `Leaderboard ${slot.slot}`}</div>
-                  {slot.unit ? <div style={cardSubtitle()}>Unit: {slot.unit}</div> : null}
+                  <div style={cardTitle()}>{bundle.slot.title || `Leaderboard ${bundle.slot.slot}`}</div>
+                  {bundle.slot.unit ? <div style={cardSubtitle()}>Unit: {bundle.slot.unit}</div> : null}
+                </div>
+                <div style={rotationPill()}>
+                  Rotating {((rotationIndex[bundle.slotKey] ?? 0) % 3) + 1}/3
                 </div>
               </div>
               <div style={rowsWrap()}>
-                {renderRows(slot, 52, 3, false, cornerOffsets, plateOffsets)}
+                {renderRows(bundle.slot, 52, 3, false, cornerOffsets, plateOffsets)}
               </div>
             </section>
           ))}
@@ -282,9 +308,9 @@ function formatValue(value: number) {
 
 function page(): React.CSSProperties {
   return {
-    minHeight: "100vh",
-    padding: "24px 18px 32px",
-    overflowX: "hidden",
+    height: "100vh",
+    padding: "12px 14px 14px",
+    overflow: "hidden",
     position: "relative",
     background:
       "radial-gradient(circle at 10% 20%, rgba(14,165,233,0.18), transparent 55%), radial-gradient(circle at 80% 10%, rgba(34,197,94,0.16), transparent 45%), radial-gradient(circle at 50% 80%, rgba(251,191,36,0.12), transparent 55%), linear-gradient(150deg, #020617, #0b1225 50%, #0f172a)",
@@ -295,14 +321,14 @@ function page(): React.CSSProperties {
 function header(): React.CSSProperties {
   return {
     display: "grid",
-    gap: 6,
-    marginBottom: 20,
+    gap: 4,
+    marginBottom: 10,
   };
 }
 
 function title(): React.CSSProperties {
   return {
-    fontSize: 36,
+    fontSize: 30,
     fontWeight: 1000,
     letterSpacing: 0.4,
   };
@@ -310,7 +336,7 @@ function title(): React.CSSProperties {
 
 function subtitle(): React.CSSProperties {
   return {
-    fontSize: 14,
+    fontSize: 12,
     opacity: 0.7,
     fontWeight: 700,
   };
@@ -328,9 +354,11 @@ function grid(): React.CSSProperties {
 function layout(): React.CSSProperties {
   return {
     display: "grid",
-    gridTemplateColumns: "0.95fr 1.55fr",
-    gap: 18,
+    gridTemplateColumns: "1.08fr 1.42fr",
+    gap: 12,
     alignItems: "start",
+    height: "calc(100vh - 98px)",
+    minHeight: 0,
   };
 }
 
@@ -338,7 +366,8 @@ function smallGrid(): React.CSSProperties {
   return {
     display: "grid",
     gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 14,
+    gap: 10,
+    minHeight: 0,
   };
 }
 
@@ -346,31 +375,33 @@ function largeGrid(): React.CSSProperties {
   return {
     display: "grid",
     gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: 18,
+    gap: 12,
+    minHeight: 0,
   };
 }
 
 function card(): React.CSSProperties {
   return {
     borderRadius: 18,
-    padding: 14,
+    padding: 10,
     border: "1px solid rgba(255,255,255,0.14)",
     background: "rgba(15,23,42,0.62)",
     display: "grid",
     gridTemplateRows: "auto 1fr",
-    minHeight: 240,
+    minHeight: 0,
+    height: "100%",
   };
 }
 
 function largeCard(): React.CSSProperties {
   return {
     borderRadius: 22,
-    padding: 18,
+    padding: 12,
     border: "1px solid rgba(255,255,255,0.18)",
     background: "rgba(15,23,42,0.72)",
     display: "grid",
     gridTemplateRows: "auto 1fr",
-    minHeight: 320,
+    minHeight: 0,
     height: "100%",
   };
 }
@@ -380,14 +411,14 @@ function cardHeader(): React.CSSProperties {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: 8,
+    marginBottom: 6,
   };
 }
 
 function cardTitle(): React.CSSProperties {
   return {
     fontWeight: 900,
-    fontSize: 14,
+    fontSize: 13,
     letterSpacing: 0.3,
   };
 }
@@ -395,7 +426,7 @@ function cardTitle(): React.CSSProperties {
 function largeTitle(): React.CSSProperties {
   return {
     fontWeight: 1000,
-    fontSize: 20,
+    fontSize: 18,
     letterSpacing: 0.4,
   };
 }
@@ -410,18 +441,19 @@ function cardSubtitle(): React.CSSProperties {
 function rowsWrap(): React.CSSProperties {
   return {
     display: "grid",
-    gap: 6,
+    gap: 4,
     alignContent: "start",
+    minHeight: 0,
   };
 }
 
 function rowStyle(): React.CSSProperties {
   return {
     display: "grid",
-    gridTemplateColumns: "24px 58px 1fr auto",
-    gap: 10,
+    gridTemplateColumns: "24px 58px minmax(0,1fr) minmax(96px,auto)",
+    gap: 8,
     alignItems: "center",
-    padding: "6px 8px",
+    padding: "4px 6px",
     borderRadius: 12,
     background: "rgba(2,6,23,0.6)",
     border: "1px solid rgba(255,255,255,0.06)",
@@ -431,10 +463,10 @@ function rowStyle(): React.CSSProperties {
 function rowStyleLarge(): React.CSSProperties {
   return {
     display: "grid",
-    gridTemplateColumns: "34px 98px 1fr auto",
-    gap: 14,
+    gridTemplateColumns: "34px 98px minmax(0,1fr) minmax(118px,auto)",
+    gap: 10,
     alignItems: "center",
-    padding: "10px 12px",
+    padding: "6px 8px",
     borderRadius: 16,
     background: "rgba(2,6,23,0.6)",
     border: "1px solid rgba(255,255,255,0.08)",
@@ -472,6 +504,7 @@ function avatarShell(): React.CSSProperties {
     position: "relative",
     display: "grid",
     placeItems: "center",
+    overflow: "visible",
   };
 }
 
@@ -482,6 +515,7 @@ function avatarShellLarge(): React.CSSProperties {
     position: "relative",
     display: "grid",
     placeItems: "center",
+    overflow: "visible",
   };
 }
 
@@ -524,6 +558,8 @@ function valueStyle(): React.CSSProperties {
   return {
     fontWeight: 900,
     fontSize: 12,
+    justifySelf: "start",
+    textAlign: "left",
   };
 }
 
@@ -531,6 +567,8 @@ function valueStyleLarge(): React.CSSProperties {
   return {
     fontWeight: 1000,
     fontSize: 18,
+    justifySelf: "start",
+    textAlign: "left",
   };
 }
 
@@ -606,6 +644,7 @@ function renderRows(
   cornerOffsets: { x: number; y: number; size: number },
   plateOffsets: { x: number; y: number; size: number }
 ) {
+  const nonZeroRows = (slot.rows ?? []).filter((row) => Number(row.value ?? 0) > 0);
   if (slot.metric === "none") {
     return (
       <div style={emptyState()}>
@@ -614,15 +653,15 @@ function renderRows(
       </div>
     );
   }
-  if (!slot.rows?.length) {
+  if (!nonZeroRows.length) {
     return (
       <div style={emptyState()}>
-        <div style={{ fontWeight: 800 }}>No data yet</div>
-        <div style={{ opacity: 0.65, fontSize: 12 }}>Waiting for stats.</div>
+        <div style={{ fontWeight: 800 }}>Empty Slot</div>
+        <div style={{ opacity: 0.65, fontSize: 12 }}>No non-zero results yet.</div>
       </div>
     );
   }
-  return slot.rows.map((row) => (
+  return nonZeroRows.map((row) => (
     <div key={`${slot.slot}-${row.student_id}`} style={large ? rowStyleLarge() : rowStyle()}>
       <div style={large ? rankPillLarge() : rankPill()}>{row.rank}</div>
       <div style={large ? avatarShellLarge() : avatarShell()}>
@@ -651,12 +690,12 @@ function renderRows(
         <div style={large ? nameStyleLarge() : nameStyle()}>{row.name}</div>
         <div style={large ? metaStyleLarge() : metaStyle()}>Level {row.level}</div>
         {row.prestige_badges?.length ? (
-          <div style={badgeRow()}>
+          <div style={badgeRow(large)}>
             {row.prestige_badges.slice(0, maxBadges).map((badgeUrl, idx) => (
-              <img key={`${row.student_id}-badge-${idx}`} src={badgeUrl} alt="" style={badgeIcon()} />
+              <img key={`${row.student_id}-badge-${idx}`} src={badgeUrl} alt="" style={badgeIcon(large)} />
             ))}
             {row.prestige_badges.length > maxBadges ? (
-              <div style={badgeMore()}>+{row.prestige_badges.length - maxBadges}</div>
+              <div style={badgeMore(large)}>{row.prestige_badges.length - maxBadges > 0 ? `+${row.prestige_badges.length - maxBadges}` : ""}</div>
             ) : null}
           </div>
         ) : null}
@@ -676,30 +715,30 @@ function scalePlateOffsets(offset: { x: number; y: number; size: number }, targe
   };
 }
 
-function badgeRow(): React.CSSProperties {
+function badgeRow(large = false): React.CSSProperties {
   return {
     display: "flex",
     alignItems: "center",
-    gap: 4,
+    gap: large ? 6 : 5,
     marginTop: 2,
     flexWrap: "wrap",
   };
 }
 
-function badgeIcon(): React.CSSProperties {
+function badgeIcon(large = false): React.CSSProperties {
   return {
-    width: 16,
-    height: 16,
+    width: large ? 24 : 20,
+    height: large ? 24 : 20,
     objectFit: "contain",
     filter: "drop-shadow(0 0 4px rgba(59,130,246,0.4))",
   };
 }
 
-function badgeMore(): React.CSSProperties {
+function badgeMore(large = false): React.CSSProperties {
   return {
-    fontSize: 9,
+    fontSize: large ? 11 : 10,
     fontWeight: 900,
-    padding: "1px 6px",
+    padding: large ? "2px 8px" : "1px 6px",
     borderRadius: 999,
     border: "1px solid rgba(255,255,255,0.2)",
     background: "rgba(15,23,42,0.5)",

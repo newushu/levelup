@@ -4,6 +4,7 @@ import { getStudentModifierStack } from "@/lib/modifierStack";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BOARD_POINTS_PER_TOP10 = 15;
 const BOARD_POINTS_TOP1 = 50;
+const CAMP_ROLE_REDEEM_HOUR_ET = 16;
 const DEFAULT_CAMP_ROLE_DAILY_POINTS: Record<string, number> = {
   seller: 300,
   cleaner: 500,
@@ -163,6 +164,29 @@ async function getCampRolePointMap(admin: AdminClient) {
   };
 }
 
+async function wasCampRoleClaimedToday(admin: AdminClient, studentId: string, todayKey: string) {
+  const claimRes = await admin
+    .from("student_camp_role_daily_claims")
+    .select("student_id")
+    .eq("student_id", studentId)
+    .eq("claim_date", todayKey)
+    .maybeSingle();
+  if (!claimRes.error) return { claimed: !!claimRes.data };
+  if (!isMissingRelation(claimRes.error, "student_camp_role_daily_claims")) {
+    return { error: claimRes.error.message };
+  }
+
+  const fallbackRes = await admin
+    .from("ledger")
+    .select("id")
+    .eq("student_id", studentId)
+    .eq("category", "redeem_camp_role")
+    .ilike("note", `%claim_date=${todayKey}%`)
+    .limit(1);
+  if (fallbackRes.error) return { error: fallbackRes.error.message };
+  return { claimed: (fallbackRes.data ?? []).length > 0 };
+}
+
 function isDateKey(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ""));
 }
@@ -180,9 +204,19 @@ function isWithinRosterWindow(todayKey: string, startDate?: string | null, endDa
 async function getCampRoleDailyPoints(admin: AdminClient, studentId: string) {
   const todayEt = getEasternDateKey(new Date());
   const easternHour = getEasternHour(new Date());
-  const roleRedeemWindowOpen = easternHour >= 17;
+  const roleRedeemWindowOpen = easternHour >= CAMP_ROLE_REDEEM_HOUR_ET;
   const todayDayCode = getEasternDayCode(new Date());
   const rolePoints = await getCampRolePointMap(admin);
+  const alreadyClaimedRes = await wasCampRoleClaimedToday(admin, studentId, todayEt);
+  if ("error" in alreadyClaimedRes) return { error: alreadyClaimedRes.error };
+  if (alreadyClaimedRes.claimed) {
+    return {
+      points: 0,
+      chips: [] as string[],
+      pending_chips: [] as string[],
+      claimed_today: true,
+    };
+  }
   const membersRes = await admin
     .from("camp_display_members")
     .select("roster_id,display_role,secondary_role,secondary_role_days")
@@ -247,12 +281,14 @@ async function getCampRoleDailyPoints(admin: AdminClient, studentId: string) {
       return {
         points: 0,
         chips: [],
-        pending_chips: [`Camp role points unlock at 5:00 PM ET (${uniqueLabels.join(", ")})`],
+        pending_chips: [`Camp role points unlock at 4:00 PM ET (${uniqueLabels.join(", ")})`],
+        claimed_today: false,
       };
     }
     return {
       points: fallbackPoints,
       chips: fallbackPoints > 0 ? [`+${fallbackPoints} camp role (${uniqueLabels.join(", ")})`] : [],
+      claimed_today: false,
     };
   }
   if (rostersRes.error) return { error: rostersRes.error.message };
@@ -292,12 +328,14 @@ async function getCampRoleDailyPoints(admin: AdminClient, studentId: string) {
     return {
       points: 0,
       chips: [],
-      pending_chips: [`Camp role points unlock at 5:00 PM ET (${uniqueLabels.join(", ")})`],
+      pending_chips: [`Camp role points unlock at 4:00 PM ET (${uniqueLabels.join(", ")})`],
+      claimed_today: false,
     };
   }
   return {
     points,
     chips: points > 0 ? [`+${points} camp role (${uniqueLabels.join(", ")})`] : [],
+    claimed_today: false,
   };
 }
 
@@ -491,6 +529,40 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
     });
   } else if (!isMissingRelation(taoluRes.error, "taolu_sessions")) {
     return { ok: false as const, error: taoluRes.error.message };
+  }
+
+  const refinementRoundRes = await admin
+    .from("taolu_refinement_rounds")
+    .select("student_id,created_at")
+    .gte("created_at", todayStart.toISOString());
+  if (!refinementRoundRes.error) {
+    (refinementRoundRes.data ?? []).forEach((row: any) => {
+      const sid = String(row?.student_id ?? "");
+      const createdAt = String(row?.created_at ?? "");
+      if (!sid) return;
+      taoluCountById.set(sid, (taoluCountById.get(sid) ?? 0) + 1);
+      const prev = taoluLatestAtById.get(sid) ?? "";
+      if (createdAt > prev) taoluLatestAtById.set(sid, createdAt);
+    });
+  } else if (!isMissingRelation(refinementRoundRes.error, "taolu_refinement_rounds")) {
+    return { ok: false as const, error: refinementRoundRes.error.message };
+  }
+
+  const prepsRemediationRes = await admin
+    .from("preps_remediations")
+    .select("student_id,completed_at")
+    .gte("completed_at", todayStart.toISOString());
+  if (!prepsRemediationRes.error) {
+    (prepsRemediationRes.data ?? []).forEach((row: any) => {
+      const sid = String(row?.student_id ?? "");
+      const createdAt = String(row?.completed_at ?? "");
+      if (!sid) return;
+      taoluCountById.set(sid, (taoluCountById.get(sid) ?? 0) + 1);
+      const prev = taoluLatestAtById.get(sid) ?? "";
+      if (createdAt > prev) taoluLatestAtById.set(sid, createdAt);
+    });
+  } else if (!isMissingRelation(prepsRemediationRes.error, "preps_remediations")) {
+    return { ok: false as const, error: prepsRemediationRes.error.message };
   }
 
   const pulseRepsById = new Map<string, number>();
@@ -767,8 +839,8 @@ export async function computeDailyRedeemStatus(
   const regularReady = cooldownMs === 0;
   const avatarPoints = regularReady ? avatarPointsBase : 0;
   const leaderboardPoints = regularReady ? leaderboardPointsBase : 0;
-  const campRolePoints = regularReady ? campRolePointsBase : 0;
-  const regularPoints = Math.max(0, Math.round(avatarPoints + leaderboardPoints + campRolePoints));
+  const regularPoints = Math.max(0, Math.round(avatarPoints + leaderboardPoints));
+  const campRolePoints = campRolePointsBase;
 
   const eventRes = await getLimitedEventDailyPoints(admin, studentId);
   if (!eventRes.ok) {
@@ -780,12 +852,15 @@ export async function computeDailyRedeemStatus(
 
   const contributions: string[] = [];
   if (avatarPoints > 0) contributions.push(`+${avatarPoints} avatar points`);
-  if (!regularReady && (avatarPointsBase > 0 || leaderboardPointsBase > 0 || campRolePointsBase > 0)) {
+  if (!regularReady && (avatarPointsBase > 0 || leaderboardPointsBase > 0)) {
     contributions.push(`Base daily points unlock at ${new Date(nextRedeemAtMs).toLocaleString("en-US", { timeZone: "America/New_York" })} ET`);
   }
   if (campRolePoints > 0) {
     contributions.push("Camp role points ready to redeem");
     contributions.push(...campRoleRes.chips);
+  }
+  if ((campRoleRes as any).claimed_today === true) {
+    contributions.push("Camp role points already claimed today");
   }
   if (Array.isArray((campRoleRes as any).pending_chips) && (campRoleRes as any).pending_chips.length) {
     contributions.push("Camp role points pending");

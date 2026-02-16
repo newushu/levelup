@@ -19,11 +19,20 @@ export async function POST(req: Request) {
   }
 
   const admin = supabaseAdmin();
-  const { data: challenge, error: cErr } = await admin
+  let { data: challenge, error: cErr } = await admin
     .from("challenges")
-    .select("id,tier,points_awarded,name,limit_mode,limit_count,limit_window_days")
+    .select("id,tier,points_awarded,name,limit_mode,limit_count,limit_window_days,daily_limit_count")
     .eq("id", challengeId)
     .maybeSingle();
+  if (cErr && String(cErr.message || "").toLowerCase().includes("daily_limit_count")) {
+    const retry = await admin
+      .from("challenges")
+      .select("id,tier,points_awarded,name,limit_mode,limit_count,limit_window_days")
+      .eq("id", challengeId)
+      .maybeSingle();
+    challenge = retry.data as any;
+    cErr = retry.error as any;
+  }
   if (cErr) return NextResponse.json({ ok: false, error: cErr.message }, { status: 500 });
 
   let defaultPoints = 0;
@@ -98,6 +107,19 @@ export async function POST(req: Request) {
         count = Number(windowCount ?? 0);
       }
       if (count >= limitCount) allowAward = false;
+
+      if (allowAward) {
+        const dailyLimit = Math.max(0, Number(challenge?.daily_limit_count ?? 0));
+        if (dailyLimit > 0) {
+          const { count: dailyCount } = await admin
+            .from("challenge_completions")
+            .select("id", { count: "exact", head: true })
+            .eq("student_id", studentId)
+            .eq("challenge_id", challengeId)
+            .gte("completed_at", new Date(now - dayMs).toISOString());
+          if (Number(dailyCount ?? 0) >= dailyLimit) allowAward = false;
+        }
+      }
     } catch {
       allowAward = true;
     }

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import AuthGate from "../../../components/AuthGate";
 import AvatarRender from "@/components/AvatarRender";
 import StudentWorkspaceTopBar, { studentWorkspaceTopBarStyles } from "@/components/StudentWorkspaceTopBar";
+import { supabaseClient } from "@/lib/supabase/client";
 
 type StudentRow = {
   id: string;
@@ -166,6 +167,16 @@ function getWeekStartUTC(date = new Date()) {
   return d;
 }
 
+function toColorInputHex(value: string) {
+  const raw = String(value ?? "").trim();
+  if (/^#[0-9a-f]{6}$/i.test(raw)) return raw.toLowerCase();
+  if (/^#[0-9a-f]{3}$/i.test(raw)) {
+    const v = raw.slice(1).split("").map((c) => `${c}${c}`).join("");
+    return `#${v}`.toLowerCase();
+  }
+  return "#0f172a";
+}
+
 export default function StudentInfoPage() {
   const [checked, setChecked] = useState(false);
   const [students, setStudents] = useState<StudentRow[]>([]);
@@ -210,6 +221,7 @@ export default function StudentInfoPage() {
   >([]);
   const [avatarId, setAvatarId] = useState("");
   const [avatarBg, setAvatarBg] = useState("rgba(15,23,42,0.75)");
+  const [avatarBgInput, setAvatarBgInput] = useState("#0f172a");
   const [avatarEffectKey, setAvatarEffectKey] = useState<string | null>(null);
   const [cornerBorderKey, setCornerBorderKey] = useState<string | null>(null);
   const [effectCatalog, setEffectCatalog] = useState<Array<{ key: string; name?: string | null; unlock_level?: number | null; unlock_points?: number | null; config?: any; render_mode?: string | null; z_layer?: string | null; html?: string | null; css?: string | null; js?: string | null; enabled?: boolean | null; limited_event_only?: boolean | null; limited_event_name?: string | null; limited_event_description?: string | null }>>([]);
@@ -328,7 +340,9 @@ export default function StudentInfoPage() {
         const s = settingsJson?.settings ?? null;
         setAvatarId(String(s?.avatar_id ?? "").trim());
         const bg = String(s?.bg_color ?? "").trim();
-        setAvatarBg(bg || "rgba(15,23,42,0.75)");
+        const normalizedBg = bg || "rgba(15,23,42,0.75)";
+        setAvatarBg(normalizedBg);
+        setAvatarBgInput(toColorInputHex(normalizedBg));
         const effectKey = String(s?.particle_style ?? "").trim();
         setAvatarEffectKey(effectKey || null);
         const borderKey = String(s?.corner_border_key ?? "").trim();
@@ -484,6 +498,79 @@ export default function StudentInfoPage() {
       const recentMvpJson = await safeJson(recentMvpRes);
       setRecentMvp(recentMvpJson.ok ? Number(recentMvpJson.json?.count ?? 0) > 0 : false);
     })();
+  }, [student?.id]);
+
+  useEffect(() => {
+    if (!student?.id) return;
+    let cancelled = false;
+    const studentId = String(student.id);
+
+    async function refreshSelectedStudent() {
+      const listRes = await fetch("/api/students/list", { cache: "no-store" });
+      const listJson = await safeJson(listRes);
+      if (!listJson.ok || cancelled) return;
+      const list = (listJson.json?.students ?? []) as StudentRow[];
+      if (!list.length) return;
+      setStudents(list);
+      const selected = list.find((s) => String(s.id) === String(student.id));
+      if (selected) {
+        setStudent(selected);
+        setStudentQuery(selected.name);
+      }
+    }
+
+    async function refreshDailyStatus() {
+      const statusRes = await fetch("/api/avatar/daily-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_id: studentId }),
+      });
+      const statusJson = await safeJson(statusRes);
+      if (!statusJson.ok || cancelled) return;
+      setDailyRedeem((statusJson.json?.status ?? null) as DailyRedeemStatus | null);
+    }
+
+    let refreshTimer: number | null = null;
+    const scheduleRefresh = () => {
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        if (document.visibilityState !== "visible") return;
+        void refreshSelectedStudent();
+        void refreshDailyStatus();
+      }, 220);
+    };
+
+    void refreshSelectedStudent();
+    void refreshDailyStatus();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void refreshSelectedStudent();
+      void refreshDailyStatus();
+    }, 15000);
+
+    const sb = supabaseClient();
+    const channel = sb
+      .channel(`student-info-live-${studentId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "students", filter: `id=eq.${studentId}` }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "ledger", filter: `student_id=eq.${studentId}` }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_avatar_settings", filter: `student_id=eq.${studentId}` }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_leaderboard_bonus_grants", filter: `student_id=eq.${studentId}` }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_event_daily_claims", filter: `student_id=eq.${studentId}` }, scheduleRefresh)
+      .subscribe();
+
+    const onStudentsRefresh = () => {
+      void refreshSelectedStudent();
+      void refreshDailyStatus();
+    };
+    window.addEventListener("students-refresh", onStudentsRefresh);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      sb.removeChannel(channel);
+      window.removeEventListener("students-refresh", onStudentsRefresh);
+    };
   }, [student?.id]);
 
   const avatarSrc = useMemo(() => {
@@ -917,7 +1004,7 @@ export default function StudentInfoPage() {
     setMsg("Avatar updated.");
   }
 
-  async function applyStylePatch(patch: { particle_style?: string; corner_border_key?: string }) {
+  async function applyStylePatch(patch: { particle_style?: string; corner_border_key?: string; bg_color?: string }) {
     if (!student?.id) return;
     setPickerBusyKey(`style:${patch.particle_style ?? patch.corner_border_key ?? "x"}`);
     const res = await fetch("/api/avatar/style", {
@@ -930,6 +1017,11 @@ export default function StudentInfoPage() {
     if (!sj.ok) return setMsg(String(sj.json?.error ?? "Failed to apply style"));
     if (patch.particle_style !== undefined) setAvatarEffectKey(patch.particle_style === "none" ? null : patch.particle_style);
     if (patch.corner_border_key !== undefined) setCornerBorderKey(patch.corner_border_key === "none" ? null : patch.corner_border_key);
+    if (patch.bg_color !== undefined) {
+      const nextBg = String(patch.bg_color || "").trim() || "rgba(15,23,42,0.75)";
+      setAvatarBg(nextBg);
+      setAvatarBgInput(toColorInputHex(nextBg));
+    }
     setMsg("Style updated.");
   }
 
@@ -1359,6 +1451,23 @@ export default function StudentInfoPage() {
                 <button className={`avatar-picker-tab ${avatarPickerSort === "name" ? "avatar-picker-tab--active" : ""}`} onClick={() => setAvatarPickerSort("name")}>Sort: Name</button>
                 <button className={`avatar-picker-tab ${avatarPickerSort === "daily_points" ? "avatar-picker-tab--active" : ""}`} onClick={() => setAvatarPickerSort("daily_points")}>Sort: Free Points</button>
                 <button className={`avatar-picker-tab ${avatarPickerSort === "mvp_bonus" ? "avatar-picker-tab--active" : ""}`} onClick={() => setAvatarPickerSort("mvp_bonus")}>Sort: MVP Bonus</button>
+              </div>
+              <div className="avatar-bg-row">
+                <label className="avatar-bg-label" htmlFor="avatar-bg-color">Avatar BG Color</label>
+                <input
+                  id="avatar-bg-color"
+                  type="color"
+                  value={avatarBgInput}
+                  onChange={(e) => setAvatarBgInput(e.target.value)}
+                  className="avatar-bg-input"
+                />
+                <button
+                  type="button"
+                  className="redeem-detail-btn"
+                  onClick={() => applyStylePatch({ bg_color: avatarBgInput })}
+                >
+                  Save BG
+                </button>
               </div>
               <div className="avatar-picker-body">
                 <aside className="avatar-picker-preview-panel">
@@ -1805,6 +1914,31 @@ function pageStyles() {
       font-size: 12px;
       opacity: 0.82;
       text-align: left;
+    }
+
+    .avatar-bg-row {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .avatar-bg-label {
+      font-size: 12px;
+      font-weight: 900;
+      opacity: 0.82;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .avatar-bg-input {
+      width: 42px;
+      height: 32px;
+      padding: 0;
+      border: 1px solid rgba(148,163,184,0.4);
+      border-radius: 8px;
+      background: transparent;
+      cursor: pointer;
     }
 
     .modifier-grid {
@@ -2359,18 +2493,18 @@ function pageStyles() {
     }
 
     .badge-row--prestige .badge-tile {
-      min-height: 108px;
-      padding: 8px;
+      min-height: 124px;
+      padding: 10px;
       align-content: start;
     }
 
     .badge-row--prestige .badge-tile__img {
-      width: clamp(52px, 7vw, 78px);
-      height: clamp(52px, 7vw, 78px);
+      width: clamp(64px, 8vw, 92px);
+      height: clamp(64px, 8vw, 92px);
     }
 
     .badge-row--prestige .badge-title {
-      font-size: 10px;
+      font-size: 11px;
       line-height: 1.15;
       max-width: 100%;
       overflow: hidden;
@@ -2379,7 +2513,7 @@ function pageStyles() {
     }
 
     .badge-row--prestige .badge-progress__text {
-      font-size: 10px;
+      font-size: 11px;
       max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;

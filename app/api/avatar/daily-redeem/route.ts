@@ -39,18 +39,50 @@ export async function POST(req: Request) {
   const leaderboardPoints = Math.max(0, Number(status.leaderboard_points ?? 0));
   const campRolePoints = Math.max(0, Number(status.camp_role_points ?? 0));
   const limitedEventDailyPoints = Math.max(0, Number((status as any).limited_event_daily_points ?? 0));
-  const { error: lErr } = await admin.from("ledger").insert({
-    student_id: studentId,
-    points,
-    points_base: avatarPoints,
-    points_multiplier: 1,
-    note: `Daily Redeem +${points} (${avatarPoints} avatar + ${leaderboardPoints} leaderboard + ${campRolePoints} camp role + ${limitedEventDailyPoints} limited event)`,
-    category: "redeem_daily",
-  });
+  const regularPoints = Math.max(0, avatarPoints + leaderboardPoints);
+  const nowEtDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+  const ledgerRows: Array<Record<string, any>> = [];
+  if (regularPoints > 0) {
+    ledgerRows.push({
+      student_id: studentId,
+      points: regularPoints,
+      points_base: avatarPoints,
+      points_multiplier: 1,
+      note: `Daily Redeem +${regularPoints} (${avatarPoints} avatar + ${leaderboardPoints} leaderboard)`,
+      category: "redeem_daily",
+    });
+  }
+  if (campRolePoints > 0) {
+    ledgerRows.push({
+      student_id: studentId,
+      points: campRolePoints,
+      points_base: campRolePoints,
+      points_multiplier: 1,
+      note: `Camp Role Redeem +${campRolePoints} (claim_date=${nowEtDate})`,
+      category: "redeem_camp_role",
+    });
+  }
+  if (limitedEventDailyPoints > 0) {
+    ledgerRows.push({
+      student_id: studentId,
+      points: limitedEventDailyPoints,
+      points_base: limitedEventDailyPoints,
+      points_multiplier: 1,
+      note: `Limited Event Daily Redeem +${limitedEventDailyPoints}`,
+      category: "redeem_event_daily",
+    });
+  }
+  const { error: lErr } = ledgerRows.length
+    ? await admin.from("ledger").insert(ledgerRows)
+    : { error: null as any };
 
   if (lErr) return NextResponse.json({ ok: false, error: lErr.message }, { status: 500 });
 
-  const regularPoints = avatarPoints + leaderboardPoints + campRolePoints;
   if (regularPoints > 0) {
     const { error: avatarErr } = await admin
       .from("student_avatar_settings")
@@ -67,6 +99,22 @@ export async function POST(req: Request) {
       .from("student_leaderboard_bonus_grants")
       .upsert({ student_id: studentId, last_granted_at: now.toISOString() }, { onConflict: "student_id" });
     if (gErr) return NextResponse.json({ ok: false, error: gErr.message }, { status: 500 });
+  }
+
+  if (campRolePoints > 0) {
+    const claimRes = await admin
+      .from("student_camp_role_daily_claims")
+      .upsert(
+        {
+          student_id: studentId,
+          claim_date: nowEtDate,
+          claimed_at: now.toISOString(),
+        },
+        { onConflict: "student_id,claim_date" }
+      );
+    if (claimRes.error && !String(claimRes.error.message ?? "").toLowerCase().includes("relation \"student_camp_role_daily_claims\" does not exist")) {
+      return NextResponse.json({ ok: false, error: claimRes.error.message }, { status: 500 });
+    }
   }
 
   const eventKeys = Array.isArray((status as any).claimable_event_keys)

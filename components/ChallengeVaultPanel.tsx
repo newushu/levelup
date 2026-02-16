@@ -15,6 +15,7 @@ type ChallengeRow = {
   limit_mode?: string | null;
   limit_count?: number | null;
   limit_window_days?: number | null;
+  daily_limit_count?: number | null;
   enabled?: boolean | null;
 };
 
@@ -43,17 +44,19 @@ async function safeJson(res: Response) {
 function formatLimit(row: ChallengeRow) {
   const mode = String(row.limit_mode ?? "once");
   const count = Number(row.limit_count ?? 1);
-  if (mode === "once") return "Limit: 1 time";
+  const dailyCap = Math.max(0, Number(row.daily_limit_count ?? 0));
+  const withDaily = (txt: string) => (dailyCap > 0 && mode !== "daily" ? `${txt} (max ${dailyCap}/day)` : txt);
+  if (mode === "once") return withDaily("Limit: 1 time");
   if (mode === "daily") return `Limit: ${count} / day`;
-  if (mode === "weekly") return `Limit: ${count} / week`;
-  if (mode === "monthly") return `Limit: ${count} / month`;
-  if (mode === "yearly") return `Limit: ${count} / year`;
-  if (mode === "lifetime") return `Limit: ${count} lifetime`;
+  if (mode === "weekly") return withDaily(`Limit: ${count} / week`);
+  if (mode === "monthly") return withDaily(`Limit: ${count} / month`);
+  if (mode === "yearly") return withDaily(`Limit: ${count} / year`);
+  if (mode === "lifetime") return withDaily(`Limit: ${count} lifetime`);
   if (mode === "custom") {
     const days = Number(row.limit_window_days ?? 0);
-    return days ? `Limit: ${count} / ${days} days` : `Limit: ${count} / custom window`;
+    return withDaily(days ? `Limit: ${count} / ${days} days` : `Limit: ${count} / custom window`);
   }
-  return `Limit: ${count}`;
+  return withDaily(`Limit: ${count}`);
 }
 
 function windowDaysFor(row: ChallengeRow) {
@@ -72,6 +75,11 @@ function countInWindow(row: ChallengeRow, completions: string[], nowMs: number) 
   const days = windowDaysFor(row);
   if (!days) return completions.length;
   const windowStart = nowMs - days * 24 * 60 * 60 * 1000;
+  return completions.filter((ts) => new Date(ts).getTime() >= windowStart).length;
+}
+
+function countInDailyWindow(completions: string[], nowMs: number) {
+  const windowStart = nowMs - 24 * 60 * 60 * 1000;
   return completions.filter((ts) => new Date(ts).getTime() >= windowStart).length;
 }
 
@@ -456,7 +464,12 @@ export default function ChallengeVaultPanel({ studentId, title = "Challenge Vaul
                   const isRepeatable = String(c.limit_mode ?? "once") !== "once";
                   const completions = completionMap[String(c.id)] ?? [];
                   const countWindow = countInWindow(c, completions, now);
-                  const blocked = countWindow >= Math.max(1, Number(c.limit_count ?? 1));
+                  const primaryLimit = Math.max(1, Number(c.limit_count ?? 1));
+                  const dailyLimit = Math.max(0, Number(c.daily_limit_count ?? 0));
+                  const countDaily = countInDailyWindow(completions, now);
+                  const blockedPrimary = countWindow >= primaryLimit;
+                  const blockedDaily = dailyLimit > 0 && countDaily >= dailyLimit;
+                  const blocked = blockedPrimary || blockedDaily;
                   const showCompletedChip = Boolean(
                     completedAt &&
                       (
@@ -464,7 +477,8 @@ export default function ChallengeVaultPanel({ studentId, title = "Challenge Vaul
                         blocked // repeatable completions only show while still cooldown-locked
                       )
                   );
-                  const remaining = Math.max(0, Math.max(1, Number(c.limit_count ?? 1)) - countWindow);
+                  const remainingPrimary = Math.max(0, primaryLimit - countWindow);
+                  const remainingDaily = dailyLimit > 0 ? Math.max(0, dailyLimit - countDaily) : null;
                   const availableAt = blocked ? nextAvailableDateFromCompletions(c, completions, now) : null;
                   const msLeft = availableAt ? availableAt.getTime() - now : null;
                   const unlockMsg = msLeft !== null && availableAt ? formatUnlockMessage(msLeft, availableAt) : null;
@@ -485,7 +499,8 @@ export default function ChallengeVaultPanel({ studentId, title = "Challenge Vaul
                         {showCompletedChip ? <div className="cvault__chip cvault__chip--center">Completed</div> : null}
                         <div className="cvault__meta">{formatLimit(c)}</div>
                         <div className="cvault__remain-inline">
-                          Remaining: {remaining} / {Math.max(1, Number(c.limit_count ?? 1))}
+                          Remaining: {remainingPrimary} / {primaryLimit}
+                          {remainingDaily !== null ? ` • Daily: ${remainingDaily} / ${dailyLimit}` : ""}
                         </div>
                       </div>
                       <div className="cvault__footer">

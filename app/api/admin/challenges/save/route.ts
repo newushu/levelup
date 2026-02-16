@@ -65,6 +65,7 @@ export async function POST(req: Request) {
   const limit_mode = String(body?.limit_mode ?? "once").trim();
   const limit_count = Number(body?.limit_count ?? 1) || 1;
   const limit_window_days = Number(body?.limit_window_days ?? 0) || null;
+  const daily_limit_count = Number(body?.daily_limit_count ?? 0) || null;
 
   if (!id) return NextResponse.json({ ok: false, error: "ID is required" }, { status: 400 });
   if (!name) return NextResponse.json({ ok: false, error: "Name is required" }, { status: 400 });
@@ -89,9 +90,10 @@ export async function POST(req: Request) {
     limit_mode,
     limit_count,
     limit_window_days,
+    daily_limit_count,
   };
 
-  const { data, error } = await admin
+  let { data, error } = await admin
     .from("challenges")
     .upsert(payload, { onConflict: "id" })
     .select(
@@ -115,9 +117,43 @@ export async function POST(req: Request) {
         "limit_mode",
         "limit_count",
         "limit_window_days",
+        "daily_limit_count",
       ].join(",")
     )
     .single();
+  if (error && String(error.message || "").toLowerCase().includes("daily_limit_count")) {
+    const fallbackPayload = { ...payload };
+    delete fallbackPayload.daily_limit_count;
+    const retry = await admin
+      .from("challenges")
+      .upsert(fallbackPayload, { onConflict: "id" })
+      .select(
+        [
+          "id",
+          "name",
+          "description",
+          "category",
+          "tier",
+          "enabled",
+          "badge_id",
+          "challenge_type",
+          "quota_type",
+          "quota_target",
+          "stat_id",
+          "stat_threshold",
+          "stat_compare",
+          "data_point_key",
+          "data_point_window_days",
+          "points_awarded",
+          "limit_mode",
+          "limit_count",
+          "limit_window_days",
+        ].join(",")
+      )
+      .single();
+    data = retry.data as any;
+    error = retry.error as any;
+  }
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
   return NextResponse.json({ ok: true, challenge: data });

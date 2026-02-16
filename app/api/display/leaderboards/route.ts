@@ -3,19 +3,23 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 const DEFAULT_LEADERBOARD_SLOTS = [
-  { metric: "points_total", title: "Points Balance" },
-  { metric: "lifetime_points", title: "Lifetime Points" },
-  { metric: "weekly_points", title: "Weekly Points" },
-  { metric: "today_points", title: "Today Points" },
-  { metric: "skill_pulse_today", title: "Skill Pulse Today" },
-  { metric: "mvp_count", title: "MVP Awards" },
-  { metric: "points_total", title: "Points Balance" },
-  { metric: "weekly_points", title: "Weekly Points" },
-  { metric: "lifetime_points", title: "Lifetime Points" },
-  { metric: "today_points", title: "Today Points" },
+  { metric: "lifetime_points", title: "Lifetime Points", rank_window: "top5" },
+  { metric: "points_total", title: "Points Balance", rank_window: "top5" },
+  { metric: "mvp_count", title: "Total MVPs", rank_window: "top5" },
+  { metric: "rule_keeper_total", title: "Rule Keeper Total", rank_window: "top5" },
+  { metric: "skill_pulse_today", title: "Skill Pulse Today", rank_window: "top10" },
+  { metric: "today_points", title: "Today Points", rank_window: "top10" },
+  { metric: "weekly_points", title: "Weekly Points", rank_window: "top10" },
+  { metric: "points_total", title: "Points Balance", rank_window: "top10" },
+  { metric: "lifetime_points", title: "Lifetime Points", rank_window: "top10" },
+  { metric: "mvp_count", title: "Total MVPs", rank_window: "top10" },
 ];
 
 const DEFAULT_LARGE_ROTATIONS = [
+  { slot: 1, rotation: [1, 8, 2] },
+  { slot: 2, rotation: [2, 9, 3] },
+  { slot: 3, rotation: [3, 10, 4] },
+  { slot: 4, rotation: [4, 7, 1] },
   { slot: 5, rotation: [5, 6, 7] },
   { slot: 6, rotation: [8, 9, 10] },
 ];
@@ -28,10 +32,16 @@ const METRIC_LABELS: Record<string, string> = {
   today_points: "Today Points",
   skill_pulse_today: "Skill Pulse Today",
   mvp_count: "MVP Awards",
+  rule_keeper_total: "Rule Keeper Total",
 };
 
 function normalizeLeaderboardSlots(input: any) {
   const raw = Array.isArray(input) ? input : [];
+  const normalizeRankWindow = (value: unknown) => {
+    const raw = String(value ?? "").trim().toLowerCase();
+    if (raw === "top5" || raw === "next5" || raw === "top10") return raw;
+    return "top10";
+  };
   return DEFAULT_LEADERBOARD_SLOTS.map((fallback, index) => {
     const candidate =
       raw[index] ||
@@ -39,7 +49,8 @@ function normalizeLeaderboardSlots(input: any) {
       {};
     const metric = String(candidate?.metric ?? fallback.metric ?? "").trim() || fallback.metric || "none";
     const title = String(candidate?.title ?? fallback.title ?? "").trim() || fallback.title;
-    return { slot: index + 1, metric, title };
+    const rank_window = normalizeRankWindow(candidate?.rank_window ?? (fallback as any).rank_window ?? "top10");
+    return { slot: index + 1, metric, title, rank_window };
   });
 }
 
@@ -48,7 +59,7 @@ function normalizeLargeRotations(input: any) {
   const clampSlot = (value: any, fallback: number) => {
     const num = Number(value ?? fallback);
     if (!Number.isFinite(num)) return fallback;
-    return Math.max(1, Math.min(10, Math.round(num)));
+    return Math.max(1, Math.min(DEFAULT_LEADERBOARD_SLOTS.length, Math.round(num)));
   };
   return DEFAULT_LARGE_ROTATIONS.map((fallback, idx) => {
     const candidate =
@@ -67,6 +78,20 @@ function getWeekStartUTC(now: Date) {
   const diff = (day + 6) % 7;
   d.setUTCDate(d.getUTCDate() - diff);
   return d;
+}
+
+function buildThresholdsFromSettings(baseJump: number, difficultyPct: number, maxLevel = 20) {
+  const rows: Array<{ level: number; min: number }> = [];
+  for (let level = 1; level <= maxLevel; level += 1) {
+    if (level === 1) {
+      rows.push({ level, min: 0 });
+      continue;
+    }
+    const raw = baseJump * Math.pow(1 + difficultyPct / 100, level - 1);
+    const rounded = Math.round(raw / 5) * 5;
+    rows.push({ level, min: Math.max(0, Math.floor(rounded)) });
+  }
+  return rows;
 }
 
 export async function GET(req: Request) {
@@ -115,6 +140,36 @@ export async function GET(req: Request) {
   if (sErr) return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
 
   const studentRows = students ?? [];
+  const { data: levelRowsRes } = await admin
+    .from("avatar_level_thresholds")
+    .select("level,min_lifetime_points")
+    .order("level", { ascending: true });
+  const { data: levelSettingsRes } = await admin
+    .from("avatar_level_settings")
+    .select("base_jump,difficulty_pct")
+    .eq("id", 1)
+    .maybeSingle();
+  const thresholdRows =
+    (levelRowsRes ?? [])
+      .map((row: any) => ({ level: Number(row.level), min: Number(row.min_lifetime_points ?? 0) }))
+      .filter((row: any) => Number.isFinite(row.level))
+      .sort((a: any, b: any) => a.level - b.level) ||
+    [];
+  const fallbackThresholds = buildThresholdsFromSettings(
+    Number(levelSettingsRes?.base_jump ?? 50),
+    Number(levelSettingsRes?.difficulty_pct ?? 8)
+  );
+  const levelThresholds = thresholdRows.length ? thresholdRows : fallbackThresholds;
+  const levelByStudentId = new Map<string, number>(
+    studentRows.map((s: any) => {
+      const lifetime = Number(s.lifetime_points ?? 0);
+      let lvl = 1;
+      levelThresholds.forEach((t) => {
+        if (lifetime >= Number(t.min ?? 0)) lvl = Number(t.level);
+      });
+      return [String(s.id ?? ""), lvl];
+    })
+  );
   const studentIds = studentRows.map((s: any) => String(s.id));
   const studentBase = new Map<
     string,
@@ -353,7 +408,7 @@ export async function GET(req: Request) {
     if (!id) return;
     const avatarId = String(s.avatar_id ?? "");
     const avatar = avatarMap.get(avatarId) ?? { storage_path: null, zoom_pct: 100 };
-    const level = Number((studentRows ?? []).find((row: any) => String(row.id ?? "") === id)?.level ?? 1);
+    const level = Number(levelByStudentId.get(id) ?? 1);
 
     const borderKey = String(s.corner_border_key ?? "").trim();
     const border = borderKey ? borderByKey.get(borderKey) : null;
@@ -462,7 +517,7 @@ export async function GET(req: Request) {
     studentBase.set(id, {
       student_id: id,
       name: String(s.name ?? "Student"),
-      level: Number(s.level ?? 1),
+      level: Number(levelByStudentId.get(id) ?? s.level ?? 1),
       points_total: Number(s.points_total ?? 0),
       lifetime_points: Number(s.lifetime_points ?? 0),
       is_competition_team: !!s.is_competition_team,
@@ -481,8 +536,8 @@ export async function GET(req: Request) {
   todayStart.setHours(0, 0, 0, 0);
 
   const [weeklyLedger, todayLedger, skillPulseLedger, mvpRows] = await Promise.all([
-    admin.from("ledger").select("student_id,points,created_at").gte("created_at", weekStart),
-    admin.from("ledger").select("student_id,points,created_at").gte("created_at", todayStart.toISOString()),
+    admin.from("ledger").select("student_id,points,created_at,category").gte("created_at", weekStart),
+    admin.from("ledger").select("student_id,points,created_at,category").gte("created_at", todayStart.toISOString()),
     admin
       .from("ledger")
       .select("student_id,points,category,note")
@@ -502,6 +557,8 @@ export async function GET(req: Request) {
   (weeklyLedger.data ?? []).forEach((row: any) => {
     const id = String(row.student_id ?? "");
     if (!id) return;
+    const category = String(row.category ?? "").toLowerCase();
+    if (category === "redeem_daily" || category === "avatar_daily" || category === "redeem_camp_role" || category === "redeem_event_daily") return;
     weeklyPoints.set(id, (weeklyPoints.get(id) ?? 0) + Number(row.points ?? 0));
   });
 
@@ -509,6 +566,8 @@ export async function GET(req: Request) {
   (todayLedger.data ?? []).forEach((row: any) => {
     const id = String(row.student_id ?? "");
     if (!id) return;
+    const category = String(row.category ?? "").toLowerCase();
+    if (category === "redeem_daily" || category === "avatar_daily" || category === "redeem_camp_role" || category === "redeem_event_daily") return;
     todayPoints.set(id, (todayPoints.get(id) ?? 0) + Number(row.points ?? 0));
   });
 
@@ -526,6 +585,19 @@ export async function GET(req: Request) {
     if (!id) return;
     mvpCounts.set(id, (mvpCounts.get(id) ?? 0) + 1);
   });
+
+  const ruleKeeperTotals = new Map<string, number>();
+  const ruleKeeperRes = await admin
+    .from("ledger")
+    .select("student_id,category")
+    .eq("category", "rule_keeper");
+  if (!ruleKeeperRes.error) {
+    (ruleKeeperRes.data ?? []).forEach((row: any) => {
+      const id = String(row.student_id ?? "");
+      if (!id) return;
+      ruleKeeperTotals.set(id, (ruleKeeperTotals.get(id) ?? 0) + 1);
+    });
+  }
 
   const performanceStatMeta = new Map<string, { name: string; unit: string | null; higher_is_better: boolean }>();
   const performanceLeaderboards = new Map<
@@ -577,7 +649,10 @@ export async function GET(req: Request) {
       value: values.get(s.student_id) ?? 0,
     }));
     list.sort((a, b) => b.value - a.value);
-    return list.slice(0, limit).map((row, idx) => ({
+    return list
+      .filter((row) => Number(row.value ?? 0) > 0)
+      .slice(0, limit)
+      .map((row, idx) => ({
       rank: idx + 1,
       student_id: row.student_id,
       name: row.name,
@@ -607,6 +682,14 @@ export async function GET(req: Request) {
   fixedLeaderboards.set("today_points", buildRows(todayPoints));
   fixedLeaderboards.set("skill_pulse_today", buildRows(skillPulseToday));
   fixedLeaderboards.set("mvp_count", buildRows(mvpCounts));
+  fixedLeaderboards.set("rule_keeper_total", buildRows(ruleKeeperTotals));
+
+  const applyRankWindow = (rows: any[], rankWindow: string) => {
+    const list = Array.isArray(rows) ? rows : [];
+    if (rankWindow === "top5") return list.slice(0, 5);
+    if (rankWindow === "next5") return list.slice(5, 10);
+    return list.slice(0, 10);
+  };
 
   const assembledSlots = slots.map((slot) => {
     const metricKey = slot.metric;
@@ -625,6 +708,7 @@ export async function GET(req: Request) {
       const rows = performanceLeaderboards.get(statId) ?? [];
       const sorted = rows
         .slice()
+        .filter((row) => Number(row.value ?? 0) > 0)
         .sort((a, b) => {
           if (a.value === b.value) return String(b.recorded_at).localeCompare(String(a.recorded_at));
           return (meta?.higher_is_better ?? true) ? b.value - a.value : a.value - b.value;
@@ -653,7 +737,7 @@ export async function GET(req: Request) {
         metric: metricKey,
         title: slot.title || meta?.name || "Performance Stat",
         unit: meta?.unit ?? null,
-        rows: sorted,
+        rows: applyRankWindow(sorted, String((slot as any).rank_window ?? "top10")),
       };
     }
     const rows = fixedLeaderboards.get(metricKey) ?? [];
@@ -662,7 +746,7 @@ export async function GET(req: Request) {
       metric: metricKey,
       title: slot.title || METRIC_LABELS[metricKey] || "Leaderboard",
       unit: null,
-      rows,
+      rows: applyRankWindow(rows, String((slot as any).rank_window ?? "top10")),
     };
   });
 

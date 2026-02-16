@@ -23,6 +23,7 @@ type ChallengeRow = {
   limit_mode?: string | null;
   limit_count?: number | null;
   limit_window_days?: number | null;
+  daily_limit_count?: number | null;
 };
 
 type StatRow = { id: string; name: string };
@@ -75,6 +76,7 @@ export default function ChallengesAdminPage() {
     limitMode: string;
     limitCount: string;
     limitWindowDays: string;
+    dailyLimitCount: string;
     quotaType: string;
     quotaTarget: string;
   } | null>(null);
@@ -103,6 +105,7 @@ export default function ChallengesAdminPage() {
     limit_mode: "once",
     limit_count: 1,
     limit_window_days: null,
+    daily_limit_count: null,
   });
 
   async function loadAll() {
@@ -241,6 +244,7 @@ export default function ChallengesAdminPage() {
       limitMode: String(row.limit_mode ?? "once"),
       limitCount: String(Number(row.limit_count ?? 1)),
       limitWindowDays: row.limit_window_days == null ? "" : String(Number(row.limit_window_days)),
+      dailyLimitCount: row.daily_limit_count == null ? "" : String(Number(row.daily_limit_count)),
       quotaType: String(row.quota_type ?? ""),
       quotaTarget: row.quota_target == null ? "" : String(Number(row.quota_target)),
     });
@@ -253,12 +257,14 @@ export default function ChallengesAdminPage() {
         if (r.id !== limitEditor.rowId) return r;
         const nextLimitCount = Number(limitEditor.limitCount);
         const nextWindow = limitEditor.limitWindowDays.trim() === "" ? null : Number(limitEditor.limitWindowDays);
+        const nextDailyLimit = limitEditor.dailyLimitCount.trim() === "" ? null : Number(limitEditor.dailyLimitCount);
         const nextQuotaTarget = limitEditor.quotaTarget.trim() === "" ? null : Number(limitEditor.quotaTarget);
         return {
           ...r,
           limit_mode: limitEditor.limitMode,
           limit_count: Number.isFinite(nextLimitCount) && nextLimitCount > 0 ? nextLimitCount : 1,
           limit_window_days: Number.isFinite(Number(nextWindow)) ? nextWindow : null,
+          daily_limit_count: Number.isFinite(Number(nextDailyLimit)) && Number(nextDailyLimit) > 0 ? nextDailyLimit : null,
           quota_type: limitEditor.quotaType,
           quota_target: Number.isFinite(Number(nextQuotaTarget)) ? nextQuotaTarget : null,
         };
@@ -290,6 +296,7 @@ export default function ChallengesAdminPage() {
       limit_mode: "once",
       limit_count: 1,
       limit_window_days: null,
+      daily_limit_count: null,
       points_awarded: null,
     });
   }
@@ -475,6 +482,16 @@ export default function ChallengesAdminPage() {
                 Limit window (days)
                 <input type="number" value={draft.limit_window_days ?? ""} onChange={(e) => setDraft((d) => ({ ...d, limit_window_days: Number(e.target.value) }))} style={input()} />
                 <div style={hint()}>Used only for custom windows.</div>
+              </label>
+              <label style={label()}>
+                Daily cap (optional)
+                <input
+                  type="number"
+                  value={draft.daily_limit_count ?? ""}
+                  onChange={(e) => setDraft((d) => ({ ...d, daily_limit_count: Number(e.target.value) || null }))}
+                  style={input()}
+                />
+                <div style={hint()}>Optional second limit. Example: monthly 5 + daily 1.</div>
               </label>
             </div>
             <label style={label()}>
@@ -754,6 +771,17 @@ export default function ChallengesAdminPage() {
                       placeholder="Points awarded"
                       style={input()}
                     />
+                    <input
+                      type="number"
+                      value={row.daily_limit_count ?? ""}
+                      onChange={(e) =>
+                        setRows((prev) =>
+                          prev.map((r) => (r.id === row.id ? { ...r, daily_limit_count: Number(e.target.value) || null } : r))
+                        )
+                      }
+                      placeholder="Daily cap (optional)"
+                      style={input()}
+                    />
                     <input type="number" value={row.limit_count ?? 1} onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, limit_count: Number(e.target.value) } : r)))} placeholder="Limit count" style={input()} />
                     <input type="number" value={row.limit_window_days ?? ""} onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, limit_window_days: Number(e.target.value) } : r)))} placeholder="Limit window (days)" style={input()} />
                   </div>
@@ -887,6 +915,16 @@ export default function ChallengesAdminPage() {
                 style={input()}
               />
             </label>
+            <label style={label()}>
+              Daily cap (optional)
+              <input
+                type="number"
+                value={limitEditor.dailyLimitCount}
+                onChange={(e) => setLimitEditor((prev) => (prev ? { ...prev, dailyLimitCount: e.target.value } : prev))}
+                placeholder="Example: 1 means max once per day"
+                style={input()}
+              />
+            </label>
             <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
               <label style={label()}>
                 Quota type
@@ -1004,16 +1042,24 @@ function buildLimitSummary(row: ChallengeRow): string {
   const count = Number(row.limit_count ?? 1);
   const mode = String(row.limit_mode ?? "once");
   const windowDays = Number(row.limit_window_days ?? 0);
-  if (mode === "daily") return `${count} time${count === 1 ? "" : "s"} per day`;
-  if (mode === "weekly") return `${count} time${count === 1 ? "" : "s"} per week`;
-  if (mode === "monthly") return `${count} time${count === 1 ? "" : "s"} per month`;
-  if (mode === "yearly") return `${count} time${count === 1 ? "" : "s"} per year`;
-  if (mode === "lifetime" || mode === "once") return `${count} time${count === 1 ? "" : "s"} total`;
-  if (mode === "custom" && windowDays > 0) {
-    return `${count} time${count === 1 ? "" : "s"} per ${windowDays} day${windowDays === 1 ? "" : "s"}`;
+  let primary = "";
+  if (mode === "daily") primary = `${count} time${count === 1 ? "" : "s"} per day`;
+  else if (mode === "weekly") primary = `${count} time${count === 1 ? "" : "s"} per week`;
+  else if (mode === "monthly") primary = `${count} time${count === 1 ? "" : "s"} per month`;
+  else if (mode === "yearly") primary = `${count} time${count === 1 ? "" : "s"} per year`;
+  else if (mode === "lifetime" || mode === "once") primary = `${count} time${count === 1 ? "" : "s"} total`;
+  else if (mode === "custom" && windowDays > 0) {
+    primary = `${count} time${count === 1 ? "" : "s"} per ${windowDays} day${windowDays === 1 ? "" : "s"}`;
+  } else if (mode === "custom") {
+    primary = `${count} time${count === 1 ? "" : "s"} per custom window`;
+  } else {
+    primary = `${count} time${count === 1 ? "" : "s"}`;
   }
-  if (mode === "custom") return `${count} time${count === 1 ? "" : "s"} per custom window`;
-  return `${count} time${count === 1 ? "" : "s"}`;
+  const dailyCap = Math.max(0, Number(row.daily_limit_count ?? 0));
+  if (dailyCap > 0 && mode !== "daily") {
+    return `${primary}, max ${dailyCap}/day`;
+  }
+  return primary;
 }
 
 function buildChallengeSummary(row: ChallengeRow): string {

@@ -76,6 +76,7 @@ export default function SpinPage() {
   const [spinning, setSpinning] = useState(false);
   const [rotationDeg, setRotationDeg] = useState(0);
   const [pending, setPending] = useState<SpinResult | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [taskPending, setTaskPending] = useState<TaskSpinResult | null>(null);
   const [pin, setPin] = useState("");
   const [celebrate, setCelebrate] = useState(false);
@@ -389,16 +390,20 @@ export default function SpinPage() {
   }
 
   async function confirmSpin() {
-    if (!pending) return;
+    if (!pending || confirming) return;
     if (!pin.trim()) return setMsg("PIN or NFC required to confirm.");
     setMsg("");
+    setConfirming(true);
     const res = await fetch("/api/roulette/confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ spin_id: pending.spin.id, pin: pin.trim(), nfc_code: pin.trim() }),
     });
     const sj = await res.json().catch(() => ({}));
-    if (!res.ok) return setMsg(sj?.error || "Failed to confirm spin");
+    if (!res.ok) {
+      setConfirming(false);
+      return setMsg(sj?.error || "Failed to confirm spin");
+    }
 
     const outcome = buildSpinDetail({
       points_delta: pending.spin.points_delta,
@@ -431,6 +436,7 @@ export default function SpinPage() {
     window.setTimeout(() => setCelebrate(false), 2600);
     setPending(null);
     setPin("");
+    setConfirming(false);
     if (selectedWheel && selectedStudent) {
       refreshSpinLog(selectedWheel.id, selectedStudent.id);
       refreshStudentPoints(selectedStudent.id);
@@ -688,8 +694,9 @@ export default function SpinPage() {
                   confirmSpin();
                 }}
                 style={confirmBtn()}
+                disabled={confirming}
               >
-                Confirm Award
+                {confirming ? "Confirming..." : "Confirm Award"}
               </button>
             </div>
           </div>

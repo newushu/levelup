@@ -1,12 +1,24 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/authz";
+import { requireUser } from "@/lib/authz";
 import { supabaseServer } from "@/lib/supabase/server";
 
 export async function POST(req: Request) {
-  const gate = await requireAdmin();
+  const gate = await requireUser();
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 403 });
 
   const supabase = await supabaseServer();
+  const { data: roles, error: rolesErr } = await supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", gate.user.id);
+  if (rolesErr) return NextResponse.json({ ok: false, error: rolesErr.message }, { status: 500 });
+  const allowed = new Set(
+    (roles ?? []).map((r: any) => String(r?.role ?? "").toLowerCase()).filter(Boolean)
+  );
+  if (!allowed.has("admin") && !allowed.has("camp")) {
+    return NextResponse.json({ ok: false, error: "Admin or camp access required" }, { status: 403 });
+  }
+
   const body = await req.json().catch(() => ({}));
   const items = Array.isArray(body?.items) ? body.items : [];
   if (!items.length) return NextResponse.json({ ok: false, error: "Missing items" }, { status: 400 });
@@ -30,6 +42,9 @@ export async function POST(req: Request) {
       image_y: Number.isFinite(Number(item.image_y)) ? Number(item.image_y) : null,
       image_zoom: Number.isFinite(Number(item.image_zoom)) ? Number(item.image_zoom) : null,
       enabled: item.enabled !== false,
+      visible_on_menu: item.visible_on_menu !== false,
+      visible_on_pos: item.visible_on_pos !== false,
+      sold_out: item.sold_out === true,
       display_order: Number.isFinite(Number(item.display_order)) ? Number(item.display_order) : idx,
     };
   });

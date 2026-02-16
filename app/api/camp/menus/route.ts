@@ -23,7 +23,7 @@ export async function GET(req: Request) {
   if (menuIds.length) {
     const { data: rows, error: iErr } = await supabase
       .from("camp_menu_items")
-      .select("id,menu_id,name,price_points,allow_second,second_price_points,image_url,image_text,use_text,image_x,image_y,image_zoom,enabled,display_order")
+      .select("id,menu_id,name,price_points,allow_second,second_price_points,image_url,image_text,use_text,image_x,image_y,image_zoom,enabled,visible_on_menu,visible_on_pos,sold_out,display_order")
       .in("menu_id", menuIds)
       .order("display_order", { ascending: true });
     if (iErr) return NextResponse.json({ ok: false, error: iErr.message }, { status: 500 });

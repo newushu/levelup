@@ -21,6 +21,20 @@ type BoardRow = {
   rank?: number;
 };
 
+function buildThresholdsFromSettings(baseJump: number, difficultyPct: number, maxLevel = 20) {
+  const rows: Array<{ level: number; min: number }> = [];
+  for (let level = 1; level <= maxLevel; level += 1) {
+    if (level === 1) {
+      rows.push({ level, min: 0 });
+      continue;
+    }
+    const raw = baseJump * Math.pow(1 + difficultyPct / 100, level - 1);
+    const rounded = Math.round(raw / 5) * 5;
+    rows.push({ level, min: Math.max(0, Math.floor(rounded)) });
+  }
+  return rows;
+}
+
 function topWithTies(rows: BoardRow[], higherIsBetter = true, limitRank = 10) {
   const sorted = rows.slice().sort((a, b) => {
     if (a.points === b.points) return String(a.name).localeCompare(String(b.name));
@@ -58,16 +72,24 @@ export async function GET() {
     .from("avatar_level_thresholds")
     .select("level,min_lifetime_points")
     .order("level", { ascending: true });
+  const { data: levelSettings } = await supabase
+    .from("avatar_level_settings")
+    .select("base_jump,difficulty_pct")
+    .eq("id", 1)
+    .maybeSingle();
   const thresholds = (levelRows ?? [])
     .map((row: any) => ({ level: Number(row.level), min: Number(row.min_lifetime_points ?? 0) }))
     .filter((row: any) => Number.isFinite(row.level))
     .sort((a: any, b: any) => a.level - b.level);
-  if (thresholds.length) {
+  const effectiveThresholds = thresholds.length
+    ? thresholds
+    : buildThresholdsFromSettings(Number(levelSettings?.base_jump ?? 50), Number(levelSettings?.difficulty_pct ?? 8));
+  if (effectiveThresholds.length) {
     levelById = new Map(
       rows.map((s) => {
         const points = Number(s.lifetime_points ?? 0);
         let nextLevel = Number(s.level ?? 1);
-        thresholds.forEach((lvl) => {
+        effectiveThresholds.forEach((lvl) => {
           if (points >= lvl.min) nextLevel = lvl.level;
         });
         return [s.id, nextLevel];
@@ -157,7 +179,7 @@ export async function GET() {
   const weekStart = getWeekStartUTC(new Date()).toISOString();
   const { data: ledger, error: lErr } = await supabase
     .from("ledger")
-    .select("student_id,points,created_at")
+    .select("student_id,points,created_at,category")
     .gte("created_at", weekStart);
   if (lErr) return NextResponse.json({ ok: false, error: lErr.message }, { status: 500 });
 
@@ -165,6 +187,8 @@ export async function GET() {
   (ledger ?? []).forEach((row: any) => {
     const id = String(row.student_id ?? "");
     if (!id) return;
+    const category = String(row.category ?? "").toLowerCase();
+    if (category === "redeem_daily" || category === "avatar_daily" || category === "redeem_camp_role" || category === "redeem_event_daily") return;
     const points = Number(row.points ?? 0);
     weekly.set(id, (weekly.get(id) ?? 0) + points);
   });
@@ -274,6 +298,30 @@ export async function GET() {
     .gte("created_at", todayStart.toISOString());
   if (!taoluRes.error) {
     (taoluRes.data ?? []).forEach((row: any) => {
+      const sid = String(row?.student_id ?? "");
+      if (!sid) return;
+      taoluTodayByStudent.set(sid, (taoluTodayByStudent.get(sid) ?? 0) + 1);
+    });
+  }
+
+  const refinementRes = await supabase
+    .from("taolu_refinement_rounds")
+    .select("student_id,created_at")
+    .gte("created_at", todayStart.toISOString());
+  if (!refinementRes.error) {
+    (refinementRes.data ?? []).forEach((row: any) => {
+      const sid = String(row?.student_id ?? "");
+      if (!sid) return;
+      taoluTodayByStudent.set(sid, (taoluTodayByStudent.get(sid) ?? 0) + 1);
+    });
+  }
+
+  const prepsRefinementRes = await supabase
+    .from("preps_remediations")
+    .select("student_id,completed_at")
+    .gte("completed_at", todayStart.toISOString());
+  if (!prepsRefinementRes.error) {
+    (prepsRefinementRes.data ?? []).forEach((row: any) => {
       const sid = String(row?.student_id ?? "");
       if (!sid) return;
       taoluTodayByStudent.set(sid, (taoluTodayByStudent.get(sid) ?? 0) + 1);

@@ -9,18 +9,27 @@ export async function GET() {
   const supabase = await supabaseServer();
   let { data, error } = await supabase
     .from("challenges")
-    .select("id,name,description,category,comp_team_only,tier,points_awarded,limit_mode,limit_count,limit_window_days,enabled")
+    .select("id,name,description,category,comp_team_only,tier,points_awarded,limit_mode,limit_count,limit_window_days,daily_limit_count,enabled")
     .order("category", { ascending: true })
     .order("name", { ascending: true });
 
   if (error && String(error.message || "").includes("comp_team_only")) {
     const retry = await supabase
       .from("challenges")
-      .select("id,name,description,category,tier,points_awarded,limit_mode,limit_count,limit_window_days,enabled")
+      .select("id,name,description,category,tier,points_awarded,limit_mode,limit_count,limit_window_days,daily_limit_count,enabled")
       .order("category", { ascending: true })
       .order("name", { ascending: true });
     data = (retry.data ?? []).map((row: any) => ({ ...row, comp_team_only: false }));
     error = retry.error;
+  }
+  if (error && String(error.message || "").includes("daily_limit_count")) {
+    const retryNoDaily = await supabase
+      .from("challenges")
+      .select("id,name,description,category,comp_team_only,tier,points_awarded,limit_mode,limit_count,limit_window_days,enabled")
+      .order("category", { ascending: true })
+      .order("name", { ascending: true });
+    data = (retryNoDaily.data ?? []).map((row: any) => ({ ...row, daily_limit_count: null }));
+    error = retryNoDaily.error;
   }
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

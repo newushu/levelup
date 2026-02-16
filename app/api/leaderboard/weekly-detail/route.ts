@@ -13,7 +13,7 @@ export async function POST(req: Request) {
   const weekStart = getWeekStartUTC(new Date()).toISOString();
   const { data, error } = await supabase
     .from("ledger")
-    .select("points,created_at")
+    .select("points,created_at,category")
     .eq("student_id", studentId)
     .gte("created_at", weekStart)
     .order("created_at", { ascending: true });
@@ -21,6 +21,8 @@ export async function POST(req: Request) {
 
   const totals = new Map<string, number>();
   (data ?? []).forEach((row: any) => {
+    const category = String(row.category ?? "").toLowerCase();
+    if (category === "redeem_daily" || category === "avatar_daily") return;
     const date = String(row.created_at ?? "").slice(0, 10);
     if (!date) return;
     const points = Number(row.points ?? 0);

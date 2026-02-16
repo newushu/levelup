@@ -69,9 +69,7 @@ export async function POST(req: Request) {
 
   const { data: spin, error: spinErr } = await supabase
     .from("roulette_spins")
-    .select(
-      "id,student_id,wheel_id,segment_id,result_type,points_delta,prize_text,item_key,confirmed_at,roulette_wheels(name),roulette_segments(label,segment_type,points_value,prize_text,item_key)"
-    )
+    .select("id,student_id,wheel_id,segment_id,result_type,points_delta,prize_text,item_key,confirmed_at")
     .eq("id", spin_id)
     .maybeSingle();
 
@@ -79,8 +77,26 @@ export async function POST(req: Request) {
   if (!spin) return NextResponse.json({ ok: false, error: "Spin not found" }, { status: 404 });
   if (spin.confirmed_at) return NextResponse.json({ ok: false, error: "Spin already confirmed" }, { status: 400 });
 
-  const wheelRow = Array.isArray(spin.roulette_wheels) ? spin.roulette_wheels[0] : spin.roulette_wheels;
-  const segmentRow = Array.isArray(spin.roulette_segments) ? spin.roulette_segments[0] : spin.roulette_segments;
+  const markRes = await supabase
+    .from("roulette_spins")
+    .update({ confirmed_at: new Date().toISOString() })
+    .eq("id", spin.id)
+    .is("confirmed_at", null)
+    .select("id")
+    .maybeSingle();
+  if (markRes.error) return NextResponse.json({ ok: false, error: markRes.error.message }, { status: 500 });
+  if (!markRes.data) {
+    return NextResponse.json({ ok: false, error: "Spin already confirmed" }, { status: 400 });
+  }
+
+  const [{ data: wheelRow }, { data: segmentRow }] = await Promise.all([
+    supabase.from("roulette_wheels").select("name").eq("id", spin.wheel_id).maybeSingle(),
+    supabase
+      .from("roulette_segments")
+      .select("label,segment_type,points_value,prize_text,item_key")
+      .eq("id", spin.segment_id)
+      .maybeSingle(),
+  ]);
   const wheelName = String(wheelRow?.name ?? "Prize Wheel");
   const rawSegmentLabel = String(segmentRow?.label ?? spin.prize_text ?? "Wheel Prize");
   const segmentLabel =
@@ -90,6 +106,15 @@ export async function POST(req: Request) {
   const pointsDelta = Number(spin.points_delta ?? 0);
 
   if (pointsDelta !== 0) {
+    const existingGrant = await supabase
+      .from("ledger")
+      .select("id")
+      .eq("source_type", "roulette_spin")
+      .eq("source_id", spin.id)
+      .limit(1)
+      .maybeSingle();
+    if (existingGrant.error) return NextResponse.json({ ok: false, error: existingGrant.error.message }, { status: 500 });
+    if (!existingGrant.data) {
     const note = `Prize Wheel • ${wheelName} • ${segmentLabel}`;
     const { error: ledErr } = await supabase.from("ledger").insert({
       student_id: spin.student_id,
@@ -101,17 +126,11 @@ export async function POST(req: Request) {
       created_by: gate.userId,
     });
     if (ledErr) return NextResponse.json({ ok: false, error: ledErr.message }, { status: 500 });
+    }
 
     const rpc = await supabase.rpc("recompute_student_points", { p_student_id: spin.student_id });
     if (rpc.error) return NextResponse.json({ ok: false, error: rpc.error.message }, { status: 500 });
   }
-
-  const { error: updErr } = await supabase
-    .from("roulette_spins")
-    .update({ confirmed_at: new Date().toISOString() })
-    .eq("id", spin.id);
-
-  if (updErr) return NextResponse.json({ ok: false, error: updErr.message }, { status: 500 });
 
   return NextResponse.json({
     ok: true,

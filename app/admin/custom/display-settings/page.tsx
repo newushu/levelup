@@ -30,7 +30,8 @@ const POINT_METRICS = [
   { key: "weekly_points", label: "Weekly Points" },
   { key: "today_points", label: "Today Points" },
   { key: "skill_pulse_today", label: "Skill Pulse Today" },
-  { key: "mvp_count", label: "MVP Awards" },
+  { key: "mvp_count", label: "Total MVPs" },
+  { key: "rule_keeper_total", label: "Rule Keeper Total" },
 ];
 
 const DISPLAY_MODULES = [
@@ -46,6 +47,7 @@ type LeaderboardSlot = {
   slot: number;
   metric: string;
   title: string;
+  rank_window?: "top5" | "next5" | "top10";
 };
 
 type LeaderboardLargeRotation = {
@@ -83,8 +85,13 @@ const DEFAULT_SETTINGS: DisplaySettings = {
     slot: idx + 1,
     metric: POINT_METRICS[(idx % (POINT_METRICS.length - 1)) + 1]?.key ?? "points_total",
     title: POINT_METRICS[(idx % (POINT_METRICS.length - 1)) + 1]?.label ?? "Leaderboard",
+    rank_window: idx < 4 ? "top5" : "top10",
   })),
   leaderboard_large_rotations: [
+    { slot: 1, rotation: [1, 8, 2] },
+    { slot: 2, rotation: [2, 9, 3] },
+    { slot: 3, rotation: [3, 10, 4] },
+    { slot: 4, rotation: [4, 7, 1] },
     { slot: 5, rotation: [5, 6, 7] },
     { slot: 6, rotation: [8, 9, 10] },
   ],
@@ -363,15 +370,27 @@ export default function DisplaySettingsPage() {
                   ))}
                 </select>
               </label>
+              <label style={fieldStack()}>
+                <span style={fieldLabel()}>Rank Window</span>
+                <select
+                  value={slot.rank_window ?? "top10"}
+                  onChange={(e) => updateSlot(idx, { rank_window: e.target.value as "top5" | "next5" | "top10" })}
+                  style={textInput()}
+                >
+                  <option value="top5">Ranks 1-5</option>
+                  <option value="next5">Ranks 6-10</option>
+                  <option value="top10">Ranks 1-10</option>
+                </select>
+              </label>
             </div>
           ))}
         </div>
       </div>
 
       <div style={card()}>
-        <div style={{ fontWeight: 1000, marginBottom: 6 }}>Large Leaderboard Rotations (10s each)</div>
+        <div style={{ fontWeight: 1000, marginBottom: 6 }}>Leaderboard Rotations (10s each)</div>
         <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 10 }}>
-          Choose which 3 slots rotate in the large displays (5 and 6).
+          Choose which 3 slots rotate in each tile (left 1-4 and large 5-6).
         </div>
         <div style={slotGrid()}>
           {settings.leaderboard_large_rotations.map((rotation, idx) => (
@@ -445,6 +464,11 @@ function renderToggle(label: string, value: boolean, onChange: (next: boolean) =
 function normalizeLeaderboardSlots(input: any): LeaderboardSlot[] {
   const raw = Array.isArray(input) ? input : [];
   const base = DEFAULT_SETTINGS.leaderboard_slots;
+  const normalizeRankWindow = (value: unknown) => {
+    const raw = String(value ?? "").trim().toLowerCase();
+    if (raw === "top5" || raw === "next5" || raw === "top10") return raw as "top5" | "next5" | "top10";
+    return "top10" as const;
+  };
   return base.map((fallback, index) => {
     const candidate =
       raw[index] ||
@@ -452,7 +476,8 @@ function normalizeLeaderboardSlots(input: any): LeaderboardSlot[] {
       {};
     const metric = String(candidate?.metric ?? fallback.metric ?? "").trim() || fallback.metric || "none";
     const title = String(candidate?.title ?? fallback.title ?? "").trim() || fallback.title;
-    return { slot: index + 1, metric, title };
+    const rank_window = normalizeRankWindow(candidate?.rank_window ?? fallback.rank_window ?? "top10");
+    return { slot: index + 1, metric, title, rank_window };
   });
 }
 
@@ -475,7 +500,7 @@ function normalizeLargeRotations(input: any): LeaderboardLargeRotation[] {
   const clampSlot = (value: any, fallback: number) => {
     const num = Number(value ?? fallback);
     if (!Number.isFinite(num)) return fallback;
-    return Math.max(1, Math.min(10, Math.round(num)));
+    return Math.max(1, Math.min(DEFAULT_SETTINGS.leaderboard_slots.length, Math.round(num)));
   };
   return base.map((fallback, index) => {
     const candidate =

@@ -16,15 +16,26 @@ type MenuItem = {
   image_y?: number | null;
   image_zoom?: number | null;
   enabled: boolean;
+  visible_on_menu?: boolean | null;
+  visible_on_pos?: boolean | null;
+  sold_out?: boolean | null;
 };
 
 type Menu = { id: string; name: string; enabled: boolean; items: MenuItem[] };
+
+const CAMP_MENU_SYNC_CHANNEL = "camp-menu-sync";
 
 export default function CampMenuDisplayPage() {
   const [role, setRole] = useState("student");
   const [menus, setMenus] = useState<Menu[]>([]);
   const [menuCount, setMenuCount] = useState(2);
   const [selectedMenuIds, setSelectedMenuIds] = useState<string[]>([]);
+
+  async function loadMenus() {
+    const res = await fetch("/api/camp/menus?items=1", { cache: "no-store" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) setMenus((data.menus ?? []) as Menu[]);
+  }
 
   useEffect(() => {
     (async () => {
@@ -37,11 +48,28 @@ export default function CampMenuDisplayPage() {
   }, []);
 
   useEffect(() => {
-    (async () => {
-      const res = await fetch("/api/camp/menus?items=1", { cache: "no-store" });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) setMenus((data.menus ?? []) as Menu[]);
-    })();
+    loadMenus();
+  }, []);
+
+  useEffect(() => {
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel(CAMP_MENU_SYNC_CHANNEL);
+      channel.onmessage = (event) => {
+        if (event?.data?.type === "refresh") {
+          loadMenus();
+        }
+      };
+    } catch {}
+    const timer = window.setInterval(() => {
+      loadMenus();
+    }, 15000);
+    return () => {
+      window.clearInterval(timer);
+      try {
+        channel?.close();
+      } catch {}
+    };
   }, []);
 
   useEffect(() => {
@@ -131,13 +159,14 @@ export default function CampMenuDisplayPage() {
             <div style={{ fontWeight: 900, fontSize: 44, textAlign: "center" }}>{menu.name}</div>
             <div style={itemGrid()}>
               {(menu.items ?? [])
-                .filter((i) => i.enabled !== false)
+                .filter((i) => i.enabled !== false && i.visible_on_menu !== false)
                 .map((item) => (
                   <div key={item.id} style={itemCard()}>
                     <div style={itemImage(item)}>
                       {!item.image_url || item.use_text ? (
                         <div style={imageText()}>{item.image_text || item.name}</div>
                       ) : null}
+                      {item.sold_out ? <div style={soldOutOverlay()}>SOLD OUT</div> : null}
                       <div style={imageLabel()}>
                         <div style={{ fontWeight: 900, fontSize: 24, lineHeight: 1.2 }}>{item.name}</div>
                         <div style={{ fontSize: 20, opacity: 0.9 }}>{item.price_points} pts</div>
@@ -305,6 +334,26 @@ function imageLabel(): React.CSSProperties {
     overflow: "hidden",
     whiteSpace: "normal",
     wordBreak: "break-word",
+  };
+}
+
+function soldOutOverlay(): React.CSSProperties {
+  return {
+    position: "absolute",
+    left: "-24%",
+    right: "-24%",
+    top: "46%",
+    transform: "rotate(-24deg)",
+    textAlign: "center",
+    background: "rgba(220,38,38,0.9)",
+    border: "2px solid rgba(254,226,226,0.92)",
+    color: "white",
+    fontSize: 30,
+    fontWeight: 1000,
+    letterSpacing: 3,
+    padding: "10px 0",
+    boxShadow: "0 12px 30px rgba(127,29,29,0.45)",
+    pointerEvents: "none",
   };
 }
 

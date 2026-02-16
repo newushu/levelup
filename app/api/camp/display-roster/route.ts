@@ -96,9 +96,21 @@ async function getCampRolePointConfig(admin: ReturnType<typeof supabaseAdmin>) {
   };
 }
 
-async function loadStudentsByIds(admin: ReturnType<typeof supabaseAdmin>, ids: string[]) {
+async function loadStudentsByIds(admin: ReturnType<typeof supabaseAdmin>, ids: string[], opts?: { lite?: boolean }) {
   const studentsById = new Map<string, any>();
   if (!ids.length) return studentsById;
+
+  if (opts?.lite) {
+    const basicRes = await admin
+      .from("students")
+      .select("id,name,level,points_total,lifetime_points,avatar_storage_path,avatar_bg,avatar_zoom_pct")
+      .in("id", ids);
+    const basicRows = basicRes.error ? [] : (basicRes.data ?? []);
+    (basicRows ?? []).forEach((s: any) => {
+      studentsById.set(String(s.id), s);
+    });
+    return studentsById;
+  }
 
   let students: any[] = [];
   const richSelect = await admin
@@ -140,24 +152,10 @@ async function loadStudentsByIds(admin: ReturnType<typeof supabaseAdmin>, ids: s
   const difficultyPct = Number(levelSettingsRes.data?.difficulty_pct ?? 8);
   const thresholds = dbThresholds.length ? dbThresholds : computeThresholds(baseJump, difficultyPct);
 
-  const lifetimeById = new Map<string, number>();
-  if (ids.length) {
-    const { data: lifetimeRows } = await admin
-      .from("students")
-      .select("id,lifetime_points")
-      .in("id", ids);
-    (lifetimeRows ?? []).forEach((row: any) => {
-      const sid = String(row.id ?? "");
-      const life = Number(row.lifetime_points);
-      if (!sid || !Number.isFinite(life)) return;
-      lifetimeById.set(sid, life);
-    });
-  }
-
   (students ?? []).forEach((s: any) => {
     if (thresholds.length) {
       const sid = String(s?.id ?? "");
-      const lifetimePoints = lifetimeById.get(sid);
+      const lifetimePoints = Number(s?.lifetime_points ?? NaN);
       if (Number.isFinite(lifetimePoints)) {
         let computedLevel = Number(s?.level ?? 1);
         thresholds.forEach((lvl) => {
@@ -431,7 +429,7 @@ function rosterWindowBounds(roster: any) {
 }
 
 async function loadDailyRedeemByStudent(admin: ReturnType<typeof supabaseAdmin>, ids: string[]) {
-  const result = new Map<string, { can_redeem: boolean; available_points: number }>();
+  const result = new Map<string, { can_redeem: boolean; available_points: number; contribution_chips: string[]; limited_event_daily_points: number }>();
   if (!ids.length) return result;
   const snapshotDate = getSnapshotCycleDateKey(new Date());
   const boardMapRes = await getLeaderboardBoardMapForDate(admin, snapshotDate);
@@ -442,6 +440,8 @@ async function loadDailyRedeemByStudent(admin: ReturnType<typeof supabaseAdmin>,
     result.set(studentId, {
       can_redeem: status.status.can_redeem === true,
       available_points: Math.max(0, Number(status.status.available_points ?? 0)),
+      contribution_chips: Array.isArray((status.status as any).contribution_chips) ? ((status.status as any).contribution_chips as string[]) : [],
+      limited_event_daily_points: Math.max(0, Number((status.status as any).limited_event_daily_points ?? 0)),
     });
   }
   return result;
@@ -570,7 +570,8 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const screenId = Math.min(3, Math.max(1, asInt(url.searchParams.get("screen"), 1)));
   const classroomInstanceId = String(url.searchParams.get("instance_id") ?? "").trim();
-  const liteMode = String(url.searchParams.get("lite") ?? "").trim().toLowerCase() === "camp_classroom";
+  const liteModeKey = String(url.searchParams.get("lite") ?? "").trim().toLowerCase();
+  const liteMode = liteModeKey === "camp_classroom" || liteModeKey === "admin_custom";
 
   const [rostersRes, groupsRes, membersRes, screensRes] = await Promise.all([
     admin.from("camp_display_rosters").select("id,name,start_date,end_date,enabled,sort_order,created_at,updated_at").order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
@@ -633,10 +634,12 @@ export async function GET(req: Request) {
     const studentIdsFromCheckin = Array.from(
       new Set((checkins ?? []).map((r: any) => String(r.student_id ?? "")).filter(Boolean))
     );
-    const studentsByIdFromCheckin = await loadStudentsByIds(admin, studentIdsFromCheckin);
-    const recentLedgerByStudent = await loadRecentLedgerByStudent(admin, studentIdsFromCheckin, {
-      includeCampOrders: !liteMode,
-    });
+    const studentsByIdFromCheckin = await loadStudentsByIds(admin, studentIdsFromCheckin, { lite: liteMode });
+    const recentLedgerByStudent = liteMode
+      ? new Map()
+      : await loadRecentLedgerByStudent(admin, studentIdsFromCheckin, {
+          includeCampOrders: !liteMode,
+        });
     const redeemByStudent = liteMode ? new Map() : await loadDailyRedeemByStudent(admin, studentIdsFromCheckin);
     const tallyByStudent = liteMode ? new Map() : await loadCampTallyByStudent(admin, studentIdsFromCheckin);
 
@@ -646,7 +649,7 @@ export async function GET(req: Request) {
         if (!sid) return null;
         const student = studentsByIdFromCheckin.get(sid) ?? null;
         const tally = tallyByStudent.get(sid) ?? { spotlight: 0, rule_keeper: 0, rule_breaker: 0 };
-        const redeem = redeemByStudent.get(sid) ?? { can_redeem: false, available_points: 0 };
+        const redeem = redeemByStudent.get(sid) ?? { can_redeem: false, available_points: 0, contribution_chips: [], limited_event_daily_points: 0 };
         return {
           id: `classroom-checkin:${String(row.id ?? idx)}`,
           roster_id: "classroom_instance",
@@ -702,10 +705,12 @@ export async function GET(req: Request) {
   }
 
   const allStudentIds = Array.from(new Set(members.map((m: any) => String(m.student_id ?? "")).filter(Boolean)));
-  const studentsById = await loadStudentsByIds(admin, allStudentIds);
-  const recentLedgerByStudent = await loadRecentLedgerByStudent(admin, allStudentIds, {
-    includeCampOrders: !liteMode,
-  });
+  const studentsById = await loadStudentsByIds(admin, allStudentIds, { lite: liteMode });
+  const recentLedgerByStudent = liteMode
+    ? new Map()
+    : await loadRecentLedgerByStudent(admin, allStudentIds, {
+        includeCampOrders: !liteMode,
+      });
   const redeemByStudent = liteMode ? new Map() : await loadDailyRedeemByStudent(admin, allStudentIds);
 
   const rosterById = new Map((rosters ?? []).map((r: any) => [String(r.id), r]));
@@ -759,7 +764,7 @@ export async function GET(req: Request) {
         rule_keeper_points: 0,
         rule_breaker_points: 0,
       };
-      const redeem = redeemByStudent.get(studentId) ?? { can_redeem: false, available_points: 0 };
+      const redeem = redeemByStudent.get(studentId) ?? { can_redeem: false, available_points: 0, contribution_chips: [], limited_event_daily_points: 0 };
       return {
         id: String(m.id),
         roster_id: String(m.roster_id),

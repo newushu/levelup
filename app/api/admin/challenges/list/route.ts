@@ -25,7 +25,7 @@ export async function GET() {
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 403 });
 
   const admin = supabaseAdmin();
-  const { data, error } = await admin
+  let { data, error } = await admin
     .from("challenges")
     .select(
       [
@@ -48,6 +48,7 @@ export async function GET() {
         "limit_mode",
         "limit_count",
         "limit_window_days",
+        "daily_limit_count",
         "home_available",
         "home_origin",
         "home_parent_id",
@@ -57,6 +58,42 @@ export async function GET() {
     )
     .order("tier", { ascending: true })
     .order("name", { ascending: true });
+  if (error && String(error.message || "").toLowerCase().includes("daily_limit_count")) {
+    const retry = await admin
+      .from("challenges")
+      .select(
+        [
+          "id",
+          "name",
+          "description",
+          "category",
+          "tier",
+          "enabled",
+          "badge_id",
+          "challenge_type",
+          "quota_type",
+          "quota_target",
+          "stat_id",
+          "stat_threshold",
+          "stat_compare",
+          "data_point_key",
+          "data_point_window_days",
+          "points_awarded",
+          "limit_mode",
+          "limit_count",
+          "limit_window_days",
+          "home_available",
+          "home_origin",
+          "home_parent_id",
+          "home_approved_at",
+          "created_at",
+        ].join(",")
+      )
+      .order("tier", { ascending: true })
+      .order("name", { ascending: true });
+    data = retry.data as any;
+    error = retry.error as any;
+  }
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
   return NextResponse.json({ ok: true, challenges: data ?? [] });

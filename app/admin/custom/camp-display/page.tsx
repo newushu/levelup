@@ -122,7 +122,7 @@ export default function CampDisplayAdminPage() {
 
   async function load() {
     setMsg("");
-    const res = await fetch("/api/camp/display-roster", { cache: "no-store" });
+    const res = await fetch("/api/camp/display-roster?lite=admin_custom", { cache: "no-store" });
     const sj = await safeJson(res);
     if (!sj.ok) return setMsg(String(sj.json?.error ?? "Failed to load"));
 

@@ -49,6 +49,8 @@ type CampDisplayMember = {
   redeem_status?: {
     can_redeem: boolean;
     available_points: number;
+    contribution_chips?: string[];
+    limited_event_daily_points?: number;
   };
 };
 
@@ -68,6 +70,7 @@ type ApiPayload = {
   display_members?: CampDisplayMember[];
   announcements?: Array<{ student_id: string; name: string; created_at: string; label?: string; detail?: string }>;
 };
+const RECENT_CHANGE_GLOW_MS = 15_000;
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -110,6 +113,11 @@ function rolePointValue(role: string, config: { seller_daily_points: number; cle
   if (key === "seller") return Number(config.seller_daily_points ?? 0);
   if (key === "cleaner") return Number(config.cleaner_daily_points ?? 0);
   return 0;
+}
+
+function isCampRole(role: string) {
+  const key = String(role ?? "").trim().toLowerCase();
+  return key === "seller" || key === "cleaner";
 }
 
 function dayLabel(day: string) {
@@ -177,6 +185,7 @@ export default function CampDisplayPage() {
   const [copyMsg, setCopyMsg] = useState("");
   const [menuBarHover, setMenuBarHover] = useState(false);
   const [canHover, setCanHover] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
@@ -269,6 +278,11 @@ export default function CampDisplayPage() {
       sb.removeChannel(channel);
     };
   }, [screenId]);
+
+  useEffect(() => {
+    const t = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
 
   const uniqueAnnouncements = useMemo(() => {
     const used = new Set<string>();
@@ -410,6 +424,10 @@ export default function CampDisplayPage() {
               const deltaUp = delta >= 0;
               const rawReason = String(row.last_change?.note ?? row.last_change?.category ?? "").trim();
               const reason = rawReason.toLowerCase() === "given" ? "Points Awarded" : rawReason;
+              const changeAtMs = row.last_change?.created_at ? new Date(row.last_change.created_at).getTime() : Number.NaN;
+              const isRecentPointChange =
+                Number.isFinite(changeAtMs) && changeAtMs <= nowMs && nowMs - changeAtMs <= RECENT_CHANGE_GLOW_MS;
+              const glowPulse = isRecentPointChange ? (Math.floor(nowMs / 260) % 2 === 0 ? 1 : 0.7) : 0;
               const tally = row.camp_tally ?? {
                 spotlight_stars: 0,
                 rule_keepers: 0,
@@ -423,6 +441,8 @@ export default function CampDisplayPage() {
               const faction = row.faction_id ? factionById.get(String(row.faction_id)) : undefined;
               const cardTone = faction?.color ? buildCardToneFromColor(faction.color) : defaultCardTone();
               const secondaryRolePoints = rolePointValue(String(row.secondary_role ?? ""), campRolePoints);
+              const primaryRole = String(row.display_role ?? "").trim().toLowerCase();
+              const primaryRolePoints = rolePointValue(primaryRole, campRolePoints);
               const todayDayCode = getEasternDayCodeNow();
               const roleDayList = Array.isArray(row.secondary_role_days) ? row.secondary_role_days : [];
               const secondaryRoleActiveToday =
@@ -436,8 +456,18 @@ export default function CampDisplayPage() {
                 .map((p) => p[0]?.toUpperCase() ?? "")
                 .join("");
               return (
-                <section key={row.id} style={card(cardTone, Boolean(faction))}>
+                <section
+                  key={row.id}
+                  style={card(cardTone, Boolean(faction), isRecentPointChange ? (deltaUp ? "up" : "down") : null, glowPulse)}
+                >
                   <div style={roleChip()}>{row.display_role || "camper"}</div>
+                  {isCampRole(primaryRole) ? (
+                    <div style={roleClaimHint()}>
+                      +{Math.round(primaryRolePoints)} today
+                      <br />
+                      claim at 4:00 PM ET
+                    </div>
+                  ) : null}
                   {faction ? <div style={factionNameChip(faction.color ?? "#64748b")}>{faction.name}</div> : null}
                   {secondaryRoleActiveToday ? (
                     <div style={secondaryRoleWrap()}>
@@ -445,6 +475,7 @@ export default function CampDisplayPage() {
                       <div style={secondaryRolePointsChip()}>
                         +{Math.round(secondaryRolePoints)} today
                       </div>
+                      <div style={roleClaimHintInline()}>claim at 4:00 PM ET</div>
                     </div>
                   ) : null}
                   <div style={avatarRow()}>
@@ -506,7 +537,7 @@ export default function CampDisplayPage() {
                     <div style={pointsChip()}>{Number(s.points_total ?? 0).toLocaleString()} pts</div>
                   </div>
                   {row.last_change ? (
-                    <div style={deltaUp ? posDeltaChip() : negDeltaChip()}>
+                    <div style={deltaUp ? posDeltaChip(isRecentPointChange, glowPulse) : negDeltaChip(isRecentPointChange, glowPulse)}>
                       <div style={deltaMainLine()}>
                         {deltaUp ? "▲ " : "▼ "}
                         {deltaUp ? "+" : ""}
@@ -543,7 +574,9 @@ export default function CampDisplayPage() {
                     ))}
                   </div>
                   {redeem.can_redeem ? (
-                    <div style={redeemMiniChip()}>+{Math.round(Number(redeem.available_points ?? 0))} can be redeemed</div>
+                    <div style={redeemMiniChip()}>
+                      +{Math.round(Number(redeem.available_points ?? 0))} can be redeemed
+                    </div>
                   ) : null}
                 </section>
               );
@@ -644,10 +677,20 @@ function placeholderLabel(): React.CSSProperties {
     color: "rgba(148,163,184,0.9)",
   };
 }
-function card(tone: { border: string; glow: string; bgA: string; bgB: string }, factionActive: boolean): React.CSSProperties {
+function card(
+  tone: { border: string; glow: string; bgA: string; bgB: string },
+  factionActive: boolean,
+  recentChange: "up" | "down" | null = null,
+  pulse = 0
+): React.CSSProperties {
+  const isUp = recentChange === "up";
+  const hotShadow = isUp
+    ? `0 0 ${18 + pulse * 12}px rgba(74,222,128,${0.28 + pulse * 0.22})`
+    : `0 0 ${18 + pulse * 12}px rgba(248,113,113,${0.26 + pulse * 0.22})`;
+  const hotBorder = isUp ? "rgba(74,222,128,0.72)" : "rgba(248,113,113,0.72)";
   return {
     borderRadius: 12,
-    border: `1px solid ${tone.border}`,
+    border: `1px solid ${recentChange ? hotBorder : tone.border}`,
     background: factionActive
       ? `radial-gradient(circle at 12% 18%, ${tone.glow}, transparent 44%), radial-gradient(circle at 84% 76%, ${tone.glow}, transparent 42%), linear-gradient(165deg, ${tone.bgA}, ${tone.bgB})`
       : `linear-gradient(165deg, ${tone.bgA}, ${tone.bgB})`,
@@ -656,7 +699,8 @@ function card(tone: { border: string; glow: string; bgA: string; bgB: string }, 
     justifyItems: "center",
     gap: 6,
     position: "relative",
-    boxShadow: `inset 0 0 0 1px ${tone.glow}, 0 10px 24px rgba(0,0,0,0.36)`,
+    boxShadow: `${recentChange ? `${hotShadow}, ` : ""}inset 0 0 0 1px ${tone.glow}, 0 10px 24px rgba(0,0,0,0.36)`,
+    transition: "box-shadow 180ms ease, border-color 180ms ease",
   };
 }
 function infoRail(): React.CSSProperties {
@@ -723,6 +767,23 @@ function roleChip(): React.CSSProperties {
     textTransform: "uppercase",
   };
 }
+function roleClaimHint(): React.CSSProperties {
+  return {
+    position: "absolute",
+    top: 26,
+    right: 8,
+    borderRadius: 8,
+    border: "1px solid rgba(125,211,252,0.42)",
+    background: "rgba(2,132,199,0.22)",
+    color: "#e0f2fe",
+    padding: "3px 6px",
+    fontSize: 8,
+    lineHeight: 1.2,
+    textAlign: "right",
+    fontWeight: 800,
+    textTransform: "uppercase",
+  };
+}
 function secondaryRoleChip(): React.CSSProperties {
   return {
     borderRadius: 999,
@@ -760,6 +821,16 @@ function secondaryRolePointsChip(): React.CSSProperties {
     overflow: "hidden",
     textOverflow: "ellipsis",
     maxWidth: 132,
+  };
+}
+function roleClaimHintInline(): React.CSSProperties {
+  return {
+    color: "rgba(186,230,253,0.92)",
+    fontSize: 8,
+    fontWeight: 800,
+    textTransform: "uppercase",
+    letterSpacing: 0.2,
+    paddingLeft: 2,
   };
 }
 function factionNameChip(color: string): React.CSSProperties {
@@ -1114,7 +1185,7 @@ function menuChip(visible: boolean): React.CSSProperties {
     transition: "opacity 160ms ease, max-width 160ms ease, transform 160ms ease, padding 160ms ease",
   };
 }
-function posDeltaChip(): React.CSSProperties {
+function posDeltaChip(recent = false, pulse = 0): React.CSSProperties {
   return {
     borderRadius: 8,
     border: "1px solid rgba(74,222,128,0.5)",
@@ -1127,9 +1198,11 @@ function posDeltaChip(): React.CSSProperties {
     width: "100%",
     minHeight: 56,
     alignContent: "center",
+    boxShadow: recent ? `0 0 ${12 + pulse * 8}px rgba(74,222,128,${0.35 + pulse * 0.25}), inset 0 0 8px rgba(74,222,128,0.24)` : "none",
+    transition: "box-shadow 180ms ease",
   };
 }
-function negDeltaChip(): React.CSSProperties {
+function negDeltaChip(recent = false, pulse = 0): React.CSSProperties {
   return {
     borderRadius: 8,
     border: "1px solid rgba(248,113,113,0.55)",
@@ -1142,6 +1215,8 @@ function negDeltaChip(): React.CSSProperties {
     width: "100%",
     minHeight: 56,
     alignContent: "center",
+    boxShadow: recent ? `0 0 ${12 + pulse * 8}px rgba(248,113,113,${0.35 + pulse * 0.25}), inset 0 0 8px rgba(248,113,113,0.24)` : "none",
+    transition: "box-shadow 180ms ease",
   };
 }
 function deltaMainLine(): React.CSSProperties {
