@@ -405,6 +405,8 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
   const [awardMsg, setAwardMsg] = useState("");
   const [snapshotBusy, setSnapshotBusy] = useState(false);
   const [snapshotMsg, setSnapshotMsg] = useState("");
+  const [levelFixBusy, setLevelFixBusy] = useState(false);
+  const [levelFixMsg, setLevelFixMsg] = useState("");
   const [changesPin, setChangesPin] = useState("");
   const [changesMsg, setChangesMsg] = useState("");
   const [changesBusy, setChangesBusy] = useState(false);
@@ -635,6 +637,23 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
     window.setTimeout(() => setSnapshotMsg(""), 2800);
   }
 
+  async function fixStudentLevelsFromThresholds() {
+    if (levelFixBusy) return;
+    setLevelFixBusy(true);
+    setLevelFixMsg("");
+    const res = await fetch("/api/admin/students/recompute-levels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    const sj = await safeJson(res);
+    setLevelFixBusy(false);
+    if (!sj.ok) return setLevelFixMsg(String(sj.json?.error ?? "Failed to fix student levels"));
+    const updated = Number(sj.json?.updated ?? 0);
+    const scanned = Number(sj.json?.scanned ?? 0);
+    setLevelFixMsg(`Student levels synced (${updated} updated, ${scanned} scanned).`);
+    window.setTimeout(() => setLevelFixMsg(""), 3200);
+  }
+
   const changesCombinedRows = useMemo(() => {
     const dbTyped = changesRows.map((row) => ({
       id: String(row.id),
@@ -778,6 +797,7 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
     { label: "💬 Parent Messages", href: "/admin/parent-messages" },
     { label: "📝 Feature Change Log", tab: "changes" as const },
     { label: "🛠️ Rebuild Leaderboards", tab: "rebuild" as const },
+    { label: "🧰 Fix Student Levels", tab: "rebuild" as const },
   ];
   const ruleKeeper = awardTypes.find((t) => String(t.name ?? "").toLowerCase().includes("rule keeper"));
   const ruleBreaker = awardTypes.find((t) => String(t.name ?? "").toLowerCase().includes("rule breaker"));
@@ -1001,7 +1021,7 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
             </div>
             ) : (
               <div style={{ marginTop: 2 }}>
-                <ChallengeVaultPanel title="Challenge Vault List" studentId={awardStudentId || undefined} />
+                <ChallengeVaultPanel title="Challenge Vault List" studentId={awardStudentId || undefined} allowManage />
               </div>
             )}
           </div>
@@ -1144,7 +1164,7 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
 
         {tab === "rebuild" ? (
           <div style={adminPanelWrap()}>
-            <div style={adminPanelTitle()}>Rebuild Leaderboards</div>
+            <div style={adminPanelTitle()}>Fix & Rebuild</div>
             <div style={adminInlineNotice(true)}>
               Rebuild runs an immediate snapshot for leaderboard daily bonuses and refreshes redeemable totals.
             </div>
@@ -1152,12 +1172,18 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
               <button style={adminAwardQuickBtn("primary")} onClick={rebuildLeaderboardSnapshot} disabled={snapshotBusy}>
                 {snapshotBusy ? "Rebuilding..." : "Yes, Rebuild Now"}
               </button>
+              <button style={adminAwardQuickBtn("primary")} onClick={fixStudentLevelsFromThresholds} disabled={levelFixBusy}>
+                {levelFixBusy ? "Fixing Levels..." : "Fix Student Levels"}
+              </button>
               <button style={adminAwardQuickBtn()} onClick={() => setTab("workspace")} disabled={snapshotBusy}>
                 No, Go Back
               </button>
             </div>
             {snapshotMsg ? (
               <div style={adminInlineNotice(snapshotMsg.includes("rebuilt"))}>{snapshotMsg}</div>
+            ) : null}
+            {levelFixMsg ? (
+              <div style={adminInlineNotice(levelFixMsg.includes("synced"))}>{levelFixMsg}</div>
             ) : null}
           </div>
         ) : null}

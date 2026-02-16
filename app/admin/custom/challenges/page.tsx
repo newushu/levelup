@@ -62,9 +62,22 @@ export default function ChallengesAdminPage() {
   const [library, setLibrary] = useState<LibraryRow[]>([]);
   const [msg, setMsg] = useState("");
   const [saving, setSaving] = useState<Record<string, boolean>>({});
+  const [deleting, setDeleting] = useState<Record<string, boolean>>({});
   const [filterTier, setFilterTier] = useState("all");
   const [filterType, setFilterType] = useState("all");
   const [filterCategory, setFilterCategory] = useState("all");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState<"cards" | "editor">("cards");
+  const [limitEditor, setLimitEditor] = useState<{
+    rowId: string;
+    challengeType: string;
+    limitMode: string;
+    limitCount: string;
+    limitWindowDays: string;
+    quotaType: string;
+    quotaTarget: string;
+  } | null>(null);
   const [tab, setTab] = useState<"medals" | "challenges">("challenges");
   const [categoryDraft, setCategoryDraft] = useState("");
   const [extraCategories, setExtraCategories] = useState<string[]>([]);
@@ -167,13 +180,18 @@ export default function ChallengesAdminPage() {
   }, [rows, extraCategories]);
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (filterTier !== "all" && r.tier !== filterTier) return false;
       if (filterType !== "all" && (r.challenge_type ?? "task") !== filterType) return false;
       if (filterCategory !== "all" && (r.category ?? "") !== filterCategory) return false;
+      if (q) {
+        const hay = `${String(r.id ?? "")} ${String(r.name ?? "")} ${String(r.description ?? "")}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
       return true;
     });
-  }, [rows, filterTier, filterType, filterCategory]);
+  }, [rows, filterTier, filterType, filterCategory, search]);
 
   function slugify(name: string) {
     return name
@@ -198,6 +216,55 @@ export default function ChallengesAdminPage() {
     }
     await loadAll();
     setSaving((prev) => ({ ...prev, [row.id]: false }));
+  }
+
+  async function deleteRow(row: ChallengeRow) {
+    const yes = window.confirm(`Delete challenge "${row.name}"?\n\nThis also removes related student completion rows.`);
+    if (!yes) return;
+    setDeleting((prev) => ({ ...prev, [row.id]: true }));
+    const res = await fetch("/api/admin/challenges/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: row.id }),
+    });
+    const sj = await safeJson(res);
+    setDeleting((prev) => ({ ...prev, [row.id]: false }));
+    if (!sj.ok) return setMsg(sj.json?.error || "Failed to delete challenge");
+    setRows((prev) => prev.filter((r) => r.id !== row.id));
+    setMsg("Challenge deleted.");
+  }
+
+  function openLimitEditor(row: ChallengeRow) {
+    setLimitEditor({
+      rowId: row.id,
+      challengeType: String(row.challenge_type ?? "task"),
+      limitMode: String(row.limit_mode ?? "once"),
+      limitCount: String(Number(row.limit_count ?? 1)),
+      limitWindowDays: row.limit_window_days == null ? "" : String(Number(row.limit_window_days)),
+      quotaType: String(row.quota_type ?? ""),
+      quotaTarget: row.quota_target == null ? "" : String(Number(row.quota_target)),
+    });
+  }
+
+  function applyLimitEditor() {
+    if (!limitEditor) return;
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== limitEditor.rowId) return r;
+        const nextLimitCount = Number(limitEditor.limitCount);
+        const nextWindow = limitEditor.limitWindowDays.trim() === "" ? null : Number(limitEditor.limitWindowDays);
+        const nextQuotaTarget = limitEditor.quotaTarget.trim() === "" ? null : Number(limitEditor.quotaTarget);
+        return {
+          ...r,
+          limit_mode: limitEditor.limitMode,
+          limit_count: Number.isFinite(nextLimitCount) && nextLimitCount > 0 ? nextLimitCount : 1,
+          limit_window_days: Number.isFinite(Number(nextWindow)) ? nextWindow : null,
+          quota_type: limitEditor.quotaType,
+          quota_target: Number.isFinite(Number(nextQuotaTarget)) ? nextQuotaTarget : null,
+        };
+      })
+    );
+    setLimitEditor(null);
   }
 
   async function createChallenge() {
@@ -524,13 +591,18 @@ export default function ChallengesAdminPage() {
             </div>
           </section>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} style={input()}>
-              <option value="all">All categories</option>
-              {categories.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
+          <div style={chipWrap()}>
+            <button type="button" onClick={() => setFilterCategory("all")} style={chipBtn(filterCategory === "all")}>
+              All
+            </button>
+            {categories.map((c) => (
+              <button key={c} type="button" onClick={() => setFilterCategory(c)} style={chipBtn(filterCategory === c)}>
+                {c}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <select value={filterTier} onChange={(e) => setFilterTier(e.target.value)} style={input()}>
               <option value="all">All tiers</option>
               {tiers.map((t) => (
@@ -543,6 +615,18 @@ export default function ChallengesAdminPage() {
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>
+            <input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search challenge..."
+              style={input()}
+            />
+            <button onClick={() => setSearch(searchInput)} style={btn()}>
+              Search
+            </button>
+            <button onClick={() => setViewMode((v) => (v === "cards" ? "editor" : "cards"))} style={btn()}>
+              {viewMode === "cards" ? "Switch to Full Editor" : "Switch to Card View"}
+            </button>
           </div>
 
           <div style={{ display: "grid", gap: 12 }}>
@@ -551,7 +635,67 @@ export default function ChallengesAdminPage() {
                 <option key={c} value={c} />
               ))}
             </datalist>
-            {filtered.map((row, idx) => (
+            {viewMode === "cards" ? (
+              <div style={challengeCardGrid()}>
+                {filtered.map((row, idx) => (
+                  <div key={row.id} style={challengeCompactCard(idx % 2 === 1)}>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <input value={row.name} onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, name: e.target.value } : r)))} style={input()} />
+                      <div style={hint()}>{row.id}</div>
+                    </div>
+                    <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
+                      <select value={row.tier ?? "bronze"} onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, tier: e.target.value } : r)))} style={input()}>
+                        {tiers.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                      <select value={row.challenge_type ?? "task"} onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, challenge_type: e.target.value } : r)))} style={input()}>
+                        {challengeTypes.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <input
+                      list="challenge-category-list"
+                      value={row.category ?? ""}
+                      onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, category: e.target.value } : r)))}
+                      placeholder="Category"
+                      style={input()}
+                    />
+                    <input
+                      type="number"
+                      value={row.points_awarded ?? tierDefaults[String(row.tier ?? "bronze")] ?? ""}
+                      onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, points_awarded: Number(e.target.value) } : r)))}
+                      placeholder="Points awarded"
+                      style={input()}
+                    />
+                    <button onClick={() => openLimitEditor(row)} style={btn()}>
+                      Edit Limits + Quota
+                    </button>
+                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, opacity: 0.85 }}>
+                      <input
+                        type="checkbox"
+                        checked={row.enabled !== false}
+                        onChange={(e) => setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, enabled: e.target.checked } : r)))}
+                      />
+                      Enabled
+                    </label>
+                    <div style={challengeSummary()}>
+                      {buildChallengeSummary(row)}
+                    </div>
+                    <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
+                      <button onClick={() => saveRow(row)} style={btn()} disabled={!!saving[row.id]}>
+                        {saving[row.id] ? "Saving..." : "Save"}
+                      </button>
+                      <button onClick={() => deleteRow(row)} style={dangerBtn()} disabled={!!deleting[row.id]}>
+                        {deleting[row.id] ? "Deleting..." : "Delete"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              filtered.map((row, idx) => (
               <div key={row.id} style={smallCard(idx % 2 === 1)}>
                 <div style={{ display: "grid", gap: 10 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
@@ -691,16 +835,90 @@ export default function ChallengesAdminPage() {
                     <button onClick={() => saveRow(row)} style={btn()} disabled={!!saving[row.id]}>
                       {saving[row.id] ? "Saving..." : "Save"}
                     </button>
+                    <button onClick={() => deleteRow(row)} style={dangerBtn()} disabled={!!deleting[row.id]}>
+                      {deleting[row.id] ? "Deleting..." : "Delete"}
+                    </button>
                   </div>
                   <div style={challengeSummary()}>
                     {buildChallengeSummary(row)}
                   </div>
                 </div>
               </div>
-            ))}
+            ))
+            )}
           </div>
         </>
       )}
+
+      {limitEditor ? (
+        <div style={overlayBackdrop()}>
+          <div style={overlayCard()}>
+            <div style={{ fontSize: 18, fontWeight: 1000 }}>Edit Limits + Quota</div>
+            <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
+              <label style={label()}>
+                Limit mode
+                <select
+                  value={limitEditor.limitMode}
+                  onChange={(e) => setLimitEditor((prev) => (prev ? { ...prev, limitMode: e.target.value } : prev))}
+                  style={input()}
+                >
+                  {limitModes.map((m) => (
+                    <option key={m} value={m}>{m === "yearly" ? "annual" : m}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={label()}>
+                Limit count
+                <input
+                  type="number"
+                  value={limitEditor.limitCount}
+                  onChange={(e) => setLimitEditor((prev) => (prev ? { ...prev, limitCount: e.target.value } : prev))}
+                  style={input()}
+                />
+              </label>
+            </div>
+            <label style={label()}>
+              Time frame (days)
+              <input
+                type="number"
+                value={limitEditor.limitWindowDays}
+                onChange={(e) => setLimitEditor((prev) => (prev ? { ...prev, limitWindowDays: e.target.value } : prev))}
+                placeholder="Only used for custom window"
+                style={input()}
+              />
+            </label>
+            <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr" }}>
+              <label style={label()}>
+                Quota type
+                <input
+                  value={limitEditor.quotaType}
+                  onChange={(e) => setLimitEditor((prev) => (prev ? { ...prev, quotaType: e.target.value } : prev))}
+                  placeholder={limitEditor.challengeType === "quota" ? "Required for quota challenges" : "Optional"}
+                  style={input()}
+                />
+              </label>
+              <label style={label()}>
+                Quota target
+                <input
+                  type="number"
+                  value={limitEditor.quotaTarget}
+                  onChange={(e) => setLimitEditor((prev) => (prev ? { ...prev, quotaTarget: e.target.value } : prev))}
+                  placeholder={limitEditor.challengeType === "quota" ? "Required for quota challenges" : "Optional"}
+                  style={input()}
+                />
+              </label>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button onClick={() => setLimitEditor(null)} style={ghostBtn()}>
+                Cancel
+              </button>
+              <button onClick={applyLimitEditor} style={btn()}>
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -726,6 +944,50 @@ function smallCard(alt = false): React.CSSProperties {
     display: "grid",
     gap: 10,
     boxShadow: "0 12px 28px rgba(0,0,0,0.25)",
+  };
+}
+
+function challengeCardGrid(): React.CSSProperties {
+  return {
+    display: "grid",
+    gap: 12,
+    gridTemplateColumns: "repeat(4, minmax(220px, 1fr))",
+  };
+}
+
+function challengeCompactCard(alt = false): React.CSSProperties {
+  return {
+    borderRadius: 14,
+    padding: 12,
+    border: alt ? "1px solid rgba(56,189,248,0.25)" : "1px solid rgba(255,255,255,0.12)",
+    background: alt ? "rgba(8,18,35,0.75)" : "rgba(15,23,42,0.55)",
+    display: "grid",
+    gap: 10,
+    boxShadow: "0 12px 28px rgba(0,0,0,0.25)",
+    minHeight: 260,
+    alignContent: "start",
+  };
+}
+
+function chipWrap(): React.CSSProperties {
+  return {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    alignItems: "center",
+  };
+}
+
+function chipBtn(active = false): React.CSSProperties {
+  return {
+    padding: "7px 11px",
+    borderRadius: 999,
+    border: active ? "1px solid rgba(45,212,191,0.7)" : "1px solid rgba(255,255,255,0.22)",
+    background: active ? "rgba(13,148,136,0.28)" : "rgba(255,255,255,0.06)",
+    color: "white",
+    fontWeight: 900,
+    fontSize: 12,
+    cursor: "pointer",
   };
 }
 
@@ -794,6 +1056,55 @@ function btn(): React.CSSProperties {
     color: "white",
     fontWeight: 900,
     cursor: "pointer",
+  };
+}
+
+function dangerBtn(): React.CSSProperties {
+  return {
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(239,68,68,0.35)",
+    background: "rgba(239,68,68,0.2)",
+    color: "white",
+    fontWeight: 900,
+    cursor: "pointer",
+  };
+}
+
+function ghostBtn(): React.CSSProperties {
+  return {
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.24)",
+    background: "rgba(255,255,255,0.06)",
+    color: "white",
+    fontWeight: 900,
+    cursor: "pointer",
+  };
+}
+
+function overlayBackdrop(): React.CSSProperties {
+  return {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(2,6,23,0.74)",
+    display: "grid",
+    placeItems: "center",
+    zIndex: 1000,
+    padding: 16,
+  };
+}
+
+function overlayCard(): React.CSSProperties {
+  return {
+    width: "min(560px, 100%)",
+    borderRadius: 16,
+    padding: 14,
+    border: "1px solid rgba(255,255,255,0.16)",
+    background: "rgba(15,23,42,0.98)",
+    boxShadow: "0 24px 50px rgba(0,0,0,0.45)",
+    display: "grid",
+    gap: 10,
   };
 }
 

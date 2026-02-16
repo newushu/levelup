@@ -11,6 +11,7 @@ type StudentRow = {
   level?: number | null;
   points_total?: number | null;
   points_balance?: number | null;
+  lifetime_points?: number | null;
   avatar_storage_path?: string | null;
   avatar_zoom_pct?: number | null;
   is_competition_team?: boolean | null;
@@ -141,6 +142,10 @@ type PendingUnlock = {
   item_name: string;
   unlock_points: number;
 };
+type LevelThresholdRow = {
+  level: number;
+  min_lifetime_points: number;
+};
 const medalTierOrder = ["bronze", "silver", "gold", "platinum", "diamond", "master"];
 
 async function safeJson(res: Response) {
@@ -225,6 +230,7 @@ export default function StudentInfoPage() {
   const [redeemBreakdownOpen, setRedeemBreakdownOpen] = useState(false);
   const [redeemingDaily, setRedeemingDaily] = useState(false);
   const [pendingUnlock, setPendingUnlock] = useState<PendingUnlock | null>(null);
+  const [levelThresholds, setLevelThresholds] = useState<LevelThresholdRow[]>([]);
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
@@ -281,10 +287,11 @@ export default function StudentInfoPage() {
 
   useEffect(() => {
     (async () => {
-      const [avatarsRes, effectsRes, bordersRes] = await Promise.all([
+      const [avatarsRes, effectsRes, bordersRes, levelsRes] = await Promise.all([
         fetch("/api/avatars/list", { cache: "no-store" }),
         fetch("/api/avatar-effects/list", { cache: "no-store" }),
         fetch("/api/corner-borders", { cache: "no-store" }),
+        fetch("/api/avatar-levels", { cache: "no-store" }),
       ]);
       const avatarsJson = await avatarsRes.json().catch(() => ({}));
       if (avatarsRes.ok) setAvatarCatalog((avatarsJson?.avatars ?? []) as any[]);
@@ -292,6 +299,19 @@ export default function StudentInfoPage() {
       if (effectsRes.ok) setEffectCatalog((effectsJson?.effects ?? []) as any[]);
       const bordersJson = await bordersRes.json().catch(() => ({}));
       if (bordersRes.ok) setCornerBorders((bordersJson?.borders ?? []) as any[]);
+      const levelsJson = await levelsRes.json().catch(() => ({}));
+      if (levelsRes.ok) {
+        const rows = (levelsJson?.levels ?? []) as Array<{ level?: number; min_lifetime_points?: number }>;
+        setLevelThresholds(
+          rows
+            .map((row) => ({
+              level: Number(row.level ?? 1),
+              min_lifetime_points: Number(row.min_lifetime_points ?? 0),
+            }))
+            .filter((row) => Number.isFinite(row.level))
+            .sort((a, b) => a.level - b.level)
+        );
+      }
     })();
   }, []);
 
@@ -495,6 +515,25 @@ export default function StudentInfoPage() {
   const avatarZoomPct = Math.max(50, Math.min(200, Number(student?.avatar_zoom_pct ?? 100)));
   const pointsDisplay = Number(student?.points_balance ?? student?.points_total ?? 0);
   const levelDisplay = Number(student?.level ?? 1);
+  const lifetimePoints = Number(student?.lifetime_points ?? student?.points_total ?? 0);
+  const thresholdMap = useMemo(() => {
+    const map = new Map<number, number>();
+    levelThresholds.forEach((row) => {
+      map.set(Number(row.level), Number(row.min_lifetime_points ?? 0));
+    });
+    return map;
+  }, [levelThresholds]);
+  const currentLevelMin = thresholdMap.get(levelDisplay) ?? 0;
+  const nextThresholdRow = useMemo(
+    () => levelThresholds.find((row) => Number(row.level) > levelDisplay) ?? null,
+    [levelThresholds, levelDisplay]
+  );
+  const nextLevelMin = nextThresholdRow ? Number(nextThresholdRow.min_lifetime_points ?? 0) : null;
+  const nextLevelNumber = nextThresholdRow ? Number(nextThresholdRow.level ?? levelDisplay + 1) : levelDisplay + 1;
+  const nextLevelPointsLeft = nextLevelMin != null ? Math.max(0, nextLevelMin - lifetimePoints) : 0;
+  const progressSpan = nextLevelMin != null ? Math.max(1, nextLevelMin - currentLevelMin) : 1;
+  const levelProgressValue =
+    nextLevelMin != null ? Math.min(1, Math.max(0, (lifetimePoints - currentLevelMin) / progressSpan)) : 1;
   const initials = (student?.name || "").trim().slice(0, 2).toUpperCase() || "LA";
   const earnedBadgeList = earnedBadges.filter((b) => !b.rescinded_at);
   const earnedSet = useMemo(() => new Set(earnedBadgeList.map((b) => String(b.badge_id))), [earnedBadgeList]);
@@ -755,6 +794,14 @@ export default function StudentInfoPage() {
     });
   }, [cornerBorders, avatarPickerFilter, avatarPickerSort, levelDisplay, customUnlockSet, criteriaByItem, fulfilledCriteriaKeys]);
 
+  const nextRedeemLabel = useMemo(() => {
+    const raw = String(dailyRedeem?.next_redeem_at ?? "").trim();
+    if (!raw) return "—";
+    const d = new Date(raw);
+    if (!Number.isFinite(d.getTime())) return "—";
+    return d.toLocaleString();
+  }, [dailyRedeem?.next_redeem_at]);
+
   const previewAvatarMeta = useMemo(
     () => (avatarPickerTab === "avatar" && pickerPreviewKey ? avatarCatalog.find((a) => String(a.id) === pickerPreviewKey) ?? null : selectedAvatarMeta),
     [avatarPickerTab, pickerPreviewKey, avatarCatalog, selectedAvatarMeta]
@@ -994,6 +1041,18 @@ export default function StudentInfoPage() {
                     fallback={<div className="left-card__avatar-fallback">{initials}</div>}
                   />
                 </div>
+                <div className="level-progress">
+                  <div className="level-progress__label">Next Level Progress</div>
+                  <div className="level-progress__bar">
+                    <span className="level-progress__fill" style={{ width: `${Math.round(levelProgressValue * 100)}%` }} />
+                  </div>
+                  <div className="level-progress__meta">
+                    <span>
+                      {nextLevelMin != null ? `${nextLevelPointsLeft} pts left to Level ${nextLevelNumber}` : "Max level reached"}
+                    </span>
+                    <span>{nextLevelMin != null ? `${lifetimePoints} / ${nextLevelMin}` : lifetimePoints}</span>
+                  </div>
+                </div>
                 <button
                   type="button"
                   className="redeem-detail-btn"
@@ -1049,6 +1108,8 @@ export default function StudentInfoPage() {
                     <div className="redeem-card__title">Daily Points to Redeem</div>
                     <div className="redeem-card__pts">+{Math.round(Number(dailyRedeem?.available_points ?? 0))}</div>
                   </div>
+                  <div className="redeem-next">Points so far: +{Math.round(Number(dailyRedeem?.available_points ?? 0))}</div>
+                  <div className="redeem-next">Next redeem: {nextRedeemLabel}</div>
                   <div className="redeem-card__chips">
                     {(dailyRedeem?.contribution_chips ?? []).map((chip) => (
                       <span key={chip} className="redeem-chip">{chip}</span>
@@ -1092,9 +1153,6 @@ export default function StudentInfoPage() {
                         <div className="redeem-breakdown__value">+{Math.round(Number(dailyRedeem?.available_points ?? 0))}</div>
                       </div>
                     </div>
-                  ) : null}
-                  {!dailyRedeem?.can_redeem && dailyRedeem?.next_redeem_at ? (
-                    <div className="redeem-next">Next: {new Date(dailyRedeem.next_redeem_at).toLocaleString()}</div>
                   ) : null}
                 </div>
               </div>
@@ -1709,6 +1767,44 @@ function pageStyles() {
       font-weight: 900;
       font-size: 36px;
       background: rgba(30,41,59,0.8);
+    }
+
+    .level-progress {
+      width: 100%;
+      display: grid;
+      gap: 6px;
+      margin-top: 2px;
+    }
+    .level-progress__label {
+      font-size: 12px;
+      font-weight: 900;
+      opacity: 0.82;
+      text-align: left;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .level-progress__bar {
+      width: 100%;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(148,163,184,0.22);
+      overflow: hidden;
+      border: 1px solid rgba(148,163,184,0.25);
+    }
+    .level-progress__fill {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, rgba(45,212,191,0.95), rgba(56,189,248,0.95));
+      transition: width 220ms ease;
+    }
+    .level-progress__meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      opacity: 0.82;
+      text-align: left;
     }
 
     .modifier-grid {

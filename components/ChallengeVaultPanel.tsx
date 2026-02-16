@@ -28,6 +28,7 @@ type Props = {
   studentId?: string | null;
   title?: string;
   requireStudent?: boolean;
+  allowManage?: boolean;
 };
 
 async function safeJson(res: Response) {
@@ -106,13 +107,14 @@ function formatUnlockMessage(msLeft: number, availableAt: Date) {
   };
 }
 
-export default function ChallengeVaultPanel({ studentId, title = "Challenge Vault" }: Props) {
+export default function ChallengeVaultPanel({ studentId, title = "Challenge Vault", allowManage = false }: Props) {
   const [challenges, setChallenges] = useState<ChallengeRow[]>([]);
   const [medals, setMedals] = useState<Record<string, string | null>>({});
   const [studentChallenges, setStudentChallenges] = useState<StudentChallenge[]>([]);
   const [activeStudentId, setActiveStudentId] = useState<string>("");
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterTier, setFilterTier] = useState("all");
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [msg, setMsg] = useState("");
   const [students, setStudents] = useState<Array<{ id: string; name: string; level?: number | null; points_total?: number | null; points_balance?: number | null; avatar_storage_path?: string | null; avatar_zoom_pct?: number | null }>>([]);
@@ -313,6 +315,27 @@ export default function ChallengeVaultPanel({ studentId, title = "Challenge Vaul
     if (points) playGlobalSfx("points_add");
   }
 
+  async function deleteChallenge(challengeId: string, challengeName: string) {
+    if (!allowManage) return;
+    const yes = window.confirm(`Delete challenge "${challengeName}"?\n\nThis also removes related student completion rows.`);
+    if (!yes) return;
+    const res = await fetch("/api/admin/challenges/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: challengeId }),
+    });
+    const sj = await safeJson(res);
+    if (!sj.ok) return setMsg(String(sj.json?.error ?? "Failed to delete challenge"));
+    setChallenges((prev) => prev.filter((c) => String(c.id) !== String(challengeId)));
+    setStudentChallenges((prev) => prev.filter((r) => String(r.challenge_id) !== String(challengeId)));
+    setCompletionMap((prev) => {
+      const next = { ...prev };
+      delete next[String(challengeId)];
+      return next;
+    });
+    setMsg("Challenge deleted.");
+  }
+
   return (
     <div className="cvault">
       <style>{styles()}</style>
@@ -359,12 +382,25 @@ export default function ChallengeVaultPanel({ studentId, title = "Challenge Vaul
               ))}
             </datalist>
           </div>
-          <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}>
-            <option value="all">All categories</option>
+          <div className="cvault__category-chips">
+            <button
+              type="button"
+              className={`cvault__category-chip ${filterCategory === "all" ? "is-active" : ""}`}
+              onClick={() => setFilterCategory("all")}
+            >
+              All
+            </button>
             {categories.map((c) => (
-              <option key={c} value={c}>{c}</option>
+              <button
+                key={c}
+                type="button"
+                className={`cvault__category-chip ${filterCategory === c ? "is-active" : ""}`}
+                onClick={() => setFilterCategory(c)}
+              >
+                {c}
+              </button>
             ))}
-          </select>
+          </div>
           <select value={filterTier} onChange={(e) => setFilterTier(e.target.value)}>
             <option value="all">All tiers</option>
             {tiers.map((t) => (
@@ -372,10 +408,17 @@ export default function ChallengeVaultPanel({ studentId, title = "Challenge Vaul
             ))}
           </select>
           <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Search challenge name..."
           />
+          <button
+            type="button"
+            className="cvault__search-btn"
+            onClick={() => setSearch(searchInput)}
+          >
+            Search
+          </button>
         </div>
       </div>
 
@@ -463,6 +506,15 @@ export default function ChallengeVaultPanel({ studentId, title = "Challenge Vaul
                           >
                             Complete
                           </button>
+                          {allowManage ? (
+                            <button
+                              type="button"
+                              className="cvault__delete-btn"
+                              onClick={() => deleteChallenge(c.id, c.name)}
+                            >
+                              Delete
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -553,6 +605,37 @@ function styles() {
       color: white;
       font-weight: 800;
     }
+    .cvault__category-chips {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      max-width: min(720px, 100%);
+    }
+    .cvault__category-chip {
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,0.32);
+      background: rgba(15,23,42,0.7);
+      color: white;
+      font-size: 12px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+    .cvault__category-chip.is-active {
+      border-color: rgba(45,212,191,0.7);
+      background: rgba(13,148,136,0.28);
+      box-shadow: 0 0 0 1px rgba(45,212,191,0.28);
+    }
+    .cvault__search-btn {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(56,189,248,0.42);
+      background: rgba(56,189,248,0.18);
+      color: white;
+      font-weight: 900;
+      cursor: pointer;
+    }
     .cvault__msg {
       padding: 10px 12px;
       border-radius: 12px;
@@ -621,7 +704,7 @@ function styles() {
       gap: 10px;
     }
     .cvault__list--cards {
-      grid-template-columns: repeat(3, minmax(320px, 1fr));
+      grid-template-columns: repeat(4, minmax(220px, 1fr));
     }
     .cvault__row {
       display: grid;
@@ -821,6 +904,18 @@ function styles() {
       font-weight: 900;
       cursor: pointer;
     }
+    .cvault__delete-btn {
+      padding: 8px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(248,113,113,0.42);
+      background: rgba(248,113,113,0.16);
+      color: #ffe4e6;
+      font-weight: 900;
+      cursor: pointer;
+    }
+    .cvault__delete-btn:hover {
+      background: rgba(248,113,113,0.24);
+    }
     .cvault__action button:disabled {
       opacity: 0.6;
       cursor: not-allowed;
@@ -836,7 +931,7 @@ function styles() {
         grid-template-columns: 1fr;
       }
       .cvault__list--cards {
-        grid-template-columns: repeat(2, minmax(260px, 1fr));
+        grid-template-columns: repeat(2, minmax(240px, 1fr));
       }
     }
     @media (max-width: 760px) {

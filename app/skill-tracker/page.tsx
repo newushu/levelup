@@ -4264,9 +4264,12 @@ export default function SkillTrackerPage() {
                     const lifetimeRate = lifetimeAttempts ? Math.round((lifetimeSuccesses / lifetimeAttempts) * 100) : 0;
                     const pointsPerRepBase = Math.max(1, Number(t.points_per_rep_base ?? t.points_per_rep ?? 2));
                     const pointsPerRepEffective = Math.max(1, Number(t.points_per_rep_effective ?? t.points_per_rep ?? pointsPerRepBase));
+                    const skillPulseMultiplier = Math.max(1, Number(t.skill_pulse_multiplier ?? 1));
                     const hasPerRepBoost = pointsPerRepEffective !== pointsPerRepBase;
                     const perfectBonus = done && successesCount === target ? successesCount : 0;
-                    const earnedPoints = done && pointsPerRepEffective > 0 ? successesCount * pointsPerRepEffective + perfectBonus : 0;
+                    const earnedBasePoints = done && pointsPerRepBase > 0 ? successesCount * pointsPerRepBase + perfectBonus : 0;
+                    const earnedPoints = done ? Math.max(0, Math.round(earnedBasePoints * skillPulseMultiplier)) : 0;
+                    const earnedModifierBonus = Math.max(0, earnedPoints - earnedBasePoints);
                     const viewOnly = isSkillUserSource(t) && ["admin", "coach"].includes(viewerRole);
                     const canEdit = !viewOnly;
                     const pendingCount = pendingLogCounts.current.get(t.id) ?? 0;
@@ -4363,7 +4366,15 @@ export default function SkillTrackerPage() {
                         {done ? (
                           <div style={pointsAwardBox()} className="points-award-sparkle">
                             <span style={{ fontSize: 14, fontWeight: 1000, letterSpacing: 0.4 }}>🏆 Earned</span>
-                            <span style={{ fontSize: 24, fontWeight: 1000 }}>+{earnedPoints} pts</span>
+                            <span style={{ fontSize: 24, fontWeight: 1000 }}>
+                              {earnedModifierBonus > 0 ? <s style={{ opacity: 0.8, marginRight: 8 }}>+{earnedBasePoints} pts</s> : null}
+                              +{earnedPoints} pts
+                            </span>
+                            {earnedModifierBonus > 0 ? (
+                              <span style={{ fontSize: 11, fontWeight: 1000, opacity: 0.9 }}>
+                                Avatar modifier applied +{earnedModifierBonus}
+                              </span>
+                            ) : null}
                           </div>
                         ) : null}
                         <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.85 }}>Skill history</div>
@@ -4525,7 +4536,12 @@ export default function SkillTrackerPage() {
           const lifetimeRate = lifetimeAttempts ? Math.round((lifetimeSuccesses / lifetimeAttempts) * 100) : 0;
           const pointsPerRepBase = Math.max(1, Number(t.points_per_rep_base ?? t.points_per_rep ?? 2));
           const pointsPerRepEffective = Math.max(1, Number(t.points_per_rep_effective ?? t.points_per_rep ?? pointsPerRepBase));
+          const skillPulseMultiplier = Math.max(1, Number(t.skill_pulse_multiplier ?? 1));
           const hasPerRepBoost = pointsPerRepEffective !== pointsPerRepBase;
+          const perfectBonus = done && successesCount === target ? successesCount : 0;
+          const earnedBasePoints = done && pointsPerRepBase > 0 ? successesCount * pointsPerRepBase + perfectBonus : 0;
+          const earnedEffectivePoints = done ? Math.max(0, Math.round(earnedBasePoints * skillPulseMultiplier)) : 0;
+          const earnedModifierBonus = Math.max(0, earnedEffectivePoints - earnedBasePoints);
           return (
             <div
               key={t.id}
@@ -4657,7 +4673,15 @@ export default function SkillTrackerPage() {
                 {done ? (
                   <div style={pointsAwardBox()} className="points-award-sparkle">
                     <span style={{ fontSize: 16, fontWeight: 1000, letterSpacing: 0.4 }}>🏆 Earned</span>
-                    <span style={{ fontSize: 28, fontWeight: 1000 }}>{pointsEarnedLabel(t)}</span>
+                    <span style={{ fontSize: 28, fontWeight: 1000 }}>
+                      {earnedModifierBonus > 0 ? <s style={{ opacity: 0.8, marginRight: 8 }}>+{earnedBasePoints} pts</s> : null}
+                      +{earnedEffectivePoints} pts
+                    </span>
+                    {earnedModifierBonus > 0 ? (
+                      <span style={{ fontSize: 12, fontWeight: 1000, opacity: 0.9 }}>
+                        Avatar modifier applied +{earnedModifierBonus}
+                      </span>
+                    ) : null}
                   </div>
                 ) : null}
                 <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap" }}>
@@ -7435,9 +7459,12 @@ function pointsEarnedLabel(t: TrackerRow): string {
   const attempts = Number(t.attempts ?? 0);
   const successes = Number(t.successes ?? 0);
   const target = Number(t.repetitions_target ?? 0);
-  if (!target || attempts < target) return "+0 points";
-  const perSuccess = successes === target ? 3 : 2;
-  const points = successes * perSuccess;
+  if (!target || attempts < target) return "+0 pts";
+  const pointsPerRepBase = Math.max(1, Number(t.points_per_rep_base ?? t.points_per_rep ?? 2));
+  const multiplier = Math.max(1, Number(t.skill_pulse_multiplier ?? 1));
+  const perfectBonus = successes === target ? successes : 0;
+  const basePoints = successes * pointsPerRepBase + perfectBonus;
+  const points = Math.max(0, Math.round(basePoints * multiplier));
   return `+${points} pts`;
 }
 

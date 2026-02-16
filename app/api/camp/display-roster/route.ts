@@ -3,6 +3,25 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { computeDailyRedeemStatus, getLeaderboardBoardMapForDate, getSnapshotCycleDateKey } from "@/lib/dailyRedeem";
 
+const MAX_LEVEL = 99;
+
+function computeThresholds(baseJump: number, difficultyPct: number) {
+  const levels: Array<{ level: number; min: number }> = [];
+  let total = 0;
+  for (let level = 1; level <= MAX_LEVEL; level += 1) {
+    if (level === 1) {
+      levels.push({ level, min: 0 });
+      continue;
+    }
+    const exponent = level - 1;
+    const factor = Math.pow(1 + difficultyPct / 100, exponent);
+    total += baseJump * factor;
+    const rounded = Math.round(total / 10) * 10;
+    levels.push({ level, min: Math.max(0, Math.floor(rounded)) });
+  }
+  return levels;
+}
+
 type RoleAuth = { ok: boolean; roleList: string[]; status?: number; error?: string };
 
 async function getRoleList(): Promise<RoleAuth> {
@@ -102,24 +121,50 @@ async function loadStudentsByIds(admin: ReturnType<typeof supabaseAdmin>, ids: s
       students = (basicSelect.data ?? []) as any[];
     }
   }
-  const thresholdsRes = await admin
-    .from("avatar_level_thresholds")
-    .select("level,min_lifetime_points")
-    .order("level", { ascending: true });
-  const thresholds = (thresholdsRes.error ? [] : (thresholdsRes.data ?? []))
+  const [thresholdsRes, levelSettingsRes] = await Promise.all([
+    admin
+      .from("avatar_level_thresholds")
+      .select("level,min_lifetime_points")
+      .order("level", { ascending: true }),
+    admin
+      .from("avatar_level_settings")
+      .select("base_jump,difficulty_pct")
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  const dbThresholds = (thresholdsRes.error ? [] : (thresholdsRes.data ?? []))
     .map((row: any) => ({ level: Number(row.level), min: Number(row.min_lifetime_points ?? 0) }))
     .filter((row: any) => Number.isFinite(row.level))
     .sort((a: any, b: any) => a.level - b.level);
+  const baseJump = Number(levelSettingsRes.data?.base_jump ?? 50);
+  const difficultyPct = Number(levelSettingsRes.data?.difficulty_pct ?? 8);
+  const thresholds = dbThresholds.length ? dbThresholds : computeThresholds(baseJump, difficultyPct);
+
+  const lifetimeById = new Map<string, number>();
+  if (ids.length) {
+    const { data: lifetimeRows } = await admin
+      .from("students")
+      .select("id,lifetime_points")
+      .in("id", ids);
+    (lifetimeRows ?? []).forEach((row: any) => {
+      const sid = String(row.id ?? "");
+      const life = Number(row.lifetime_points);
+      if (!sid || !Number.isFinite(life)) return;
+      lifetimeById.set(sid, life);
+    });
+  }
 
   (students ?? []).forEach((s: any) => {
     if (thresholds.length) {
-      // Level should be computed from lifetime points, not spendable points_total.
-      const points = Number(s?.lifetime_points ?? 0);
-      let computedLevel = Number(s?.level ?? 1);
-      thresholds.forEach((lvl) => {
-        if (points >= lvl.min) computedLevel = lvl.level;
-      });
-      s.level = computedLevel;
+      const sid = String(s?.id ?? "");
+      const lifetimePoints = lifetimeById.get(sid);
+      if (Number.isFinite(lifetimePoints)) {
+        let computedLevel = Number(s?.level ?? 1);
+        thresholds.forEach((lvl) => {
+          if (Number(lifetimePoints) >= Number(lvl.min)) computedLevel = lvl.level;
+        });
+        s.level = computedLevel;
+      }
     }
     studentsById.set(String(s.id), s);
   });
