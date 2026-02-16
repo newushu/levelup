@@ -2707,25 +2707,6 @@ function pageStyles() {
       }
     }
 
-    @media (max-width: 1400px), (max-height: 980px) {
-      .student-info__split {
-        grid-template-columns: minmax(0, 1fr);
-      }
-      .left-card {
-        min-height: 0;
-      }
-      .left-card__avatar-fallback {
-        width: 180px;
-        height: 180px;
-      }
-      .modifier-tile {
-        min-height: 76px;
-      }
-      .stats-row {
-        grid-template-columns: minmax(0, 1fr);
-      }
-    }
-
     @media (max-width: 1480px), (max-height: 920px) {
       .student-info {
         padding: 24px 26px 44px 260px;
