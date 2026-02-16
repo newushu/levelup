@@ -25,7 +25,7 @@ export async function getStudentCriteriaState(admin: AnyAdmin, studentId: string
 
   const fulfilledKeys = new Set<string>();
   for (const row of fulfilledRows as Array<{ criteria_key?: string | null; fulfilled?: boolean | null }>) {
-    if (row?.fulfilled !== false) {
+    if (row?.fulfilled === true) {
       const key = String(row?.criteria_key ?? "").trim();
       if (key) fulfilledKeys.add(key);
     }

@@ -709,6 +709,9 @@ export default function StudentInfoPage() {
       })
       .filter((row) => matchesPickerFilter(row.state, row.unlockLevel, Boolean(row.item.limited_event_only)));
     return rows.sort((a, b) => {
+      const aLimited = Boolean(a.item.limited_event_only);
+      const bLimited = Boolean(b.item.limited_event_only);
+      if (aLimited !== bLimited) return aLimited ? -1 : 1;
       if (avatarPickerSort === "name") return String(a.item.name ?? "").localeCompare(String(b.item.name ?? ""));
       if (avatarPickerSort === "daily_points") return Number(b.item.daily_free_points ?? 0) - Number(a.item.daily_free_points ?? 0);
       if (avatarPickerSort === "mvp_bonus") return Number(b.item.mvp_bonus_pct ?? 0) - Number(a.item.mvp_bonus_pct ?? 0);
@@ -1615,7 +1618,7 @@ function pageStyles() {
 
     .student-info__split {
       display: grid;
-      grid-template-columns: minmax(0, 1.05fr) minmax(0, 2.95fr);
+      grid-template-columns: minmax(320px, 1.05fr) minmax(0, 2.95fr);
       gap: 22px;
       align-items: start;
     }
@@ -1623,6 +1626,8 @@ function pageStyles() {
     .student-info__left {
       display: grid;
       gap: 16px;
+      min-width: 0;
+      max-width: 100%;
     }
 
     .left-card {
@@ -1636,6 +1641,8 @@ function pageStyles() {
       min-height: 520px;
       justify-items: center;
       text-align: center;
+      overflow: hidden;
+      max-width: 100%;
     }
 
     .left-card__label {
@@ -1667,6 +1674,7 @@ function pageStyles() {
       border-radius: 28px;
       background: radial-gradient(circle at top, rgba(56,189,248,0.15), rgba(15,23,42,0.0));
       box-shadow: 0 0 30px rgba(56,189,248,0.35);
+      max-width: 100%;
     }
 
     .left-card__avatar-wrap::before {
@@ -2073,6 +2081,7 @@ function pageStyles() {
     .student-info__right {
       display: grid;
       gap: 16px;
+      min-width: 0;
     }
 
     .stats-card {
@@ -2103,11 +2112,13 @@ function pageStyles() {
       grid-template-columns: minmax(0, 1fr) 220px;
       gap: 16px;
       align-items: start;
+      min-width: 0;
     }
 
     .stats-stack {
       display: grid;
       gap: 16px;
+      min-width: 0;
     }
 
     .stats-cell {
@@ -2186,6 +2197,8 @@ function pageStyles() {
       border: 1px solid rgba(148,163,184,0.18);
       display: grid;
       gap: 12px;
+      min-width: 0;
+      overflow: hidden;
     }
 
     .block-title {
@@ -2243,6 +2256,44 @@ function pageStyles() {
       max-height: 288px;
       overflow-y: auto;
       padding-right: 4px;
+      grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+      align-items: stretch;
+    }
+
+    .badge-row--prestige .badge-tile {
+      min-height: 108px;
+      padding: 8px;
+      align-content: start;
+    }
+
+    .badge-row--prestige .badge-tile__img {
+      width: clamp(52px, 7vw, 78px);
+      height: clamp(52px, 7vw, 78px);
+    }
+
+    .badge-row--prestige .badge-title {
+      font-size: 10px;
+      line-height: 1.15;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .badge-row--prestige .badge-progress__text {
+      font-size: 10px;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .badge-row--prestige .badge-progress__detail {
+      font-size: 9px;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .badge-tile--earned::after {
@@ -2653,6 +2704,25 @@ function pageStyles() {
       }
       .avatar-picker-preview-panel {
         position: static;
+      }
+    }
+
+    @media (max-width: 1400px), (max-height: 980px) {
+      .student-info__split {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .left-card {
+        min-height: 0;
+      }
+      .left-card__avatar-fallback {
+        width: 180px;
+        height: 180px;
+      }
+      .modifier-tile {
+        min-height: 76px;
+      }
+      .stats-row {
+        grid-template-columns: minmax(0, 1fr);
       }
     }
 

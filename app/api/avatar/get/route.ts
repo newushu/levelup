@@ -95,16 +95,32 @@ export async function POST(req: Request) {
   }
   if (aErr) return NextResponse.json({ ok: false, error: aErr.message }, { status: 500 });
 
-  const enabledAvatars = (avatars ?? []).filter((a: any) => a.enabled !== false);
-  const eligible = enabledAvatars.filter((a: any) => Number(a.unlock_level ?? 1) <= effectiveLevel);
-  const fallback = eligible.find((a: any) => !a.is_secondary) ?? eligible[0] ?? enabledAvatars[0] ?? null;
-
   const criteriaState = await getStudentCriteriaState(admin as any, student_id);
   const { data: customUnlocks } = await admin
     .from("student_custom_unlocks")
     .select("item_type,item_key")
     .eq("student_id", student_id);
   const customUnlockSet = new Set((customUnlocks ?? []).map((row: any) => `${String(row.item_type)}:${String(row.item_key)}`));
+
+  const enabledAvatars = (avatars ?? []).filter((a: any) => a.enabled !== false);
+  const accessibleAvatars = enabledAvatars.filter((a: any) => {
+    const id = String(a?.id ?? "").trim();
+    if (!id) return false;
+    const unlockLevel = Math.max(1, Number(a?.unlock_level ?? 1));
+    const unlockPoints = Math.max(0, Number(a?.unlock_points ?? 0));
+    const limitedOnly = a?.limited_event_only === true;
+    const levelOk = effectiveLevel >= unlockLevel;
+    const customUnlock = customUnlockSet.has(`avatar:${id}`);
+    const criteriaMatch = matchItemCriteria("avatar", id, criteriaState.fulfilledKeys, criteriaState.requirementMap);
+    const criteriaOk = criteriaMatch.hasRequirements && criteriaMatch.matched;
+    const unlockedByDefault = !limitedOnly && levelOk && unlockPoints <= 0;
+    const limitedAllowed = !limitedOnly || criteriaOk;
+    return limitedAllowed && (unlockedByDefault || customUnlock || criteriaOk);
+  });
+  const fallback =
+    accessibleAvatars.find((a: any) => !a.is_secondary) ??
+    accessibleAvatars[0] ??
+    null;
 
   const selectedId = String(settings?.avatar_id ?? "").trim();
   const selectedRow = selectedId ? enabledAvatars.find((a: any) => String(a.id) === selectedId) : null;
@@ -169,6 +185,34 @@ export async function POST(req: Request) {
     .select(
       "student_id,avatar_id,bg_color,border_color,glow_color,pattern,particle_style,aura_style,planet_style,corner_border_key,card_plate_key,avatar_set_at,avatar_daily_granted_at,updated_at"
     )
+      .maybeSingle();
+    if (uErr) return NextResponse.json({ ok: false, error: uErr.message }, { status: 500 });
+    return NextResponse.json({ ok: true, settings: updated ?? null });
+  }
+
+  if ((!selectedValid || !borderValid) && !nextAvatarId) {
+    const { data: updated, error: uErr } = await admin
+      .from("student_avatar_settings")
+      .upsert(
+        {
+          student_id,
+          avatar_id: null,
+          bg_color: settings?.bg_color ?? null,
+          border_color: settings?.border_color ?? null,
+          glow_color: settings?.glow_color ?? null,
+          pattern: settings?.pattern ?? null,
+          particle_style: settings?.particle_style ?? null,
+          aura_style: settings?.aura_style ?? null,
+          planet_style: settings?.planet_style ?? null,
+          corner_border_key: borderValid ? selectedBorderKey : null,
+          avatar_set_at: settings?.avatar_set_at ?? null,
+          avatar_daily_granted_at: settings?.avatar_daily_granted_at ?? null,
+        },
+        { onConflict: "student_id" }
+      )
+      .select(
+        "student_id,avatar_id,bg_color,border_color,glow_color,pattern,particle_style,aura_style,planet_style,corner_border_key,card_plate_key,avatar_set_at,avatar_daily_granted_at,updated_at"
+      )
       .maybeSingle();
     if (uErr) return NextResponse.json({ ok: false, error: uErr.message }, { status: 500 });
     return NextResponse.json({ ok: true, settings: updated ?? null });
