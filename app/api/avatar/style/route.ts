@@ -79,9 +79,9 @@ export async function POST(req: Request) {
       .maybeSingle();
     if (custom.error) return false;
     const criteriaMatch = matchItemCriteria(itemType, itemKey, criteriaState.fulfilledKeys, criteriaState.requirementMap);
-    const bypassByCriteria = criteriaMatch.hasRequirements && criteriaMatch.matched;
-    if (limitedEventOnly && !bypassByCriteria) return false;
-    return bypassByCriteria || !!custom.data || unlockedByDefault;
+    const criteriaEligible = !criteriaMatch.hasRequirements || criteriaMatch.matched;
+    if (limitedEventOnly && !criteriaEligible) return false;
+    return !!custom.data || unlockedByDefault;
   }
 
   if (particle_style && particle_style !== "none") {

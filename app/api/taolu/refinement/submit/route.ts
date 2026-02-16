@@ -63,9 +63,10 @@ export async function POST(req: Request) {
   const newCount = new_deductions.length;
   const newPenalty = 3;
 
-  const pointsFixed = fixedCount * 5;
-  const pointsMissed = missedCount * 5;
-  const pointsNew = newCount * newPenalty;
+  const windowMultiplier = windowDays === 7 || windowDays === 30 || windowDays === 90 ? 2 : 1;
+  const pointsFixed = fixedCount * 5 * windowMultiplier;
+  const pointsMissed = missedCount * 5 * windowMultiplier;
+  const pointsNew = newCount * newPenalty * windowMultiplier;
   const pointsNet = pointsFixed - pointsMissed - pointsNew;
 
   const now = new Date();
@@ -157,7 +158,7 @@ export async function POST(req: Request) {
     if (dErr) return NextResponse.json({ ok: false, error: dErr.message }, { status: 500 });
   }
 
-  const note = `Taolu Refinement • ${windowDays}d • +${pointsFixed} / -${pointsMissed} / -${pointsNew}`;
+  const note = `Taolu Refinement ${windowDays}d • Fixed +${pointsFixed} (${fixedCount}×${5 * windowMultiplier}), Missed -${pointsMissed} (${missedCount}×${5 * windowMultiplier}), New -${pointsNew} (${newCount}×${newPenalty * windowMultiplier})`;
   const { error: ledErr } = await admin.from("ledger").insert({
     student_id,
     points: pointsNet,

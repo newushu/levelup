@@ -80,16 +80,16 @@ export async function POST(req: Request) {
   ]);
   if (customUnlockRes.error) return NextResponse.json({ ok: false, error: customUnlockRes.error.message }, { status: 500 });
   const criteriaMatch = matchItemCriteria("avatar", avatar_id, criteriaState.fulfilledKeys, criteriaState.requirementMap);
-  const bypassByCriteria = criteriaMatch.hasRequirements && criteriaMatch.matched;
   const hasCustomUnlock = !!customUnlockRes.data;
   const levelOk = effectiveLevel >= unlockLevel;
   const unlockedByDefault = !limitedEventOnly && unlockPoints <= 0 && levelOk;
 
-  if (limitedEventOnly && !bypassByCriteria) {
+  const criteriaEligible = !criteriaMatch.hasRequirements || criteriaMatch.matched;
+  if (limitedEventOnly && !criteriaEligible) {
     return NextResponse.json({ ok: false, error: "Limited event avatar requires eligibility" }, { status: 400 });
   }
 
-  if (!(bypassByCriteria || hasCustomUnlock || unlockedByDefault)) {
+  if (!(hasCustomUnlock || unlockedByDefault)) {
     return NextResponse.json({ ok: false, error: "Avatar is locked for this student" }, { status: 400 });
   }
 

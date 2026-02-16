@@ -104,7 +104,7 @@ export async function POST(req: Request) {
   }
 
   const pointsBalance = Number(student.points_balance ?? 0);
-  const effectiveUnlockPoints = bypassByCriteria || limitedEventOnly ? 0 : unlockPoints;
+  const effectiveUnlockPoints = unlockPoints;
   if (effectiveUnlockPoints > 0 && pointsBalance < effectiveUnlockPoints) {
     return NextResponse.json({ ok: false, error: `Need ${unlockPoints} points` }, { status: 400 });
   }

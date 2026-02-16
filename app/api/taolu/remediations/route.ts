@@ -72,7 +72,7 @@ export async function POST(req: Request) {
   if (sErr) return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
   if (!session) return NextResponse.json({ ok: false, error: "Session not found" }, { status: 404 });
 
-  const pointsAwarded = deduction_ids.length;
+  const pointsAwarded = deduction_ids.length * 2;
   const { data: remediation, error } = await admin
     .from("taolu_remediations")
     .insert({

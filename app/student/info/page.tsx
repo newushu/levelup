@@ -630,13 +630,15 @@ export default function StudentInfoPage() {
     const hasCriteriaReq = reqKeys.length > 0;
     const criteriaMatched = hasCriteriaReq && reqKeys.every((k) => fulfilledCriteriaKeys.has(k));
     const unlockedByDefault = !limitedOnly && !needsPointsPurchase && levelOk;
+    const eligibilityOk = !hasCriteriaReq || criteriaMatched;
     const limitedBlocked = limitedOnly && !criteriaMatched;
-    const unlocked = customUnlocked || criteriaMatched || unlockedByDefault;
+    const unlocked = customUnlocked || unlockedByDefault;
     return {
       unlocked,
       customUnlocked,
       criteriaMatched,
       limitedBlocked,
+      eligibilityOk,
       hasCriteriaReq,
       requiredCriteriaKeys: reqKeys,
       levelOk,
@@ -651,10 +653,10 @@ export default function StudentInfoPage() {
   ) {
     if (state.unlocked) return "";
     const reasons: string[] = [];
-    if (!state.levelOk) reasons.push(`Needs level ${Math.max(1, Number(unlockLevel ?? 1))}`);
-    if (state.needsPointsPurchase) reasons.push(`Needs ${Math.max(0, Number(unlockPoints ?? 0))} unlock points`);
     if ((state as any).limitedBlocked) reasons.push("Limited event eligibility required");
     if (state.hasCriteriaReq && !state.criteriaMatched) reasons.push("Required criteria not fulfilled");
+    if (!state.levelOk) reasons.push(`Needs level ${Math.max(1, Number(unlockLevel ?? 1))}`);
+    if (state.needsPointsPurchase) reasons.push(`Needs ${Math.max(0, Number(unlockPoints ?? 0))} unlock points`);
     return reasons.join(" • ");
   }
 
@@ -1388,7 +1390,7 @@ export default function StudentInfoPage() {
                         const src = item.storage_path
                           ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/avatars/${String(item.storage_path)}`
                           : "";
-                        const blocked = !state.unlocked && (!state.levelOk || Boolean((state as any).limitedBlocked));
+                        const blocked = !state.unlocked && (!state.levelOk || !state.eligibilityOk || Boolean((state as any).limitedBlocked));
                         return (
                           <div
                             key={`av-${key}`}
@@ -1443,7 +1445,7 @@ export default function StudentInfoPage() {
                     : avatarPickerTab === "effect"
                       ? pickerEffectRows.map(({ item, key, unlockLevel, unlockPoints, state }) => (
                           (() => {
-                            const blocked = !state.unlocked && (!state.levelOk || Boolean((state as any).limitedBlocked));
+                            const blocked = !state.unlocked && (!state.levelOk || !state.eligibilityOk || Boolean((state as any).limitedBlocked));
                             return (
                           <div
                             key={`ef-${key}`}
@@ -1499,7 +1501,7 @@ export default function StudentInfoPage() {
                         ))
                       : pickerBorderRows.map(({ item, key, unlockLevel, unlockPoints, state }) => (
                           (() => {
-                            const blocked = !state.unlocked && (!state.levelOk || Boolean((state as any).limitedBlocked));
+                            const blocked = !state.unlocked && (!state.levelOk || !state.eligibilityOk || Boolean((state as any).limitedBlocked));
                             return (
                           <div
                             key={`bd-${key}`}

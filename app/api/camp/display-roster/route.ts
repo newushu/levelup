@@ -113,8 +113,8 @@ async function loadStudentsByIds(admin: ReturnType<typeof supabaseAdmin>, ids: s
 
   (students ?? []).forEach((s: any) => {
     if (thresholds.length) {
-      // Keep camp display level logic consistent with classroom view.
-      const points = Number(s?.points_total ?? s?.lifetime_points ?? 0);
+      // Level should be computed from lifetime points, not spendable points_total.
+      const points = Number(s?.lifetime_points ?? 0);
       let computedLevel = Number(s?.level ?? 1);
       thresholds.forEach((lvl) => {
         if (points >= lvl.min) computedLevel = lvl.level;

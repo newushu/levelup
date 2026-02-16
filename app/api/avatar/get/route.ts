@@ -112,10 +112,10 @@ export async function POST(req: Request) {
     const levelOk = effectiveLevel >= unlockLevel;
     const customUnlock = customUnlockSet.has(`avatar:${id}`);
     const criteriaMatch = matchItemCriteria("avatar", id, criteriaState.fulfilledKeys, criteriaState.requirementMap);
-    const criteriaOk = criteriaMatch.hasRequirements && criteriaMatch.matched;
+    const criteriaOk = !criteriaMatch.hasRequirements || criteriaMatch.matched;
     const unlockedByDefault = !limitedOnly && levelOk && unlockPoints <= 0;
     const limitedAllowed = !limitedOnly || criteriaOk;
-    return limitedAllowed && (unlockedByDefault || customUnlock || criteriaOk);
+    return limitedAllowed && (unlockedByDefault || customUnlock);
   });
   const fallback =
     accessibleAvatars.find((a: any) => !a.is_secondary) ??
@@ -129,13 +129,13 @@ export async function POST(req: Request) {
   const selectedLimitedOnly = (selectedRow as any)?.limited_event_only === true;
   const selectedCustomUnlock = customUnlockSet.has(`avatar:${selectedId}`);
   const selectedCriteria = matchItemCriteria("avatar", selectedId, criteriaState.fulfilledKeys, criteriaState.requirementMap);
-  const selectedCriteriaOk = selectedCriteria.hasRequirements && selectedCriteria.matched;
+  const selectedCriteriaOk = !selectedCriteria.hasRequirements || selectedCriteria.matched;
   const selectedByDefault = !selectedLimitedOnly && selectedUnlock <= effectiveLevel && selectedPoints <= 0;
   const selectedEventAllowed = !selectedLimitedOnly || selectedCriteriaOk;
   const selectedValid =
     !!selectedRow &&
     selectedEventAllowed &&
-    (selectedByDefault || selectedCustomUnlock || selectedCriteriaOk);
+    (selectedByDefault || selectedCustomUnlock);
 
   let bordersRes = await admin
     .from("ui_corner_borders")
@@ -154,10 +154,10 @@ export async function POST(req: Request) {
   const borderPoints = Math.max(0, Number((selectedBorder as any)?.unlock_points ?? 0));
   const borderCustomUnlock = customUnlockSet.has(`corner_border:${selectedBorderKey}`);
   const borderCriteria = matchItemCriteria("corner_border", selectedBorderKey, criteriaState.fulfilledKeys, criteriaState.requirementMap);
-  const borderCriteriaOk = borderCriteria.hasRequirements && borderCriteria.matched;
+  const borderCriteriaOk = !borderCriteria.hasRequirements || borderCriteria.matched;
   const borderByDefault = !borderLimitedOnly && borderLevelUnlocked && borderPoints <= 0;
   const borderEventAllowed = !borderLimitedOnly || borderCriteriaOk;
-  const borderUnlocked = borderEventAllowed && (borderByDefault || borderCustomUnlock || borderCriteriaOk);
+  const borderUnlocked = borderEventAllowed && (borderByDefault || borderCustomUnlock);
   const borderEnabled = selectedBorder ? selectedBorder.enabled !== false : false;
   const borderValid = !!selectedBorder && borderUnlocked && borderEnabled;
 

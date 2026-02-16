@@ -103,7 +103,8 @@ type RefinementNewDeduction = {
 };
 
 const TAOLU_START_POINTS = 10;
-const TAOLU_DEDUCTION_POINTS = 2;
+const TAOLU_DEDUCTION_POINTS = 4;
+const TAOLU_REFINEMENT_POINTS_PER_FIX = 2;
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -949,7 +950,8 @@ function TaoluTrackerInner() {
       setRefineNewByStudent((prev) => ({ ...prev, [student.student_id]: [] }));
       const fixedCount = selections.filter((s) => s.fixed).length;
       const missedCount = selections.filter((s) => !s.fixed).length;
-      const net = fixedCount * 5 - missedCount * 5 - newItems.length * newPenalty;
+      const windowMultiplier = windowDays === 7 || windowDays === 30 || windowDays === 90 ? 2 : 1;
+      const net = fixedCount * 5 * windowMultiplier - missedCount * 5 * windowMultiplier - newItems.length * newPenalty * windowMultiplier;
       const sections = Array.from(new Set(
         selections
           .filter((s) => refineSectionInclude[`${student.student_id}:${s.taolu_form_id}:${s.section_number}`])
@@ -981,6 +983,15 @@ function TaoluTrackerInner() {
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button style={pill(activeTab === "tracker")} onClick={() => setActiveTab("tracker")}>Tracker</button>
         <button style={pill(activeTab === "refinement")} onClick={() => setActiveTab("refinement")}>Refinement</button>
+      </div>
+      <div style={changeAlertBanner()}>
+        <div style={{ fontWeight: 1000, fontSize: 14, letterSpacing: 0.2 }}>Scoring Change Alert</div>
+        <div style={{ fontSize: 12, opacity: 0.95 }}>
+          Taolu Tracker now starts at 10 points, each deduction is -4, and single-session refinement gives +2 per fixed deduction.
+        </div>
+        <div style={{ fontSize: 12, opacity: 0.9 }}>
+          Refinement windows (7d / 30d / 3mo) are doubled: +10 fixed, -10 missed, -6 new.
+        </div>
       </div>
       {msg ? <div style={notice()}>{msg}</div> : null}
 
@@ -1318,7 +1329,8 @@ function TaoluTrackerInner() {
         <div style={card()}>
         <div style={{ fontWeight: 1000, fontSize: 16 }}>Refinement Hub</div>
         <div style={{ fontSize: 12, opacity: 0.7 }}>
-          Single-session refinement: +1 per fixed deduction, no points lost. Window refinements: +5 fixed, -5 missed, -3 new.
+          Scoring update: Start score is 10. Each deduction is -4. Single-session refinement is +2 per fixed deduction.
+          7d/30d/3mo window refinement is doubled: +10 per fixed, -10 per missed, -6 per new deduction.
         </div>
         <div style={{ fontSize: 12, opacity: 0.6 }}>
           Click “Start listening” on a student card to arm the space/N hotkey. Space/N adds a new deduction chip.
@@ -1706,7 +1718,7 @@ function TaoluTrackerInner() {
         <div style={{ marginTop: 16, display: "grid", gap: 8 }}>
           <div style={{ fontWeight: 900 }}>Refine Past Sessions</div>
           <div style={{ fontSize: 12, opacity: 0.7 }}>
-            Single-session refinement can be done once and awards +1 per fixed deduction.
+            Single-session refinement can be done once and awards +2 per fixed deduction.
           </div>
           <input
             value={finishedHistorySearch}
@@ -2014,7 +2026,7 @@ function TaoluTrackerInner() {
                 </button>
               </div>
               <div style={{ fontSize: 12, opacity: 0.75 }}>
-                Tap chips to mark refined deductions. Each refined deduction earns +1 point.
+                Tap chips to mark refined deductions. Each refined deduction earns +2 points.
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {(deductionsBySession[openFinishedSession.session_id] ?? [])
@@ -2080,7 +2092,7 @@ function TaoluTrackerInner() {
                 >
                   {remediationBusy
                     ? "Submitting..."
-                    : `Submit Refinement (+${(remediationSelections[openFinishedSession.session_id] ?? []).length} pts)`}
+                    : `Submit Refinement (+${(remediationSelections[openFinishedSession.session_id] ?? []).length * TAOLU_REFINEMENT_POINTS_PER_FIX} pts)`}
                 </button>
               ) : (
                 <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(96,165,250,0.95)" }}>
@@ -2241,7 +2253,7 @@ function TaoluTrackerInner() {
                 >
                   {remediationBusy
                     ? "Submitting..."
-                    : `Submit Refinement (+${(remediationSelections[openFinishedSession.session_id] ?? []).length} pts)`}
+                    : `Submit Refinement (+${(remediationSelections[openFinishedSession.session_id] ?? []).length * TAOLU_REFINEMENT_POINTS_PER_FIX} pts)`}
                 </button>
               ) : (
                 <div style={{ fontSize: 12, fontWeight: 900, color: "rgba(96,165,250,0.95)" }}>
@@ -2413,7 +2425,7 @@ function TaoluTrackerInner() {
                   </div>
                 ) : (
                   <div style={{ fontSize: 12, opacity: 0.75 }}>
-                    Select which deductions were fixed. Each selected chip earns +1 point.
+                    Select which deductions were fixed. Each selected chip earns +2 points.
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2459,7 +2471,7 @@ function TaoluTrackerInner() {
                   >
                     {remediationBusy
                       ? "Submitting..."
-                      : `Submit Refinement (+${(remediationSelections[openFinishedSession.session_id] ?? []).length} pts)`}
+                      : `Submit Refinement (+${(remediationSelections[openFinishedSession.session_id] ?? []).length * TAOLU_REFINEMENT_POINTS_PER_FIX} pts)`}
                   </button>
                 ) : null}
               </div>
@@ -3039,6 +3051,18 @@ function notice(): React.CSSProperties {
     background: "rgba(239,68,68,0.15)",
     border: "1px solid rgba(255,255,255,0.10)",
     fontWeight: 900,
+  };
+}
+
+function changeAlertBanner(): React.CSSProperties {
+  return {
+    padding: "10px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(250,204,21,0.45)",
+    background: "linear-gradient(135deg, rgba(120,53,15,0.55), rgba(30,58,138,0.45))",
+    display: "grid",
+    gap: 4,
+    boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
   };
 }
 

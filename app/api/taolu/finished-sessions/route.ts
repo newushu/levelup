@@ -107,7 +107,7 @@ export async function GET(req: Request) {
   const out = (sessions ?? []).map((s: any) => {
     const sid = String(s.id);
     const deductionsCount = deductionsBySession.get(sid) ?? 0;
-    const pointsLost = deductionsCount * 2;
+    const pointsLost = deductionsCount * 4;
     const pointsEarned = 10 - pointsLost;
     const remediation = remediationBySession.get(sid);
     return {
