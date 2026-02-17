@@ -82,17 +82,54 @@ export default function CampClassroomPage() {
     const nextRosters = (sj.json?.rosters ?? []) as Roster[];
     const nextGroups = (sj.json?.groups ?? []) as Group[];
     const nextMembers = (sj.json?.members_hydrated ?? sj.json?.display_members ?? []) as Member[];
+    const needsStudentFallback = nextMembers.some((m) => !m.student?.name);
+    let resolvedMembers = nextMembers;
+    if (needsStudentFallback) {
+      const studentsRes = await fetch("/api/students/list", { cache: "no-store" });
+      const studentsSj = await safeJson(studentsRes);
+      if (studentsSj.ok) {
+        const rows = Array.isArray(studentsSj.json?.students) ? studentsSj.json.students : [];
+        const byId = new Map<string, any>(rows.map((s: any) => [String(s.id ?? ""), s]));
+        resolvedMembers = nextMembers.map((m) => {
+          const sid = String(m.student_id ?? "");
+          const hit = byId.get(sid);
+          if (!hit) return m;
+          return {
+            ...m,
+            student: {
+              id: sid,
+              name: String(hit.name ?? m.student?.name ?? sid),
+              level: Number(hit.level ?? m.student?.level ?? 1),
+              points_total: Number(hit.points_total ?? m.student?.points_total ?? 0),
+              avatar_storage_path: hit.avatar_storage_path ?? m.student?.avatar_storage_path ?? null,
+              avatar_bg: hit.avatar_bg ?? m.student?.avatar_bg ?? null,
+            },
+          };
+        });
+      }
+    }
 
     const storedRoster = typeof localStorage !== "undefined" ? localStorage.getItem("camp_classroom_roster_id") : "";
     const storedGroup = typeof localStorage !== "undefined" ? localStorage.getItem("camp_classroom_group_id") : "";
     const fallbackRoster = storedRoster && nextRosters.some((r) => r.id === storedRoster) ? storedRoster : nextRosters[0]?.id ?? "";
-    const fallbackGroup = storedGroup || "all";
+    const rosterIdCandidate =
+      activeRosterId && nextRosters.some((r) => r.id === activeRosterId)
+        ? activeRosterId
+        : fallbackRoster;
+    const groupIdsForRoster = new Set(
+      nextGroups.filter((g) => String(g.roster_id) === String(rosterIdCandidate)).map((g) => String(g.id))
+    );
+    const fallbackGroup = groupIdsForRoster.has(String(storedGroup ?? "")) ? String(storedGroup) : "all";
+    const groupCandidate =
+      activeGroupId === "all" || groupIdsForRoster.has(String(activeGroupId))
+        ? activeGroupId
+        : fallbackGroup;
 
     setRosters(nextRosters);
     setGroups(nextGroups);
-    setMembers(nextMembers.filter((m) => m.student));
-    setActiveRosterId((prev) => prev || fallbackRoster);
-    setActiveGroupId((prev) => prev || fallbackGroup);
+    setMembers(resolvedMembers.filter((m) => String(m.student_id ?? "").trim().length > 0));
+    setActiveRosterId(rosterIdCandidate);
+    setActiveGroupId(groupCandidate);
     setSelectedIds([]);
   }
 

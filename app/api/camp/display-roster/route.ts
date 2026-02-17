@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { computeDailyRedeemStatus, getLeaderboardBoardMapForDate, getSnapshotCycleDateKey } from "@/lib/dailyRedeem";
 
 const MAX_LEVEL = 99;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function computeThresholds(baseJump: number, difficultyPct: number) {
   const levels: Array<{ level: number; min: number }> = [];
@@ -17,6 +18,10 @@ function computeThresholds(baseJump: number, difficultyPct: number) {
     levels.push({ level, min: Math.max(0, Math.floor(rounded)) });
   }
   return levels;
+}
+
+function isUuid(value: unknown) {
+  return UUID_RE.test(String(value ?? "").trim());
 }
 
 type RoleAuth = { ok: boolean; roleList: string[]; status?: number; error?: string };
@@ -97,11 +102,14 @@ async function loadStudentsByIds(admin: ReturnType<typeof supabaseAdmin>, ids: s
   const studentsById = new Map<string, any>();
   if (!ids.length) return studentsById;
 
+  const validIds = Array.from(new Set(ids.map((id) => String(id ?? "").trim()).filter((id) => isUuid(id))));
+  if (!validIds.length) return studentsById;
+
   if (opts?.lite) {
     const basicRes = await admin
       .from("students")
       .select("id,name,level,points_total,lifetime_points,avatar_storage_path,avatar_bg,avatar_zoom_pct")
-      .in("id", ids);
+      .in("id", validIds);
     const basicRows = basicRes.error ? [] : (basicRes.data ?? []);
     (basicRows ?? []).forEach((s: any) => {
       studentsById.set(String(s.id), s);
@@ -115,20 +123,24 @@ async function loadStudentsByIds(admin: ReturnType<typeof supabaseAdmin>, ids: s
     .select(
       "id,name,level,points_total,lifetime_points,avatar_storage_path,avatar_bg,avatar_zoom_pct,avatar_effect,corner_border_url,corner_border_render_mode,corner_border_html,corner_border_css,corner_border_js,corner_border_offset_x,corner_border_offset_y,corner_border_offsets_by_context"
     )
-    .in("id", ids);
+    .in("id", validIds);
   if (!richSelect.error) {
     students = (richSelect.data ?? []) as any[];
   } else {
     const mediumSelect = await admin
       .from("students")
       .select("id,name,level,points_total,lifetime_points,avatar_storage_path,avatar_bg,avatar_effect,corner_border_url")
-      .in("id", ids);
+      .in("id", validIds);
     if (!mediumSelect.error) {
       students = (mediumSelect.data ?? []) as any[];
     } else {
-      const basicSelect = await admin.from("students").select("id,name,level,points_total").in("id", ids);
+      const basicSelect = await admin.from("students").select("id,name,level,points_total").in("id", validIds);
       students = (basicSelect.data ?? []) as any[];
     }
+  }
+  if (!students.length) {
+    const basicSelect = await admin.from("students").select("id,name,level,points_total").in("id", validIds);
+    students = (basicSelect.data ?? []) as any[];
   }
   const [thresholdsRes, levelSettingsRes] = await Promise.all([
     admin
@@ -569,6 +581,7 @@ export async function GET(req: Request) {
   const classroomInstanceId = String(url.searchParams.get("instance_id") ?? "").trim();
   const liteModeKey = String(url.searchParams.get("lite") ?? "").trim().toLowerCase();
   const liteMode = liteModeKey === "camp_classroom" || liteModeKey === "admin_custom";
+  const includeRecentLedger = liteModeKey !== "admin_custom";
 
   const [rostersRes, groupsRes, membersRes, screensRes] = await Promise.all([
     admin.from("camp_display_rosters").select("id,name,start_date,end_date,enabled,sort_order,created_at,updated_at").order("sort_order", { ascending: true }).order("created_at", { ascending: true }),
@@ -597,16 +610,42 @@ export async function GET(req: Request) {
   if (factionsRes.error && !isMissingRelation(factionsRes.error)) return NextResponse.json({ ok: false, error: factionsRes.error.message }, { status: 500 });
 
   let membersData = membersRes.data ?? [];
-  if (membersRes.error && isMissingColumn(membersRes.error, "secondary_role_days")) {
-    const fallbackMembersRes = await admin
-      .from("camp_display_members")
-      .select("id,roster_id,group_id,student_id,display_role,secondary_role,faction_id,sort_order,enabled,created_at,updated_at")
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true });
-    if (fallbackMembersRes.error) return NextResponse.json({ ok: false, error: fallbackMembersRes.error.message }, { status: 500 });
-    membersData = (fallbackMembersRes.data ?? []).map((m: any) => ({ ...m, secondary_role_days: [] }));
-  } else if (membersRes.error) {
-    return NextResponse.json({ ok: false, error: membersRes.error.message }, { status: 500 });
+  if (membersRes.error) {
+    const missingDays = isMissingColumn(membersRes.error, "secondary_role_days");
+    const missingFaction = isMissingColumn(membersRes.error, "faction_id");
+
+    if (missingDays || missingFaction) {
+      const fallbackSelects = [
+        "id,roster_id,group_id,student_id,display_role,secondary_role,faction_id,sort_order,enabled,created_at,updated_at",
+        "id,roster_id,group_id,student_id,display_role,secondary_role,secondary_role_days,sort_order,enabled,created_at,updated_at",
+        "id,roster_id,group_id,student_id,display_role,secondary_role,sort_order,enabled,created_at,updated_at",
+      ];
+      let resolved: any[] | null = null;
+      let fallbackErr: any = membersRes.error;
+
+      for (const selectFields of fallbackSelects) {
+        const fallbackMembersRes = await admin
+          .from("camp_display_members")
+          .select(selectFields)
+          .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: true });
+        if (!fallbackMembersRes.error) {
+          resolved = fallbackMembersRes.data ?? [];
+          fallbackErr = null;
+          break;
+        }
+        fallbackErr = fallbackMembersRes.error;
+      }
+
+      if (fallbackErr) return NextResponse.json({ ok: false, error: fallbackErr.message }, { status: 500 });
+      membersData = (resolved ?? []).map((m: any) => ({
+        ...m,
+        secondary_role_days: Array.isArray(m?.secondary_role_days) ? m.secondary_role_days : [],
+        faction_id: m?.faction_id ?? null,
+      }));
+    } else {
+      return NextResponse.json({ ok: false, error: membersRes.error.message }, { status: 500 });
+    }
   }
 
   const rosters = rostersRes.data ?? [];
@@ -632,11 +671,11 @@ export async function GET(req: Request) {
       new Set((checkins ?? []).map((r: any) => String(r.student_id ?? "")).filter(Boolean))
     );
     const studentsByIdFromCheckin = await loadStudentsByIds(admin, studentIdsFromCheckin, { lite: liteMode });
-    const recentLedgerByStudent = liteMode
-      ? new Map()
-      : await loadRecentLedgerByStudent(admin, studentIdsFromCheckin, {
+    const recentLedgerByStudent = includeRecentLedger
+      ? await loadRecentLedgerByStudent(admin, studentIdsFromCheckin, {
           includeCampOrders: !liteMode,
-        });
+        })
+      : new Map();
     const redeemByStudent = liteMode ? new Map() : await loadDailyRedeemByStudent(admin, studentIdsFromCheckin);
     const tallyByStudent = liteMode ? new Map() : await loadCampTallyByStudent(admin, studentIdsFromCheckin);
 
@@ -703,11 +742,11 @@ export async function GET(req: Request) {
 
   const allStudentIds = Array.from(new Set(members.map((m: any) => String(m.student_id ?? "")).filter(Boolean)));
   const studentsById = await loadStudentsByIds(admin, allStudentIds, { lite: liteMode });
-  const recentLedgerByStudent = liteMode
-    ? new Map()
-    : await loadRecentLedgerByStudent(admin, allStudentIds, {
+  const recentLedgerByStudent = includeRecentLedger
+    ? await loadRecentLedgerByStudent(admin, allStudentIds, {
         includeCampOrders: !liteMode,
-      });
+      })
+    : new Map();
   const redeemByStudent = liteMode ? new Map() : await loadDailyRedeemByStudent(admin, allStudentIds);
 
   const rosterById = new Map((rosters ?? []).map((r: any) => [String(r.id), r]));

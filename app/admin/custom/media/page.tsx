@@ -567,6 +567,7 @@ export default function MediaVaultAdminPage() {
   const [avatarUploadStatus, setAvatarUploadStatus] = useState("");
   const [avatarUploadTargetId, setAvatarUploadTargetId] = useState<string>("new");
   const [avatarUsage, setAvatarUsage] = useState<Record<string, { count: number; students: Array<{ id: string; name: string; level?: number | null }> }>>({});
+  const [avatarUnlockLevelDrafts, setAvatarUnlockLevelDrafts] = useState<Record<string, string>>({});
   const [soundLibrary, setSoundLibrary] = useState<Array<{ path: string; public_url: string }>>([]);
   const [soundPreviewKey, setSoundPreviewKey] = useState<string>("");
   const [soundUploading, setSoundUploading] = useState(false);
@@ -1587,6 +1588,24 @@ export default function MediaVaultAdminPage() {
       )
     );
     setCopyOpenAvatarId("");
+  }
+
+  function commitAvatarUnlockLevel(rowId: string) {
+    const key = String(rowId ?? "");
+    if (!key) return;
+    const draft = avatarUnlockLevelDrafts[key];
+    if (draft === undefined) return;
+    const raw = digitsOnly(draft);
+    setAvatars((prev) =>
+      prev.map((r) =>
+        String(r.id ?? "") === key ? { ...r, unlock_level: raw === "" ? null : Number(raw) } : r
+      )
+    );
+    setAvatarUnlockLevelDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -3166,14 +3185,45 @@ export default function MediaVaultAdminPage() {
                     const src = row.storage_path && avatarBase
                       ? `${avatarBase}/storage/v1/object/public/avatars/${row.storage_path}`
                       : "";
+                    const zoomPctRaw = Number(row.zoom_pct ?? 100);
+                    const zoomPct = Number.isFinite(zoomPctRaw) ? Math.max(40, Math.min(220, Math.round(zoomPctRaw))) : 100;
                     return (
                       <div key={row.id ?? row.name} style={avatarCard()}>
                         <div style={avatarThumb()}>
                           {src ? (
-                            <img src={src} alt={row.name} style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                            <img
+                              src={src}
+                              alt={row.name}
+                              style={{
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "contain",
+                                transform: `scale(${zoomPct / 100})`,
+                                transformOrigin: "center center",
+                              }}
+                            />
                           ) : (
                             <div style={{ opacity: 0.7, fontSize: 12 }}>No image</div>
                           )}
+                        </div>
+                        <div style={{ display: "grid", gap: 4 }}>
+                          <div style={{ fontSize: 11, opacity: 0.82 }}>Scale: {zoomPct}%</div>
+                          <input
+                            type="range"
+                            min={40}
+                            max={220}
+                            step={1}
+                            value={zoomPct}
+                            onChange={(e) => {
+                              const value = Number(e.target.value);
+                              setAvatars((prev) =>
+                                prev.map((r) =>
+                                  r === row ? { ...r, zoom_pct: Number.isFinite(value) ? value : 100 } : r
+                                )
+                              );
+                            }}
+                            style={{ width: "100%" }}
+                          />
                         </div>
                         <div style={{ fontSize: 12, opacity: 0.8 }}>
                           Used by {avatarUsage[row.id ?? ""]?.count ?? 0} students
@@ -3281,12 +3331,19 @@ export default function MediaVaultAdminPage() {
                             type="text"
                             inputMode="numeric"
                             pattern="[0-9]*"
-                            value={row.unlock_level ?? ""}
-                            onChange={(e) => {
-                              const raw = digitsOnly(e.target.value);
-                              setAvatars((prev) =>
-                                prev.map((r) => (r === row ? { ...r, unlock_level: raw === "" ? null : Number(raw) } : r))
-                              );
+                            value={avatarUnlockLevelDrafts[String(row.id ?? "")] ?? String(row.unlock_level ?? "")}
+                            onChange={(e) =>
+                              setAvatarUnlockLevelDrafts((prev) => ({
+                                ...prev,
+                                [String(row.id ?? "")]: e.target.value,
+                              }))
+                            }
+                            onBlur={() => commitAvatarUnlockLevel(String(row.id ?? ""))}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                commitAvatarUnlockLevel(String(row.id ?? ""));
+                              }
                             }}
                             style={input()}
                           />

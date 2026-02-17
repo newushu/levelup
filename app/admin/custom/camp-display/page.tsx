@@ -163,21 +163,55 @@ export default function CampDisplayAdminPage() {
     const loadedFactions = (sj.json?.factions ?? []) as Faction[];
 
     const hydrated = Array.isArray(sj.json?.members_hydrated) ? sj.json.members_hydrated : [];
-    const memberById = new Map<string, any>(hydrated.map((row: any) => [String(row.id), row]));
-    const mergedMembers = loadedMembers.map((m) => {
-      const full = memberById.get(String(m.id));
+    const memberById = new Map<string, any>(hydrated.map((row: any) => [String(row.id ?? ""), row]));
+    const memberByStudentId = new Map<string, any>(
+      hydrated
+        .map((row: any) => [String(row.student_id ?? ""), row] as const)
+        .filter(([sid]) => Boolean(sid))
+    );
+    const baseMembers = hydrated.length ? hydrated : loadedMembers;
+    const mergedMembers = baseMembers.map((m) => {
+      const full = memberById.get(String(m.id ?? "")) ?? memberByStudentId.get(String(m.student_id ?? ""));
       return {
         ...m,
-        group_id: m.group_id ?? null,
-        secondary_role: String(m.secondary_role ?? ""),
-        secondary_role_days: Array.isArray((m as any).secondary_role_days) ? (m as any).secondary_role_days : [],
+        group_id: (full?.group_id ?? m.group_id) ?? null,
+        secondary_role: String(full?.secondary_role ?? m.secondary_role ?? ""),
+        secondary_role_days: Array.isArray(full?.secondary_role_days)
+          ? full.secondary_role_days
+          : Array.isArray((m as any).secondary_role_days)
+            ? (m as any).secondary_role_days
+            : [],
         student: full?.student ?? m.student ?? null,
       };
     });
+    const missingStudentMeta = mergedMembers.some((m) => !m.student?.name);
+    let finalMembers = mergedMembers;
+    if (missingStudentMeta) {
+      const studentsRes = await fetch("/api/students/list", { cache: "no-store" });
+      const studentsJson = await safeJson(studentsRes);
+      if (studentsJson.ok) {
+        const rows = Array.isArray(studentsJson.json?.students) ? studentsJson.json.students : [];
+        const byId = new Map<string, any>(rows.map((s: any) => [String(s.id ?? ""), s]));
+        finalMembers = mergedMembers.map((m) => {
+          const sid = String(m.student_id ?? "");
+          const hit = byId.get(sid);
+          if (!hit) return m;
+          return {
+            ...m,
+            student: {
+              id: sid,
+              name: String(hit.name ?? m.student?.name ?? sid),
+              level: Number(hit.level ?? m.student?.level ?? 1),
+              points_total: Number(hit.points_total ?? m.student?.points_total ?? 0),
+            },
+          };
+        });
+      }
+    }
 
     setRosters(loadedRosters);
     setGroups(loadedGroups);
-    setMembers(mergedMembers);
+    setMembers(finalMembers);
     setFactions(loadedFactions);
     setScreens(
       [1, 2, 3].map((id) => {
