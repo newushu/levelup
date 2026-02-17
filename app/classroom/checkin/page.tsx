@@ -251,6 +251,7 @@ export default function ClassroomCheckinPage() {
   const [rosterLoading, setRosterLoading] = useState(false);
   const [suggestedRows, setSuggestedRows] = useState<SuggestedRow[]>([]);
   const [redeemByStudent, setRedeemByStudent] = useState<Record<string, RedeemStatusLite>>({});
+  const [giftCountsByStudent, setGiftCountsByStudent] = useState<Record<string, number>>({});
   const [recentRedeemedByStudent, setRecentRedeemedByStudent] = useState<Record<string, number>>({});
   const [msg, setMsg] = useState("");
   const [okMsg, setOkMsg] = useState("");
@@ -499,6 +500,35 @@ export default function ClassroomCheckinPage() {
     );
     if (!ids.length) return;
     loadRedeemStatuses(ids);
+  }, [suggestedRows, searchRows, roster]);
+
+  useEffect(() => {
+    const ids = Array.from(
+      new Set([
+        ...suggestedRows.map((s) => String(s.id)),
+        ...searchRows.map((s) => String(s.id)),
+        ...roster.map((r) => String(r.student?.id ?? "")),
+      ].filter(Boolean))
+    );
+    if (!ids.length) {
+      setGiftCountsByStudent({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const res = await fetch("/api/student/gifts/pending-map", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_ids: ids }),
+      });
+      const sj = await safeJson(res);
+      if (!cancelled && sj.ok) {
+        setGiftCountsByStudent((sj.json?.counts ?? {}) as Record<string, number>);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [suggestedRows, searchRows, roster]);
 
   useEffect(() => {
@@ -1118,6 +1148,39 @@ export default function ClassroomCheckinPage() {
           display: inline-flex; gap: 8px; align-items: center; justify-content: center; text-align: center; padding: 7px 11px; border-radius: 999px;
           border: 1px solid rgba(56,189,248,0.35); background: rgba(14,165,233,0.14); color: #e0f2fe; font-weight: 900;
         }
+        .gift-reminder-inline {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 24px;
+          height: 24px;
+          border-radius: 999px;
+          border: 1px solid rgba(250, 204, 21, 0.52);
+          background: radial-gradient(circle at 35% 30%, rgba(254, 240, 138, 0.48), rgba(120, 53, 15, 0.3));
+          box-shadow:
+            0 0 12px rgba(250, 204, 21, 0.6),
+            0 0 22px rgba(251, 191, 36, 0.34);
+          font-size: 15px;
+          line-height: 1;
+          animation: giftReminderPulse 1.2s ease-in-out infinite;
+          user-select: none;
+          pointer-events: none;
+        }
+        .gift-reminder-chip {
+          border-radius: 999px;
+          padding: 2px 7px;
+          border: 1px solid rgba(250, 204, 21, 0.5);
+          background: rgba(120, 53, 15, 0.2);
+          color: #92400e;
+          font-weight: 1000;
+          font-size: 11px;
+          letter-spacing: 0.01em;
+          box-shadow: 0 0 14px rgba(250, 204, 21, 0.42);
+          animation: giftReminderPulse 1.2s ease-in-out infinite;
+          user-select: none;
+          pointer-events: none;
+          white-space: nowrap;
+        }
         .float-pulse {
           animation: floatPulse 2.4s ease-in-out infinite;
         }
@@ -1148,6 +1211,11 @@ export default function ClassroomCheckinPage() {
           0% { transform: translate3d(0, 8px, 0) scale(1); opacity: 0.38; }
           50% { transform: translate3d(-8px, -6px, 0) scale(1.05); opacity: 0.62; }
           100% { transform: translate3d(-14px, -16px, 0) scale(1); opacity: 0.38; }
+        }
+        @keyframes giftReminderPulse {
+          0% { transform: scale(0.96); opacity: 0.9; }
+          50% { transform: scale(1.08); opacity: 1; }
+          100% { transform: scale(0.96); opacity: 0.9; }
         }
         @keyframes gentleFade {
           from { opacity: 0; transform: translateY(4px); }
@@ -1262,6 +1330,9 @@ export default function ClassroomCheckinPage() {
                   <div key={`top-${s.id}`} className="search-top-suggestion">
                     <div className="search-top-name">{s.name}</div>
                     <div className="search-top-actions">
+                      {(giftCountsByStudent[String(s.id)] ?? 0) > 0 ? (
+                        <span className="gift-reminder-chip" title="Has unopened gift">🎁 Gift</span>
+                      ) : null}
                       {redeemByStudent[s.id]?.can_redeem ? (
                         <button
                           className="redeem-mini"
@@ -1310,6 +1381,7 @@ export default function ClassroomCheckinPage() {
                       <div key={s.id} style={{ display: "grid", gap: 6 }}>
                         <button className="suggested-chip suggested-chip-lg" onClick={() => checkIn({ id: s.id, name: s.name })}>
                           {s.short_name}
+                          {(giftCountsByStudent[String(s.id)] ?? 0) > 0 ? <span className="gift-reminder-inline" title="Has unopened gift">🎁</span> : null}
                         </button>
                         {redeemByStudent[s.id]?.can_redeem ? (
                           <button className="redeem-mini" onClick={() => redeemStudentDaily({ id: s.id, name: s.name })}>
@@ -1325,6 +1397,7 @@ export default function ClassroomCheckinPage() {
                         <div key={s.id} style={{ display: "grid", gap: 6 }}>
                           <button className="suggested-chip suggested-chip-lg" onClick={() => checkIn({ id: s.id, name: s.name })}>
                             {s.short_name}
+                            {(giftCountsByStudent[String(s.id)] ?? 0) > 0 ? <span className="gift-reminder-inline" title="Has unopened gift">🎁</span> : null}
                           </button>
                           {redeemByStudent[s.id]?.can_redeem ? (
                             <button className="redeem-mini" onClick={() => redeemStudentDaily({ id: s.id, name: s.name })}>
@@ -1367,7 +1440,10 @@ export default function ClassroomCheckinPage() {
                             );
                           })()}
                           <div>
-                            <div style={{ fontWeight: 1000, fontSize: 16, color: "#0f172a" }}>{s.name}</div>
+                            <div style={{ fontWeight: 1000, fontSize: 16, color: "#0f172a", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                              <span>{s.name}</span>
+                              {(giftCountsByStudent[String(s.id)] ?? 0) > 0 ? <span className="gift-reminder-inline" title="Has unopened gift">🎁</span> : null}
+                            </div>
                             <div style={{ fontSize: 13, opacity: 0.75, color: "#334155" }}>Lv {s.level} • {s.points_total} pts</div>
                           </div>
                         </div>
@@ -1419,7 +1495,10 @@ export default function ClassroomCheckinPage() {
                         />
                           );
                         })()}
-                        <span style={{ color: "#0f172a", fontSize: 17 }}>{row.student.name}</span>
+                        <span style={{ color: "#0f172a", fontSize: 17, display: "inline-flex", alignItems: "center", gap: 8 }}>
+                          <span>{row.student.name}</span>
+                          {(giftCountsByStudent[String(row.student.id)] ?? 0) > 0 ? <span className="gift-reminder-inline" title="Has unopened gift">🎁</span> : null}
+                        </span>
                         {recentRedeemedByStudent[String(row.student.id)] ? (
                           <span className="redeemed-row-chip">
                             Just redeemed +{Math.round(Number(recentRedeemedByStudent[String(row.student.id)] ?? 0))} pts

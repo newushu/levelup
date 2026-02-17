@@ -87,6 +87,7 @@ export default function CheckinPage() {
   const [classCounts, setClassCounts] = useState<Record<string, number>>({});
   const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntry[]>([]);
   const [roster, setRoster] = useState<RosterItem[]>([]);
+  const [giftCountsByStudent, setGiftCountsByStudent] = useState<Record<string, number>>({});
   const [rosterLoading, setRosterLoading] = useState(false);
   const [rosterOpen, setRosterOpen] = useState(true);
   const rosterRequestId = useRef(0);
@@ -95,6 +96,18 @@ export default function CheckinPage() {
     const uniqueIds = new Set(roster.map((r) => String(r.id ?? "")).filter(Boolean));
     return uniqueIds.size;
   }, [roster]);
+  const giftLookupIds = useMemo(() => {
+    const ids = new Set<string>();
+    roster.forEach((r) => {
+      const id = String(r.id ?? "").trim();
+      if (id) ids.add(id);
+    });
+    results.forEach((r) => {
+      const id = String(r.id ?? "").trim();
+      if (id) ids.add(id);
+    });
+    return Array.from(ids);
+  }, [roster, results]);
   const [passAccess, setPassAccess] = useState<Record<string, string[]>>({});
   const scheduleOverrides: Record<string, Omit<ScheduleCard, "id" | "name">> = {
     class_a: { class_id: "class_a", time: "4:30 PM", instructors: ["Coach Mia"] },
@@ -294,6 +307,26 @@ export default function CheckinPage() {
     setRosterLoading(true);
     loadRoster(instanceId);
   }, [instanceId]);
+
+  useEffect(() => {
+    if (!giftLookupIds.length) {
+      setGiftCountsByStudent({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const res = await fetch("/api/student/gifts/pending-map", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_ids: giftLookupIds }),
+      });
+      const sj = await res.json().catch(() => ({}));
+      if (!cancelled && res.ok) setGiftCountsByStudent((sj?.counts ?? {}) as Record<string, number>);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [giftLookupIds]);
   useEffect(() => {
     setQuery("");
     setResults([]);
@@ -443,6 +476,7 @@ export default function CheckinPage() {
                   />
                 ) : null}
                 <span>{s.name}</span>
+                {(giftCountsByStudent[String(s.id)] ?? 0) > 0 ? <span style={giftPing()}>🎁</span> : null}
                 {isAdmin && s.checkin_id ? (
                   <span style={{ marginLeft: "auto", fontSize: 10, opacity: 0.6 }}>#{shortId(s.checkin_id)}</span>
                 ) : null}
@@ -717,6 +751,7 @@ export default function CheckinPage() {
                         {typeof s.checkin_count === "number" ? ` • Check-ins ${s.checkin_count}` : ""}
                       </div>
                       </div>
+                      {(giftCountsByStudent[String(s.id)] ?? 0) > 0 ? <span style={giftPing()}>🎁</span> : null}
                     </div>
 
                     <button onClick={() => checkIn(s)} style={btnPrimary()}>
@@ -776,6 +811,15 @@ function rosterPill(isComp: boolean, classColor: string): React.CSSProperties {
     color: "white",
     fontSize: 12,
     fontWeight: 900,
+  };
+}
+
+function giftPing(): React.CSSProperties {
+  return {
+    fontSize: 16,
+    lineHeight: 1,
+    marginLeft: 4,
+    filter: "drop-shadow(0 0 8px rgba(250,204,21,0.7))",
   };
 }
 

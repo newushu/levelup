@@ -324,7 +324,14 @@ export default function CampClassroomPage() {
               {m.secondary_role ? <div style={{ opacity: 0.75, fontSize: 12, textTransform: "uppercase" }}>2nd Role: {m.secondary_role}</div> : null}
               {m.last_change ? (
                 <div style={m.last_change.points >= 0 ? lastChangePos() : lastChangeNeg()}>
-                  {m.last_change.points >= 0 ? "+" : ""}{m.last_change.points} • {(String(m.last_change.note ?? "").trim().toLowerCase() === "given" ? "Points Awarded" : (m.last_change.note || m.last_change.category))}
+                  {m.last_change.points >= 0 ? "+" : ""}
+                  {m.last_change.points} • {
+                    (() => {
+                      const raw = String(m.last_change.note ?? "").trim();
+                      const base = raw.toLowerCase() === "given" ? "Points Awarded" : (raw || m.last_change.category);
+                      return m.last_change.points < 0 && /points awarded/i.test(String(base)) ? "Points Deducted" : base;
+                    })()
+                  }
                 </div>
               ) : null}
             </button>
@@ -348,7 +355,7 @@ export default function CampClassroomPage() {
           {Math.max(1, Number(amount) || 1)} pts
         </button>
         <button type="button" style={actionBtn("green")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(Math.max(1, Number(amount) || 1), "camp_bulk", "Points Awarded")}>+ Points</button>
-        <button type="button" style={actionBtn("red")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(-Math.max(1, Number(amount) || 1), "camp_bulk", "Points Awarded")}>- Points</button>
+        <button type="button" style={actionBtn("red")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(-Math.max(1, Number(amount) || 1), "camp_bulk", "Points Deducted")}>- Points</button>
         <button type="button" style={actionBtn("spotlight")} disabled={busy || !selectedIds.length} onClick={() => awardBulk(20, "camp_spotlight", "Camp Spotlight star")}>Camp Star +20</button>
         <button
           type="button"

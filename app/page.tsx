@@ -786,12 +786,14 @@ function AdminHomeWorkspace({ rewardCount }: { rewardCount: number }) {
   const campLinks = [
     { label: "Camp Settings", href: "/admin/custom/camp" },
     { label: "Camp Display Roster", href: "/admin/custom/camp-display" },
+    { label: "Gift Studio", href: "/admin/custom/gifts" },
     { label: "Camp Hub", href: "/camp" },
     { label: "Camp Display", href: "/display/camp" },
   ];
   const shortcutLinks = [
     { label: "⚙️ Admin Settings & Configuration", href: "/admin/custom" },
     { label: "🏕️ Camp Settings", href: "/admin/custom/camp" },
+    { label: "🎁 Gift Studio", href: "/admin/custom/gifts" },
     { label: "📣 Announcements", href: "/admin/announcements" },
     { label: "👨‍👩‍👧 Parent Pairing", href: "/admin/parent-pairing" },
     { label: "💬 Parent Messages", href: "/admin/parent-messages" },

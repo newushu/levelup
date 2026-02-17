@@ -42,14 +42,17 @@ export async function POST(req: Request) {
     const match = (defaults ?? []).find((row: any) => String(row.tier ?? "").toLowerCase().trim() === tierKey);
     defaultPoints = Number(match?.points ?? 0);
   }
-  let resolvedPoints = Number(challenge?.points_awarded ?? defaultPoints ?? 0);
+  const basePoints = Math.max(0, Number(challenge?.points_awarded ?? defaultPoints ?? 0));
+  let resolvedPoints = basePoints;
+  let pointsMultiplier: number | null = null;
 
   // Apply stacked challenge completion bonus (%), rounded to whole number.
   try {
     const stack = await getStudentModifierStack(studentId);
     const bonusPct = Math.max(0, Number(stack.challenge_completion_bonus_pct ?? 0));
     if (bonusPct > 0 && resolvedPoints > 0) {
-      resolvedPoints = Math.max(0, Math.round(resolvedPoints * (1 + bonusPct / 100)));
+      pointsMultiplier = 1 + bonusPct / 100;
+      resolvedPoints = Math.max(0, Math.round(basePoints * pointsMultiplier));
     }
   } catch {}
 
@@ -151,10 +154,15 @@ export async function POST(req: Request) {
 
   const points = resolvedPoints;
   if (completed && points > 0 && allowAward) {
-    const note = `Challenge Complete: ${challenge?.name ?? challenge?.id ?? "challenge"}`;
+    const bonus = Math.max(0, points - basePoints);
+    const note = bonus > 0
+      ? `Challenge Complete: ${challenge?.name ?? challenge?.id ?? "challenge"} (+${bonus} avatar modifier)`
+      : `Challenge Complete: ${challenge?.name ?? challenge?.id ?? "challenge"}`;
     const { error: lErr } = await admin.from("ledger").insert({
       student_id: studentId,
       points,
+      points_base: pointsMultiplier !== null ? basePoints : null,
+      points_multiplier: pointsMultiplier,
       note,
       category: "challenge",
       created_by: auth.user.id,

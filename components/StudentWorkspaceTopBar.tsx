@@ -21,6 +21,7 @@ export default function StudentWorkspaceTopBar({
   onSelectStudentByName,
   onSelectStudent,
   recentMvp = false,
+  hasGift = false,
   hideWhenNoStudent = false,
 }: {
   student: StudentSummary | null;
@@ -29,6 +30,7 @@ export default function StudentWorkspaceTopBar({
   onSelectStudentByName?: (name: string) => void;
   onSelectStudent?: () => void;
   recentMvp?: boolean;
+  hasGift?: boolean;
   hideWhenNoStudent?: boolean;
 }) {
   const [studentQuery, setStudentQuery] = useState("");
@@ -130,7 +132,10 @@ export default function StudentWorkspaceTopBar({
           />
         </div>
         <div className="student-workspace-topbar__meta">
-          <div className="student-workspace-topbar__name">{student?.name ?? "No Student Selected"}</div>
+          <div className="student-workspace-topbar__name-wrap">
+            <div className="student-workspace-topbar__name">{student?.name ?? "No Student Selected"}</div>
+            {hasGift ? <span className="student-workspace-topbar__gift" title="Has unopened gifts">🎁</span> : null}
+          </div>
           <div className="student-workspace-topbar__chips">
             <span className="student-workspace-topbar__chip">Level {level}</span>
             <span className="student-workspace-topbar__chip student-workspace-topbar__chip--points">{points.toLocaleString()} pts</span>
@@ -232,6 +237,26 @@ export function studentWorkspaceTopBarStyles() {
       overflow: hidden;
       text-overflow: ellipsis;
       max-width: min(54vw, 560px);
+    }
+
+    .student-workspace-topbar__name-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .student-workspace-topbar__gift {
+      font-size: 28px;
+      line-height: 1;
+      filter: drop-shadow(0 0 10px rgba(250,204,21,0.7));
+      animation: topbarGiftPulse 1.4s ease-in-out infinite;
+      flex: 0 0 auto;
+    }
+    @keyframes topbarGiftPulse {
+      0% { transform: scale(1); opacity: 0.9; }
+      50% { transform: scale(1.14); opacity: 1; }
+      100% { transform: scale(1); opacity: 0.9; }
     }
 
     .student-workspace-topbar__chips {

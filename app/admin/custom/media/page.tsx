@@ -384,6 +384,7 @@ const SOUND_EFFECT_PRESETS: Array<{ key: string; label: string; purpose: string 
   { key: "wheel_spin_music", label: "Prize Wheel Spin Music", purpose: "Prize wheel spin background audio" },
   { key: "wheel_confirm", label: "Prize Wheel Confirm", purpose: "Prize wheel confirm overlay" },
   { key: "ui_button_press", label: "Button Press", purpose: "UI button press feedback" },
+  { key: "gift_open", label: "Gift Open", purpose: "Gift box opening sound" },
   { key: "ctf_safe_zone", label: "CTF Safe Zone Alert", purpose: "CTF safe zone no longer safe" },
   { key: "ctf_point_1", label: "CTF +1 Point", purpose: "CTF 1 point score" },
   { key: "ctf_point_5", label: "CTF +5 Points", purpose: "CTF 5 point score" },

@@ -143,6 +143,15 @@ type PendingUnlock = {
   item_name: string;
   unlock_points: number;
 };
+type LastAction = {
+  id: string;
+  points: number;
+  points_base?: number | null;
+  points_multiplier?: number | null;
+  note?: string | null;
+  category?: string | null;
+  created_at?: string | null;
+};
 type LevelThresholdRow = {
   level: number;
   min_lifetime_points: number;
@@ -175,6 +184,53 @@ function toColorInputHex(value: string) {
     return `#${v}`.toLowerCase();
   }
   return "#0f172a";
+}
+
+function hexToRgb(hex: string) {
+  const raw = toColorInputHex(hex);
+  const clean = raw.replace("#", "");
+  return {
+    r: parseInt(clean.slice(0, 2), 16),
+    g: parseInt(clean.slice(2, 4), 16),
+    b: parseInt(clean.slice(4, 6), 16),
+  };
+}
+
+function rgbToHex(r: number, g: number, b: number) {
+  const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
+  return `#${[clamp(r), clamp(g), clamp(b)].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function buildDarkAvatarGradientFromHex(hex: string) {
+  const { r, g, b } = hexToRgb(hex);
+  const maxChannel = Math.max(r, g, b, 1);
+  const targetMax = 70;
+  const scale = Math.min(1, targetMax / maxChannel);
+  const dr = Math.max(8, Math.round(r * scale));
+  const dg = Math.max(8, Math.round(g * scale));
+  const db = Math.max(8, Math.round(b * scale));
+  const light = `rgba(${Math.min(255, Math.round(dr * 1.1))},${Math.min(255, Math.round(dg * 1.1))},${Math.min(255, Math.round(db * 1.1))},0.9)`;
+  const dark = `rgba(${Math.max(0, Math.round(dr * 0.45))},${Math.max(0, Math.round(dg * 0.45))},${Math.max(0, Math.round(db * 0.45))},0.98)`;
+  return `linear-gradient(160deg, ${light}, ${dark})`;
+}
+
+function pickerHexFromAvatarBg(value: string) {
+  const raw = String(value ?? "").trim();
+  const gradientMatch = raw.match(/rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i);
+  if (gradientMatch) {
+    return rgbToHex(Number(gradientMatch[1]), Number(gradientMatch[2]), Number(gradientMatch[3]));
+  }
+  return toColorInputHex(raw);
+}
+
+function normalizeAvatarBgForDisplay(value: string) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return buildDarkAvatarGradientFromHex("#0f172a");
+  if (/linear-gradient\(/i.test(raw)) return raw;
+  if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(raw) || /^rgb(a)?\(/i.test(raw)) {
+    return buildDarkAvatarGradientFromHex(toColorInputHex(raw));
+  }
+  return buildDarkAvatarGradientFromHex("#0f172a");
 }
 
 export default function StudentInfoPage() {
@@ -243,6 +299,10 @@ export default function StudentInfoPage() {
   const [redeemingDaily, setRedeemingDaily] = useState(false);
   const [pendingUnlock, setPendingUnlock] = useState<PendingUnlock | null>(null);
   const [levelThresholds, setLevelThresholds] = useState<LevelThresholdRow[]>([]);
+  const [lastAction, setLastAction] = useState<LastAction | null>(null);
+  const [giftCount, setGiftCount] = useState(0);
+  const [giftButtonImageUrl, setGiftButtonImageUrl] = useState("");
+  const [giftButtonEmoji, setGiftButtonEmoji] = useState("🎁");
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
@@ -298,6 +358,17 @@ export default function StudentInfoPage() {
   }, [checked]);
 
   useEffect(() => {
+    if (!checked) return;
+    (async () => {
+      const res = await fetch("/api/gifts/button-settings", { cache: "no-store" });
+      const sj = await safeJson(res);
+      if (!sj.ok) return;
+      setGiftButtonImageUrl(String(sj.json?.settings?.image_url ?? "").trim());
+      setGiftButtonEmoji(String(sj.json?.settings?.emoji ?? "🎁").trim() || "🎁");
+    })();
+  }, [checked]);
+
+  useEffect(() => {
     (async () => {
       const [avatarsRes, effectsRes, bordersRes, levelsRes] = await Promise.all([
         fetch("/api/avatars/list", { cache: "no-store" }),
@@ -340,9 +411,9 @@ export default function StudentInfoPage() {
         const s = settingsJson?.settings ?? null;
         setAvatarId(String(s?.avatar_id ?? "").trim());
         const bg = String(s?.bg_color ?? "").trim();
-        const normalizedBg = bg || "rgba(15,23,42,0.75)";
+        const normalizedBg = normalizeAvatarBgForDisplay(bg);
         setAvatarBg(normalizedBg);
-        setAvatarBgInput(toColorInputHex(normalizedBg));
+        setAvatarBgInput(pickerHexFromAvatarBg(normalizedBg));
         const effectKey = String(s?.particle_style ?? "").trim();
         setAvatarEffectKey(effectKey || null);
         const borderKey = String(s?.corner_border_key ?? "").trim();
@@ -375,7 +446,7 @@ export default function StudentInfoPage() {
       const weekStart = getWeekStartUTC();
       const weekStartIso = weekStart.toISOString();
 
-      const [badgesRes, prestigeRes, prestigeProgRes, challengesRes, medalsRes, highlightsRes, attendanceRes, mvpTotalRes, mvpWeekRes, taoluRes, battlesRes, trackersRes, mvpBadgeRes, dailyStatusRes, seasonRes, leaderboardRes] =
+      const [badgesRes, prestigeRes, prestigeProgRes, challengesRes, medalsRes, highlightsRes, attendanceRes, mvpTotalRes, mvpWeekRes, taoluRes, battlesRes, trackersRes, mvpBadgeRes, dailyStatusRes, seasonRes, leaderboardRes, lastActionRes, giftsRes] =
         await Promise.all([
           fetch("/api/students/badges", {
             method: "POST",
@@ -425,6 +496,8 @@ export default function StudentInfoPage() {
           }),
           fetch("/api/season-settings", { cache: "no-store" }),
           fetch("/api/leaderboard", { cache: "no-store" }),
+          fetch(`/api/student/last-action?student_id=${encodeURIComponent(studentId)}`, { cache: "no-store" }),
+          fetch(`/api/student/gifts?student_id=${encodeURIComponent(studentId)}`, { cache: "no-store" }),
         ]);
 
       const badgesJson = await safeJson(badgesRes);
@@ -489,6 +562,17 @@ export default function StudentInfoPage() {
         setLeaderboards((leaderboardJson.json?.leaderboards ?? null) as LeaderboardPayload | null);
         setLeaderboardLabels((leaderboardJson.json?.leaderboard_labels ?? {}) as Record<string, string>);
       }
+      const lastActionJson = await safeJson(lastActionRes);
+      if (lastActionJson.ok) setLastAction((lastActionJson.json?.last_action ?? null) as LastAction | null);
+      else setLastAction(null);
+      const giftsJson = await safeJson(giftsRes);
+      if (giftsJson.ok) {
+        const rows = Array.isArray(giftsJson.json?.gifts) ? giftsJson.json.gifts : [];
+        const count = rows.reduce((sum: number, row: any) => sum + Math.max(0, Number(row?.qty ?? 0) - Number(row?.opened_qty ?? 0)), 0);
+        setGiftCount(count);
+      } else {
+        setGiftCount(0);
+      }
       const recentStart = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
       const recentMvpRes = await fetch("/api/mvp/count", {
         method: "POST",
@@ -529,6 +613,20 @@ export default function StudentInfoPage() {
       if (!statusJson.ok || cancelled) return;
       setDailyRedeem((statusJson.json?.status ?? null) as DailyRedeemStatus | null);
     }
+    async function refreshLastActionAndGifts() {
+      const [lastRes, giftsRes] = await Promise.all([
+        fetch(`/api/student/last-action?student_id=${encodeURIComponent(studentId)}`, { cache: "no-store" }),
+        fetch(`/api/student/gifts?student_id=${encodeURIComponent(studentId)}`, { cache: "no-store" }),
+      ]);
+      const lastJson = await safeJson(lastRes);
+      if (lastJson.ok && !cancelled) setLastAction((lastJson.json?.last_action ?? null) as LastAction | null);
+      const giftsJson = await safeJson(giftsRes);
+      if (giftsJson.ok && !cancelled) {
+        const rows = Array.isArray(giftsJson.json?.gifts) ? giftsJson.json.gifts : [];
+        const count = rows.reduce((sum: number, row: any) => sum + Math.max(0, Number(row?.qty ?? 0) - Number(row?.opened_qty ?? 0)), 0);
+        setGiftCount(count);
+      }
+    }
 
     let refreshTimer: number | null = null;
     const scheduleRefresh = () => {
@@ -537,15 +635,18 @@ export default function StudentInfoPage() {
         if (document.visibilityState !== "visible") return;
         void refreshSelectedStudent();
         void refreshDailyStatus();
+        void refreshLastActionAndGifts();
       }, 220);
     };
 
     void refreshSelectedStudent();
     void refreshDailyStatus();
+    void refreshLastActionAndGifts();
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void refreshSelectedStudent();
       void refreshDailyStatus();
+      void refreshLastActionAndGifts();
     }, 15000);
 
     const sb = supabaseClient();
@@ -561,6 +662,7 @@ export default function StudentInfoPage() {
     const onStudentsRefresh = () => {
       void refreshSelectedStudent();
       void refreshDailyStatus();
+      void refreshLastActionAndGifts();
     };
     window.addEventListener("students-refresh", onStudentsRefresh);
 
@@ -603,6 +705,39 @@ export default function StudentInfoPage() {
   const pointsDisplay = Number(student?.points_total ?? student?.points_balance ?? 0);
   const levelDisplay = Number(student?.level ?? 1);
   const lifetimePoints = Number(student?.lifetime_points ?? student?.points_total ?? 0);
+  const lastActionPoints = Number(lastAction?.points ?? 0);
+  const lastActionUp = lastActionPoints >= 0;
+  const lastActionCategory = String(lastAction?.category ?? "").trim().toLowerCase();
+  const lastActionNote = String(lastAction?.note ?? "").trim();
+  const lastActionSourceLabel = useMemo(() => {
+    if (!lastActionCategory && !lastActionNote) return "No recent activity";
+    if (lastActionCategory === "rule_keeper") return "Rule Keeper";
+    if (lastActionCategory === "rule_breaker") return "Rule Breaker";
+    if (lastActionCategory === "challenge") return "Challenge";
+    if (lastActionCategory === "skill_pulse") return "Skill Pulse";
+    if (lastActionCategory === "gift_open") return "Gift Open";
+    if (lastActionCategory === "camp_bulk") return lastActionPoints < 0 ? "Camp Classroom Deduction" : "Camp Classroom Award";
+    if (lastActionCategory) return lastActionCategory.replace(/_/g, " ");
+    return lastActionNote || "Activity";
+  }, [lastActionCategory, lastActionNote, lastActionPoints]);
+  const lastActionModifier = useMemo(() => {
+    const pointsBase = lastAction?.points_base == null ? null : Number(lastAction.points_base);
+    const pointsMultiplier = lastAction?.points_multiplier == null ? null : Number(lastAction.points_multiplier);
+    const noteLower = lastActionNote.toLowerCase();
+    if (lastActionCategory === "rule_breaker" || noteLower.includes("protection")) {
+      const protectedPts =
+        pointsBase != null && lastActionPoints < 0
+          ? Math.max(0, Math.round(Math.abs(pointsBase) - Math.abs(lastActionPoints)))
+          : 0;
+      if (protectedPts > 0 || noteLower.includes("protection")) {
+        return `🛡 protected${protectedPts > 0 ? ` +${protectedPts}` : ""}`;
+      }
+    }
+    if ((pointsMultiplier != null && pointsMultiplier > 1) || noteLower.includes("modifier") || noteLower.includes("boost")) {
+      return "boosted";
+    }
+    return "";
+  }, [lastAction, lastActionCategory, lastActionNote, lastActionPoints]);
   const thresholdMap = useMemo(() => {
     const map = new Map<number, number>();
     levelThresholds.forEach((row) => {
@@ -1018,9 +1153,9 @@ export default function StudentInfoPage() {
     if (patch.particle_style !== undefined) setAvatarEffectKey(patch.particle_style === "none" ? null : patch.particle_style);
     if (patch.corner_border_key !== undefined) setCornerBorderKey(patch.corner_border_key === "none" ? null : patch.corner_border_key);
     if (patch.bg_color !== undefined) {
-      const nextBg = String(patch.bg_color || "").trim() || "rgba(15,23,42,0.75)";
+      const nextBg = normalizeAvatarBgForDisplay(String(patch.bg_color || "").trim());
       setAvatarBg(nextBg);
-      setAvatarBgInput(toColorInputHex(nextBg));
+      setAvatarBgInput(pickerHexFromAvatarBg(nextBg));
     }
     setMsg("Style updated.");
   }
@@ -1112,6 +1247,7 @@ export default function StudentInfoPage() {
             onSelectStudentByName={selectStudentByName}
             students={students}
             recentMvp={recentMvp}
+            hasGift={giftCount > 0}
           />
           <section className="student-info__split">
             <aside className="student-info__left">
@@ -1119,6 +1255,15 @@ export default function StudentInfoPage() {
                 <div className="left-card__name">{student?.name ?? "Student"}</div>
                 <div className="left-card__label">Level {levelDisplay}</div>
                 <div className="left-card__points">{pointsDisplay.toLocaleString()} pts</div>
+                {lastAction ? (
+                  <div className={`left-card__last-chip ${lastActionUp ? "left-card__last-chip--up" : "left-card__last-chip--down"}`}>
+                    <span>{lastActionUp ? "▲" : "▼"}</span>
+                    <span>{lastActionUp ? "+" : ""}{Math.round(lastActionPoints)} pts</span>
+                    <span>•</span>
+                    <span>{lastActionSourceLabel}</span>
+                    {lastActionModifier ? <span className="left-card__last-mod">{lastActionModifier}</span> : null}
+                  </div>
+                ) : null}
                 <div className="left-card__avatar left-card__avatar-wrap">
                   <AvatarRender
                     size={260}
@@ -1198,7 +1343,19 @@ export default function StudentInfoPage() {
                 <div className="redeem-card">
                   <div className="redeem-card__head">
                     <div className="redeem-card__title">Daily Points to Redeem</div>
-                    <div className="redeem-card__pts">+{Math.round(Number(dailyRedeem?.available_points ?? 0))}</div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      {giftCount > 0 ? (
+                        <a href="/student/gifts" className="gift-icon-btn" title="Open Gift Box">
+                          {giftButtonImageUrl ? (
+                            <img src={giftButtonImageUrl} alt="Gift" className="gift-icon-btn__img" />
+                          ) : (
+                            <span className="gift-icon-btn__emoji">{giftButtonEmoji || "🎁"}</span>
+                          )}
+                          <span className="gift-icon-btn__badge">{giftCount}</span>
+                        </a>
+                      ) : null}
+                      <div className="redeem-card__pts">+{Math.round(Number(dailyRedeem?.available_points ?? 0))}</div>
+                    </div>
                   </div>
                   <div className="redeem-next">Points so far: +{Math.round(Number(dailyRedeem?.available_points ?? 0))}</div>
                   <div className="redeem-next">Next redeem: {nextRedeemLabel}</div>
@@ -1453,7 +1610,7 @@ export default function StudentInfoPage() {
                 <button className={`avatar-picker-tab ${avatarPickerSort === "mvp_bonus" ? "avatar-picker-tab--active" : ""}`} onClick={() => setAvatarPickerSort("mvp_bonus")}>Sort: MVP Bonus</button>
               </div>
               <div className="avatar-bg-row">
-                <label className="avatar-bg-label" htmlFor="avatar-bg-color">Avatar BG Color</label>
+                <label className="avatar-bg-label" htmlFor="avatar-bg-color">Avatar BG Color (auto dark gradient)</label>
                 <input
                   id="avatar-bg-color"
                   type="color"
@@ -1464,7 +1621,7 @@ export default function StudentInfoPage() {
                 <button
                   type="button"
                   className="redeem-detail-btn"
-                  onClick={() => applyStylePatch({ bg_color: avatarBgInput })}
+                  onClick={() => applyStylePatch({ bg_color: buildDarkAvatarGradientFromHex(avatarBgInput) })}
                 >
                   Save BG
                 </button>
@@ -1825,6 +1982,40 @@ function pageStyles() {
       font-weight: 1000;
     }
 
+    .left-card__last-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 0.3px;
+      max-width: 100%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      border: 1px solid rgba(148,163,184,0.38);
+      background: rgba(15,23,42,0.65);
+    }
+    .left-card__last-chip--up {
+      border-color: rgba(74,222,128,0.5);
+      background: rgba(20,83,45,0.38);
+      color: #dcfce7;
+      box-shadow: 0 0 12px rgba(74,222,128,0.2);
+    }
+    .left-card__last-chip--down {
+      border-color: rgba(248,113,113,0.55);
+      background: rgba(127,29,29,0.38);
+      color: #fee2e2;
+      box-shadow: 0 0 12px rgba(248,113,113,0.2);
+    }
+    .left-card__last-mod {
+      color: #bfdbfe;
+      font-style: italic;
+      text-shadow: 0 0 8px rgba(96,165,250,0.55);
+    }
+
     .left-card__avatar {
       margin-top: 10px;
       display: grid;
@@ -2048,6 +2239,55 @@ function pageStyles() {
       font-weight: 1000;
       color: #86efac;
       text-shadow: 0 0 16px rgba(34,197,94,0.28);
+    }
+
+    .gift-icon-btn {
+      width: 50px;
+      height: 50px;
+      border-radius: 14px;
+      border: 1px solid rgba(250,204,21,0.58);
+      background: linear-gradient(135deg, rgba(180,83,9,0.9), rgba(146,64,14,0.95));
+      color: #fff7ed;
+      text-decoration: none;
+      display: grid;
+      place-items: center;
+      position: relative;
+      box-shadow: 0 0 18px rgba(250,204,21,0.22);
+      animation: giftPulse 1.6s ease-in-out infinite;
+      overflow: visible;
+      flex: 0 0 auto;
+    }
+    .gift-icon-btn__img {
+      width: 34px;
+      height: 34px;
+      border-radius: 9px;
+      object-fit: cover;
+    }
+    .gift-icon-btn__emoji {
+      font-size: 26px;
+      line-height: 1;
+    }
+    .gift-icon-btn__badge {
+      position: absolute;
+      top: -7px;
+      right: -7px;
+      border-radius: 999px;
+      min-width: 22px;
+      height: 22px;
+      padding: 0 6px;
+      background: #dc2626;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 1000;
+      display: grid;
+      place-items: center;
+      box-shadow: 0 0 14px rgba(220,38,38,0.42);
+      border: 1px solid rgba(255,255,255,0.45);
+    }
+    @keyframes giftPulse {
+      0% { transform: translateY(0) scale(1); box-shadow: 0 0 14px rgba(250,204,21,0.22); }
+      50% { transform: translateY(-1px) scale(1.03); box-shadow: 0 0 22px rgba(250,204,21,0.35); }
+      100% { transform: translateY(0) scale(1); box-shadow: 0 0 14px rgba(250,204,21,0.22); }
     }
 
     .redeem-card__chips {
@@ -2485,17 +2725,19 @@ function pageStyles() {
     }
 
     .badge-row--prestige {
-      max-height: 288px;
+      max-height: 360px;
       overflow-y: auto;
-      padding-right: 4px;
+      padding-right: 6px;
       grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
       align-items: stretch;
+      gap: 14px;
     }
 
     .badge-row--prestige .badge-tile {
-      min-height: 124px;
-      padding: 10px;
+      min-height: 156px;
+      padding: 12px 10px;
       align-content: start;
+      gap: 10px;
     }
 
     .badge-row--prestige .badge-tile__img {
@@ -2505,11 +2747,15 @@ function pageStyles() {
 
     .badge-row--prestige .badge-title {
       font-size: 11px;
-      line-height: 1.15;
+      line-height: 1.25;
       max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: normal;
+      min-height: 28px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
     }
 
     .badge-row--prestige .badge-progress__text {
@@ -2517,15 +2763,19 @@ function pageStyles() {
       max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: normal;
+      line-height: 1.25;
+      min-height: 30px;
     }
 
     .badge-row--prestige .badge-progress__detail {
-      font-size: 9px;
+      font-size: 10px;
       max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: normal;
+      line-height: 1.25;
+      min-height: 24px;
     }
 
     .badge-tile--earned::after {

@@ -98,6 +98,11 @@ const adminSections = [
         href: "/admin/custom/rewards",
       },
       {
+        title: "Gift Studio",
+        desc: "Create gift designs, define gift items, and assign gifts to students.",
+        href: "/admin/custom/gifts",
+      },
+      {
         title: "Leaderboard Daily Bonus",
         desc: "Set daily points for top-5 leaderboard placements.",
         href: "/admin/custom/leaderboard-bonus",

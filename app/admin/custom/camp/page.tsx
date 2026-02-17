@@ -278,6 +278,9 @@ export default function CampAdminSettingsPage() {
         <a href="/admin/custom/camp-display" style={quickLink()}>
           Camp Display Roster
         </a>
+        <a href="/admin/custom/gifts" style={quickLink()}>
+          Gift Studio
+        </a>
         <a href="/admin/custom/camp-factions" style={quickLink()}>
           Camp Factions
         </a>
@@ -337,6 +340,7 @@ export default function CampAdminSettingsPage() {
           <label style={label()}>
             Camp PIN (leave blank to keep)
             <input
+              type="password"
               value={campPin}
               onChange={(e) => setCampPin(e.target.value)}
               placeholder="New PIN"

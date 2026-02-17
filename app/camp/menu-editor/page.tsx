@@ -240,6 +240,7 @@ export default function CampMenuEditorPage() {
         <div style={{ fontSize: 26, fontWeight: 900 }}>Camp Menu Editor</div>
         <div style={{ marginTop: 12 }}>
           <input
+            type="password"
             value={pin}
             onChange={(e) => setPin(e.target.value)}
             onKeyDown={(e) => {

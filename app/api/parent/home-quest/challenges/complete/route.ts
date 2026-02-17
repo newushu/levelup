@@ -97,14 +97,17 @@ export async function POST(req: Request) {
     const match = (defaults ?? []).find((row: any) => String(row.tier ?? "").toLowerCase().trim() === tierKey);
     defaultPoints = Number(match?.points ?? 0);
   }
-  let resolvedPoints = Number(challenge?.points_awarded ?? defaultPoints ?? 0);
+  const basePoints = Math.max(0, Number(challenge?.points_awarded ?? defaultPoints ?? 0));
+  let resolvedPoints = basePoints;
+  let pointsMultiplier: number | null = null;
 
   // Apply stacked challenge completion bonus (%), rounded to whole number.
   try {
     const stack = await getStudentModifierStack(student_id);
     const bonusPct = Math.max(0, Number(stack.challenge_completion_bonus_pct ?? 0));
     if (bonusPct > 0 && resolvedPoints > 0) {
-      resolvedPoints = Math.max(0, Math.round(resolvedPoints * (1 + bonusPct / 100)));
+      pointsMultiplier = 1 + bonusPct / 100;
+      resolvedPoints = Math.max(0, Math.round(basePoints * pointsMultiplier));
     }
   } catch {}
   if (isParentChallenge) {
@@ -177,10 +180,15 @@ export async function POST(req: Request) {
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
   if (resolvedPoints > 0 && allowAward) {
-    const note = `Home Quest: ${challenge?.name ?? challenge?.id ?? "challenge"}`;
+    const bonus = Math.max(0, resolvedPoints - basePoints);
+    const note = bonus > 0
+      ? `Home Quest: ${challenge?.name ?? challenge?.id ?? "challenge"} (+${bonus} avatar modifier)`
+      : `Home Quest: ${challenge?.name ?? challenge?.id ?? "challenge"}`;
     const { error: lErr } = await admin.from("ledger").insert({
       student_id,
       points: resolvedPoints,
+      points_base: pointsMultiplier !== null ? basePoints : null,
+      points_multiplier: pointsMultiplier,
       note,
       category: "challenge",
       created_by: ctx.userId,

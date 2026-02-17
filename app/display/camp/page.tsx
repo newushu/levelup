@@ -33,6 +33,8 @@ type CampDisplayMember = {
   };
   last_change?: {
     points: number;
+    points_base?: number | null;
+    points_multiplier?: number | null;
     note: string;
     category: string;
     created_at: string;
@@ -70,7 +72,7 @@ type ApiPayload = {
   display_members?: CampDisplayMember[];
   announcements?: Array<{ student_id: string; name: string; created_at: string; label?: string; detail?: string }>;
 };
-const RECENT_CHANGE_GLOW_MS = 15_000;
+const RECENT_CHANGE_GLOW_MS = 60_000;
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -161,6 +163,51 @@ function getEasternDayCodeNow() {
   return "";
 }
 
+function parsePositivePointsFromNote(note: string) {
+  const hit = note.match(/\(\+(\d+)\)/);
+  if (!hit) return 0;
+  return Math.max(0, Number(hit[1] ?? 0));
+}
+
+function getAvatarModifierLabel(change?: CampDisplayMember["last_change"] | null) {
+  if (!change) return null as null | { text: string };
+  const category = String(change.category ?? "").trim().toLowerCase();
+  const note = String(change.note ?? "");
+  const noteLower = note.toLowerCase();
+  const points = Number(change.points ?? 0);
+  const pointsBase = change.points_base == null ? null : Number(change.points_base);
+  const multiplier = change.points_multiplier == null ? null : Number(change.points_multiplier);
+
+  const protectedFromBase =
+    pointsBase != null && Number.isFinite(pointsBase) && points < 0
+      ? Math.max(0, Math.round(Math.abs(pointsBase) - Math.abs(points)))
+      : 0;
+  const protectedFromNote = noteLower.includes("protection")
+    ? Math.max(0, parsePositivePointsFromNote(note), Math.round(Math.max(0, points)))
+    : 0;
+  const protectedPoints = Math.max(protectedFromBase, protectedFromNote);
+
+  if (
+    (category === "rule_breaker" && protectedPoints > 0) ||
+    (multiplier != null && Number.isFinite(multiplier) && multiplier < 1 && protectedPoints > 0) ||
+    noteLower.includes("protection")
+  ) {
+    return { text: `🛡 Avatar protected +${protectedPoints} pts` };
+  }
+
+  const boostedByMultiplier = multiplier != null && Number.isFinite(multiplier) && multiplier > 1;
+  const boostedByNote =
+    noteLower.includes("avatar") ||
+    noteLower.includes("modifier") ||
+    noteLower.includes("mvp bonus") ||
+    noteLower.includes("skill pulse");
+  const boostedCategory = category === "skill_pulse" || category === "challenge" || category === "rule_keeper";
+  if (boostedByMultiplier || (boostedByNote && boostedCategory)) {
+    return { text: "Avatar boosted" };
+  }
+  return null;
+}
+
 export default function CampDisplayPage() {
   const searchParams = useSearchParams();
   const screenId = Math.min(3, Math.max(1, Number(searchParams.get("screen") ?? 1) || 1));
@@ -186,6 +233,7 @@ export default function CampDisplayPage() {
   const [menuBarHover, setMenuBarHover] = useState(false);
   const [canHover, setCanHover] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [giftCountsByStudent, setGiftCountsByStudent] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
@@ -283,6 +331,27 @@ export default function CampDisplayPage() {
     const t = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(t);
   }, []);
+
+  useEffect(() => {
+    const ids = Array.from(new Set(rows.map((r) => String(r.student_id ?? "").trim()).filter(Boolean)));
+    if (!ids.length) {
+      setGiftCountsByStudent({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const res = await fetch("/api/student/gifts/pending-map", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_ids: ids }),
+      });
+      const sj = await res.json().catch(() => ({}));
+      if (!cancelled && res.ok) setGiftCountsByStudent((sj?.counts ?? {}) as Record<string, number>);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rows]);
 
   const uniqueAnnouncements = useMemo(() => {
     const used = new Set<string>();
@@ -423,7 +492,12 @@ export default function CampDisplayPage() {
               const delta = Number(row.last_change?.points ?? 0);
               const deltaUp = delta >= 0;
               const rawReason = String(row.last_change?.note ?? row.last_change?.category ?? "").trim();
-              const reason = rawReason.toLowerCase() === "given" ? "Points Awarded" : rawReason;
+              const reasonBase = rawReason.toLowerCase() === "given" ? "Points Awarded" : rawReason;
+              const reason =
+                delta < 0 && /points awarded/i.test(reasonBase)
+                  ? "Points Deducted"
+                  : reasonBase;
+              const avatarModifierLabel = getAvatarModifierLabel(row.last_change);
               const changeAtMs = row.last_change?.created_at ? new Date(row.last_change.created_at).getTime() : Number.NaN;
               const isRecentPointChange =
                 Number.isFinite(changeAtMs) && changeAtMs <= nowMs && nowMs - changeAtMs <= RECENT_CHANGE_GLOW_MS;
@@ -461,6 +535,9 @@ export default function CampDisplayPage() {
                   style={card(cardTone, Boolean(faction), isRecentPointChange ? (deltaUp ? "up" : "down") : null, glowPulse)}
                 >
                   <div style={roleChip()}>{row.display_role || "camper"}</div>
+                  {(giftCountsByStudent[String(row.student_id)] ?? 0) > 0 ? (
+                    <div style={giftAlertChip()}>✨ 🎁 Gift</div>
+                  ) : null}
                   {isCampRole(primaryRole) ? (
                     <div style={roleClaimHint()}>
                       +{Math.round(primaryRolePoints)} today
@@ -532,7 +609,7 @@ export default function CampDisplayPage() {
                     />
                   </div>
                   </div>
-                  <div style={{ display: "grid", gap: 4, textAlign: "center" }}>
+                  <div style={namePointsBox(isRecentPointChange, deltaUp, glowPulse)}>
                     <div style={{ fontSize: 15, fontWeight: 1000, lineHeight: 1 }}>{s.name}</div>
                     <div style={pointsChip()}>{Number(s.points_total ?? 0).toLocaleString()} pts</div>
                   </div>
@@ -544,6 +621,7 @@ export default function CampDisplayPage() {
                         {delta.toLocaleString()} pts
                       </div>
                       <div style={deltaReasonLine()}>{reason || "Point update"}</div>
+                      {avatarModifierLabel ? <div style={avatarModifierLine(isRecentPointChange, glowPulse)}>{avatarModifierLabel.text}</div> : null}
                     </div>
                   ) : null}
                   <div style={keeperBreakerGrid()}>
@@ -575,7 +653,7 @@ export default function CampDisplayPage() {
                   </div>
                   {redeem.can_redeem ? (
                     <div style={redeemMiniChip()}>
-                      +{Math.round(Number(redeem.available_points ?? 0))} can be redeemed
+                      +{Math.round(Number(redeem.available_points ?? 0))} to redeem
                     </div>
                   ) : null}
                 </section>
@@ -767,10 +845,33 @@ function roleChip(): React.CSSProperties {
     textTransform: "uppercase",
   };
 }
+function giftAlertChip(): React.CSSProperties {
+  const pulse = 0.86 + ((Math.sin(Date.now() / 210) + 1) / 2) * 0.28;
+  return {
+    position: "absolute",
+    top: 28,
+    right: 8,
+    borderRadius: 999,
+    border: "1px solid rgba(250,204,21,0.66)",
+    background: "linear-gradient(145deg, rgba(254,240,138,0.34), rgba(120,53,15,0.52))",
+    color: "#fef3c7",
+    padding: "2px 8px",
+    fontSize: 10,
+    fontWeight: 1000,
+    letterSpacing: 0.2,
+    textTransform: "uppercase",
+    boxShadow: "0 0 12px rgba(250,204,21,0.55), 0 0 24px rgba(250,204,21,0.28)",
+    transform: `scale(${pulse})`,
+    transformOrigin: "center",
+    pointerEvents: "none",
+    userSelect: "none",
+    zIndex: 3,
+  };
+}
 function roleClaimHint(): React.CSSProperties {
   return {
     position: "absolute",
-    top: 26,
+    top: 46,
     right: 8,
     borderRadius: 8,
     border: "1px solid rgba(125,211,252,0.42)",
@@ -877,6 +978,22 @@ function pointsChip(): React.CSSProperties {
     justifyContent: "center",
     minHeight: 38,
     textAlign: "center",
+  };
+}
+function namePointsBox(recent = false, up = true, pulse = 0): React.CSSProperties {
+  const glowColor = up ? `rgba(74,222,128,${0.22 + pulse * 0.25})` : `rgba(248,113,113,${0.2 + pulse * 0.23})`;
+  const borderColor = up ? "rgba(74,222,128,0.5)" : "rgba(248,113,113,0.5)";
+  return {
+    display: "grid",
+    gap: 4,
+    textAlign: "center",
+    width: "100%",
+    borderRadius: 10,
+    border: recent ? `1px solid ${borderColor}` : "1px solid rgba(148,163,184,0.25)",
+    background: "linear-gradient(160deg, rgba(2,6,23,0.36), rgba(15,23,42,0.42))",
+    padding: "5px 6px",
+    boxShadow: recent ? `0 0 ${16 + pulse * 10}px ${glowColor}, inset 0 0 10px ${glowColor}` : "none",
+    transition: "box-shadow 180ms ease, border-color 180ms ease",
   };
 }
 function tallyRow(): React.CSSProperties {
@@ -1234,6 +1351,21 @@ function deltaReasonLine(): React.CSSProperties {
     opacity: 0.86,
     textAlign: "center",
     wordBreak: "break-word",
+  };
+}
+function avatarModifierLine(recent = false, pulse = 0): React.CSSProperties {
+  return {
+    fontSize: 10,
+    lineHeight: 1.15,
+    textAlign: "center",
+    fontStyle: "italic",
+    fontWeight: 900,
+    color: "#bfdbfe",
+    textShadow: recent
+      ? `0 0 ${8 + pulse * 6}px rgba(96,165,250,${0.55 + pulse * 0.25})`
+      : "0 0 6px rgba(96,165,250,0.45)",
+    opacity: recent ? 0.9 + pulse * 0.1 : 0.9,
+    letterSpacing: 0.2,
   };
 }
 function debugToggleBtn(): React.CSSProperties {

@@ -54,6 +54,7 @@ export default function CampHubPage() {
         <div style={card()}>
           <div style={{ fontWeight: 900, marginBottom: 8 }}>Camp PIN / NFC</div>
           <input
+            type="password"
             value={pin}
             onChange={(e) => setPin(e.target.value)}
             onKeyDown={(e) => {

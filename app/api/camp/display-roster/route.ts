@@ -301,12 +301,15 @@ async function loadRecentLedgerByStudent(
   ids: string[],
   opts?: { includeCampOrders?: boolean }
 ) {
-  const map = new Map<string, { points: number; note: string; category: string; created_at: string }>();
+  const map = new Map<
+    string,
+    { points: number; note: string; category: string; created_at: string; points_base: number | null; points_multiplier: number | null }
+  >();
   if (!ids.length) return map;
 
   const { data: rows } = await admin
     .from("ledger")
-    .select("student_id,points,note,category,created_at")
+    .select("student_id,points,points_base,points_multiplier,note,category,created_at")
     .in("student_id", ids)
     .order("created_at", { ascending: false })
     .limit(Math.min(ids.length * 12, 600));
@@ -319,6 +322,14 @@ async function loadRecentLedgerByStudent(
       note: String((row as any).note ?? ""),
       category: String((row as any).category ?? ""),
       created_at: String((row as any).created_at ?? ""),
+      points_base:
+        (row as any).points_base === null || (row as any).points_base === undefined
+          ? null
+          : Number((row as any).points_base ?? 0),
+      points_multiplier:
+        (row as any).points_multiplier === null || (row as any).points_multiplier === undefined
+          ? null
+          : Number((row as any).points_multiplier ?? 1),
     });
   }
 
@@ -372,6 +383,8 @@ async function loadRecentLedgerByStudent(
           note: detail,
           category: "camp_checkout",
           created_at: paidAt,
+          points_base: null,
+          points_multiplier: null,
         });
       }
     }
@@ -395,6 +408,8 @@ async function loadRecentLedgerByStudent(
           note: detail,
           category: "camp_refund",
           created_at: refund.refunded_at,
+          points_base: null,
+          points_multiplier: null,
         });
       }
     }
