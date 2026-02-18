@@ -19,7 +19,7 @@ export async function POST(req: Request) {
       .order("recorded_at", { ascending: false }),
     admin
       .from("stats")
-      .select("id,higher_is_better")
+      .select("id,higher_is_better,minimum_value_for_ranking")
       .eq("enabled", true),
   ]);
 
@@ -27,8 +27,10 @@ export async function POST(req: Request) {
   if (metaErr) return NextResponse.json({ ok: false, error: metaErr.message }, { status: 500 });
 
   const higherByStat = new Map<string, boolean>();
+  const minByStat = new Map<string, number>();
   (statMeta ?? []).forEach((row: any) => {
     higherByStat.set(String(row.id), row.higher_is_better !== false);
+    minByStat.set(String(row.id), Math.max(0, Number(row.minimum_value_for_ranking ?? 0) || 0));
   });
 
   const latestByStudentStat = new Map<string, { student_id: string; stat_id: string; value: number; recorded_at: string }>();
@@ -49,16 +51,18 @@ export async function POST(req: Request) {
 
   const byStat = new Map<string, Array<{ student_id: string; value: number }>>();
   latestByStudentStat.forEach((row) => {
+    const minValue = minByStat.get(row.stat_id) ?? 0;
+    if (Number(row.value ?? 0) <= 0 || Number(row.value ?? 0) < minValue) return;
     if (!byStat.has(row.stat_id)) byStat.set(row.stat_id, []);
     byStat.get(row.stat_id)!.push({ student_id: row.student_id, value: row.value });
   });
 
-  const ranks: Record<string, { rank: number; total: number; value: number | null }> = {};
+  const ranks: Record<string, { rank: number | null; total: number; value: number | null }> = {};
   byStat.forEach((rows, statId) => {
     const higherIsBetter = higherByStat.get(statId) !== false;
     const sorted = [...rows].sort((a, b) => (higherIsBetter ? b.value - a.value : a.value - b.value));
     const total = sorted.length;
-    let rank = total;
+    let rank: number | null = null;
     let value: number | null = null;
     sorted.forEach((row, idx) => {
       if (row.student_id === student_id && value === null) {

@@ -9,7 +9,7 @@ export async function GET() {
   const admin = supabaseAdmin();
   const { data, error } = await admin
     .from("stats")
-    .select("id,name,category,unit,higher_is_better,enabled")
+    .select("id,name,category,unit,higher_is_better,minimum_value_for_ranking,enabled")
     .eq("enabled", true)
     .order("name", { ascending: true });
 

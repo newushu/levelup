@@ -40,6 +40,19 @@ type GiftItem = {
   points_value: number;
   enabled: boolean;
   gift_designs?: { id: string; name: string; preview_image_url?: string | null } | null;
+  auto_assignment?: {
+    id?: string;
+    scope_type?: string;
+    roster_id?: string | null;
+    secondary_role?: string | null;
+    day_codes?: string[] | null;
+    time_et?: string | null;
+    start_date?: string | null;
+    end_date?: string | null;
+    qty?: number | null;
+    student_ids?: string[] | null;
+    enabled?: boolean;
+  } | null;
 };
 
 type StudentPick = { id: string; name: string };
@@ -91,6 +104,30 @@ type PackageComponentDraft = {
   design_js: string;
 };
 
+type CampRosterRow = {
+  id: string;
+  name?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  enabled?: boolean;
+};
+
+type CampMemberRow = {
+  id: string;
+  roster_id: string;
+  student_id: string;
+  student_name: string;
+  secondary_role?: string;
+  secondary_role_days?: string[];
+};
+
+type ScheduledPreviewRow = {
+  student_id: string;
+  student_name: string;
+  next_run_label: string;
+  is_future: boolean;
+};
+
 export default function GiftStudioPage() {
   const [msg, setMsg] = useState("");
   const [designs, setDesigns] = useState<DesignRow[]>([]);
@@ -112,6 +149,19 @@ export default function GiftStudioPage() {
   const [giftCss, setGiftCss] = useState("");
   const [giftJs, setGiftJs] = useState("");
   const [packageComponents, setPackageComponents] = useState<PackageComponentDraft[]>([]);
+  const [autoGiftEnabled, setAutoGiftEnabled] = useState(false);
+  const [autoScopeType, setAutoScopeType] = useState<"camp_secondary_role">("camp_secondary_role");
+  const [autoRosterId, setAutoRosterId] = useState("");
+  const [autoSecondaryRole, setAutoSecondaryRole] = useState("seller");
+  const [autoDayCodes, setAutoDayCodes] = useState<string[]>(["m"]);
+  const [autoTimeEt, setAutoTimeEt] = useState("16:00");
+  const [autoStartDate, setAutoStartDate] = useState("");
+  const [autoEndDate, setAutoEndDate] = useState("");
+  const [autoStudentIds, setAutoStudentIds] = useState<string[]>([]);
+  const [autoQty, setAutoQty] = useState("1");
+  const [autoRunDry, setAutoRunDry] = useState(false);
+  const [campRosters, setCampRosters] = useState<CampRosterRow[]>([]);
+  const [campMembers, setCampMembers] = useState<CampMemberRow[]>([]);
 
   const [studentQuery, setStudentQuery] = useState("");
   const [studentResults, setStudentResults] = useState<StudentPick[]>([]);
@@ -131,18 +181,24 @@ export default function GiftStudioPage() {
   const giftUploadInputRef = useRef<HTMLInputElement | null>(null);
 
   async function load() {
-    const [dRes, iRes, bRes] = await Promise.all([
+    const [dRes, iRes, bRes, cRes] = await Promise.all([
       fetch("/api/admin/gifts/designs", { cache: "no-store" }),
       fetch("/api/admin/gifts/items", { cache: "no-store" }),
       fetch("/api/admin/gifts/button-settings", { cache: "no-store" }),
+      fetch("/api/admin/gifts/camp-context", { cache: "no-store" }),
     ]);
     const dj = await dRes.json().catch(() => ({}));
     const ij = await iRes.json().catch(() => ({}));
     const bj = await bRes.json().catch(() => ({}));
+    const cj = await cRes.json().catch(() => ({}));
     if (!dRes.ok) return setMsg(String(dj?.error ?? "Failed to load designs"));
     if (!iRes.ok) return setMsg(String(ij?.error ?? "Failed to load gifts"));
     setDesigns((dj?.designs ?? []) as DesignRow[]);
     setItems((ij?.items ?? []) as GiftItem[]);
+    if (cRes.ok) {
+      setCampRosters((cj?.rosters ?? []) as CampRosterRow[]);
+      setCampMembers((cj?.members ?? []) as CampMemberRow[]);
+    }
     if (bRes.ok) {
       const settings = (bj?.settings ?? {}) as GiftButtonSettings;
       setButtonDesignId(String(settings?.student_button_design_id ?? ""));
@@ -241,6 +297,20 @@ export default function GiftStudioPage() {
         design_css: giftCss,
         design_js: giftJs,
         package_components: packageRows,
+        auto_assignment: autoGiftEnabled
+          ? {
+              enabled: true,
+              scope_type: autoScopeType,
+              roster_id: autoRosterId || null,
+              secondary_role: autoSecondaryRole,
+              day_codes: autoDayCodes,
+              time_et: autoTimeEt || "16:00",
+              start_date: autoStartDate || null,
+              end_date: autoEndDate || null,
+              student_ids: autoStudentIds,
+              qty: Math.max(1, Number(autoQty) || 1),
+            }
+          : null,
         enabled: true,
       }),
     });
@@ -257,6 +327,15 @@ export default function GiftStudioPage() {
     setGiftCss("");
     setGiftJs("");
     setPackageComponents([]);
+    setAutoGiftEnabled(false);
+    setAutoRosterId("");
+    setAutoSecondaryRole("seller");
+    setAutoDayCodes(["m"]);
+    setAutoTimeEt("16:00");
+    setAutoStartDate("");
+    setAutoEndDate("");
+    setAutoStudentIds([]);
+    setAutoQty("1");
     load();
   }
 
@@ -276,6 +355,48 @@ export default function GiftStudioPage() {
     if (!res.ok) return setMsg(String(sj?.error ?? "Failed to assign gift"));
     setMsg(`Assigned gifts to ${Number(sj?.assigned_count ?? 0)} student(s)`);
     await loadStatusAndLogs();
+  }
+
+  async function runScheduledGiftsNow() {
+    setMsg("");
+    const res = await fetch("/api/admin/gifts/auto-run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dry_run: autoRunDry }),
+    });
+    const sj = await res.json().catch(() => ({}));
+    if (!res.ok) return setMsg(String(sj?.error ?? "Failed to run scheduled gifts"));
+    setMsg(
+      autoRunDry
+        ? `Dry run: due ${Number(sj?.delivered ?? 0)} gift drops (checked ${Number(sj?.checked ?? 0)} schedule(s)).`
+        : `Scheduled gifts delivered: ${Number(sj?.delivered ?? 0)} (checked ${Number(sj?.checked ?? 0)} schedule(s)).`
+    );
+    await loadStatusAndLogs();
+  }
+
+  function loadGiftForEditing(it: GiftItem) {
+    setGiftName(String(it.name ?? ""));
+    setGiftCategory(String(it.category ?? "item"));
+    setGiftType(String(it.gift_type ?? "generic"));
+    setGiftDesignId(String(it.design_id ?? ""));
+    setGiftPoints(String(Math.max(0, Number(it.points_value ?? 0))));
+    setGiftImageUrl(String(it.design_image_url ?? ""));
+    setGiftHtml(String(it.design_html ?? ""));
+    setGiftCss(String(it.design_css ?? ""));
+    setGiftJs(String(it.design_js ?? ""));
+    const auto = it.auto_assignment ?? null;
+    setAutoGiftEnabled(!!auto?.enabled);
+    setAutoScopeType("camp_secondary_role");
+    setAutoRosterId(String(auto?.roster_id ?? ""));
+    setAutoSecondaryRole(String(auto?.secondary_role ?? "seller"));
+    setAutoDayCodes(Array.isArray(auto?.day_codes) && auto?.day_codes.length ? (auto?.day_codes as string[]) : ["m"]);
+    setAutoTimeEt(String(auto?.time_et ?? "16:00"));
+    setAutoStartDate(String(auto?.start_date ?? ""));
+    setAutoEndDate(String(auto?.end_date ?? ""));
+    setAutoStudentIds(Array.isArray(auto?.student_ids) ? (auto?.student_ids as string[]) : []);
+    setAutoQty(String(Math.max(1, Number(auto?.qty ?? 1))));
+    setStudioTab("creator");
+    setMsg(`Loaded gift for editing: ${String(it.name ?? "Gift")}`);
   }
 
   async function saveGiftButtonSettings() {
@@ -420,6 +541,55 @@ export default function GiftStudioPage() {
   }
 
   const selectedGift = useMemo(() => items.find((i) => String(i.id) === String(assignGiftId)) ?? null, [items, assignGiftId]);
+  const selectedRoster = useMemo(
+    () => campRosters.find((r) => String(r.id) === String(autoRosterId)) ?? null,
+    [campRosters, autoRosterId]
+  );
+  const roleMembers = useMemo(() => {
+    if (!autoRosterId) return [] as CampMemberRow[];
+    return campMembers.filter(
+      (m) =>
+        String(m.roster_id) === String(autoRosterId) &&
+        String(m.secondary_role ?? "").trim().toLowerCase() === String(autoSecondaryRole).trim().toLowerCase()
+    );
+  }, [campMembers, autoRosterId, autoSecondaryRole]);
+  const scheduledPreviewRows = useMemo(() => {
+    const auto = selectedGift?.auto_assignment;
+    if (!auto || auto.enabled !== true || String(auto.scope_type ?? "") !== "camp_secondary_role") return [] as ScheduledPreviewRow[];
+    const rosterId = String(auto.roster_id ?? "").trim();
+    const role = String(auto.secondary_role ?? "").trim().toLowerCase();
+    if (!rosterId || !role) return [] as ScheduledPreviewRow[];
+
+    const roster = campRosters.find((r) => String(r.id) === rosterId);
+    const etNow = getEasternNow();
+    const nowMinute = etNow.hour * 60 + etNow.minute;
+    const targetMinute = parseMinuteOfDay(String(auto.time_et ?? "16:00"));
+    const dayCodes = Array.isArray(auto.day_codes) ? auto.day_codes.map(normalizeDayCode).filter(Boolean) : [];
+    const explicitStudentIds = new Set((Array.isArray(auto.student_ids) ? auto.student_ids : []).map((v) => String(v ?? "").trim()).filter(Boolean));
+    const memberPool = campMembers
+      .filter((m) => String(m.roster_id) === rosterId)
+      .filter((m) => String(m.secondary_role ?? "").trim().toLowerCase() === role)
+      .filter((m) => (explicitStudentIds.size ? explicitStudentIds.has(String(m.student_id)) : true));
+
+    return memberPool.map((m) => {
+      const studentId = String(m.student_id ?? "");
+      const memberDays = Array.isArray(m.secondary_role_days) ? m.secondary_role_days.map(normalizeDayCode).filter(Boolean) : [];
+      const effectiveDays = dayCodes.length ? dayCodes : memberDays;
+      const todayAllowed = !effectiveDays.length || effectiveDays.includes(etNow.dayCode);
+      const inDateRange = isDateInRange(etNow.dateKey, String(auto.start_date ?? ""), String(auto.end_date ?? ""));
+      const inRosterRange = isDateInRange(etNow.dateKey, String(roster?.start_date ?? ""), String(roster?.end_date ?? ""));
+      const isFuture = todayAllowed && inDateRange && inRosterRange && nowMinute < targetMinute;
+      const nextLabel = isFuture
+        ? `Today ${String(auto.time_et ?? "16:00")} ET`
+        : `Scheduled ${String(auto.time_et ?? "16:00")} ET`;
+      return {
+        student_id: studentId,
+        student_name: String(m.student_name ?? "Student"),
+        next_run_label: nextLabel,
+        is_future: isFuture,
+      };
+    });
+  }, [selectedGift, campMembers, campRosters]);
   const selectedButtonDesignPreview = useMemo(() => {
     if (!buttonDesignId) return "";
     const row = designs.find((d) => String(d.id) === String(buttonDesignId));
@@ -690,6 +860,121 @@ export default function GiftStudioPage() {
                 {!packageComponents.length ? <div style={{ opacity: 0.72, fontSize: 12 }}>Click + Add Component to build this package.</div> : null}
               </div>
             )}
+            <div style={{ borderRadius: 12, border: "1px solid rgba(56,189,248,0.35)", background: "rgba(8,47,73,0.25)", padding: 10, display: "grid", gap: 8 }}>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 900 }}>
+                <input type="checkbox" checked={autoGiftEnabled} onChange={(e) => setAutoGiftEnabled(e.target.checked)} />
+                Schedule auto-drop gifts (camp secondary role)
+              </label>
+              {autoGiftEnabled ? (
+                <>
+                  <div style={{ fontSize: 12, opacity: 0.78 }}>
+                    Secondary-role gifts are delivered directly to gift box at selected ET time. These gifts can still be assigned manually too.
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <label style={label()}>
+                      Camp roster
+                      <select value={autoRosterId} onChange={(e) => setAutoRosterId(e.target.value)} style={input()}>
+                        <option value="">Select roster</option>
+                        {campRosters.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {String(r.name ?? "Roster")} ({String(r.start_date ?? "?")} → {String(r.end_date ?? "?")})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={label()}>
+                      Secondary role
+                      <select value={autoSecondaryRole} onChange={(e) => setAutoSecondaryRole(e.target.value)} style={input()}>
+                        <option value="seller">seller</option>
+                        <option value="cleaner">cleaner</option>
+                      </select>
+                    </label>
+                  </div>
+                  {selectedRoster ? (
+                    <div style={{ fontSize: 12, opacity: 0.78 }}>
+                      Roster dates: {String(selectedRoster.start_date ?? "n/a")} → {String(selectedRoster.end_date ?? "n/a")}
+                    </div>
+                  ) : null}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                    <label style={label()}>
+                      Time (ET)
+                      <input type="time" value={autoTimeEt} onChange={(e) => setAutoTimeEt(e.target.value)} style={input()} />
+                    </label>
+                    <label style={label()}>
+                      Start date (optional)
+                      <input type="date" value={autoStartDate} onChange={(e) => setAutoStartDate(e.target.value)} style={input()} />
+                    </label>
+                    <label style={label()}>
+                      End date (optional)
+                      <input type="date" value={autoEndDate} onChange={(e) => setAutoEndDate(e.target.value)} style={input()} />
+                    </label>
+                  </div>
+                  <label style={label()}>
+                    Gift quantity each drop
+                    <input value={autoQty} onChange={(e) => setAutoQty(e.target.value)} style={input()} inputMode="numeric" />
+                  </label>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    {[
+                      { key: "m", label: "Mon" },
+                      { key: "t", label: "Tue" },
+                      { key: "w", label: "Wed" },
+                      { key: "r", label: "Thu" },
+                      { key: "f", label: "Fri" },
+                      { key: "sa", label: "Sat" },
+                      { key: "su", label: "Sun" },
+                    ].map((d) => {
+                      const on = autoDayCodes.includes(d.key);
+                      return (
+                        <button
+                          key={d.key}
+                          type="button"
+                          onClick={() =>
+                            setAutoDayCodes((prev) =>
+                              on ? prev.filter((v) => v !== d.key) : [...prev, d.key]
+                            )
+                          }
+                          style={{
+                            ...btnGhost(),
+                            borderColor: on ? "rgba(56,189,248,0.8)" : "rgba(148,163,184,0.42)",
+                            background: on ? "rgba(14,116,144,0.35)" : "rgba(15,23,42,0.72)",
+                          }}
+                        >
+                          {d.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ fontWeight: 900, fontSize: 12 }}>Optional specific students (defaults to all matching role members)</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: 6, maxHeight: 180, overflowY: "auto" }}>
+                    {roleMembers.map((m) => {
+                      const on = autoStudentIds.includes(String(m.student_id));
+                      return (
+                        <button
+                          key={`${m.roster_id}:${m.student_id}`}
+                          type="button"
+                          onClick={() =>
+                            setAutoStudentIds((prev) =>
+                              on ? prev.filter((id) => id !== String(m.student_id)) : [...prev, String(m.student_id)]
+                            )
+                          }
+                          style={{
+                            textAlign: "left",
+                            borderRadius: 10,
+                            border: on ? "1px solid rgba(56,189,248,0.8)" : "1px solid rgba(148,163,184,0.35)",
+                            background: on ? "rgba(14,116,144,0.35)" : "rgba(15,23,42,0.45)",
+                            color: "white",
+                            padding: "7px 9px",
+                          }}
+                        >
+                          <div style={{ fontWeight: 900 }}>{m.student_name}</div>
+                          <div style={{ opacity: 0.72, fontSize: 11 }}>{String(m.student_id).slice(0, 8)}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : null}
+            </div>
             <button onClick={saveGiftItem} style={btnPrimary()}>Save Gift Item</button>
           </div>
           <div style={libraryGrid()}>
@@ -703,6 +988,9 @@ export default function GiftStudioPage() {
                 {it.design_image_url ? <img src={it.design_image_url} alt={it.name} style={{ width: 86, height: 86, borderRadius: 10, objectFit: "cover", border: "1px solid rgba(148,163,184,0.5)" }} /> : null}
                 <button onClick={() => setAssignGiftId(it.id)} style={btnGhost()}>
                   Select For Assign
+                </button>
+                <button onClick={() => loadGiftForEditing(it)} style={btnGhost()}>
+                  Load For Edit
                 </button>
               </div>
             ))}
@@ -753,6 +1041,24 @@ export default function GiftStudioPage() {
               );
             })}
           </div>
+          {selectedGift?.auto_assignment?.enabled ? (
+            <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+              <div style={{ fontWeight: 900 }}>Scheduled Gift Targets (Auto)</div>
+              {!scheduledPreviewRows.length ? <div style={{ opacity: 0.7 }}>No scheduled targets found for this gift setup.</div> : null}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 8 }}>
+                {scheduledPreviewRows.map((row) => (
+                  <div key={`sched-assign-${row.student_id}`} style={libraryCard()}>
+                    <div style={{ fontWeight: 900 }}>{row.student_name}</div>
+                    <div style={{ opacity: 0.72, fontSize: 12 }}>{row.student_id.slice(0, 8)}</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <span style={statusChipYellow()}>{row.is_future ? "Scheduled" : "Schedule Active"}</span>
+                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.78 }}>{row.next_run_label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       </section> : null}
 
@@ -782,12 +1088,33 @@ export default function GiftStudioPage() {
           <button onClick={removeGiftTypeFromAllStudents} style={{ ...btnGhost(), borderColor: "rgba(239,68,68,0.55)", color: "#fecaca" }}>
             Remove Selected Gift From All
           </button>
+          <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12 }}>
+            <input type="checkbox" checked={autoRunDry} onChange={(e) => setAutoRunDry(e.target.checked)} />
+            Dry run
+          </label>
+          <button onClick={runScheduledGiftsNow} style={btnGhost()}>
+            Run Due Scheduled Gifts Now
+          </button>
         </div>
         <div style={{ opacity: 0.76, fontSize: 12 }}>Pick a gift first, then review assignment status chips and point snapshots.</div>
         <div style={twoCol()}>
           <div style={{ display: "grid", gap: 8 }}>
             <div style={{ fontWeight: 900 }}>Gift Status (Per Student)</div>
             <div style={{ display: "grid", gap: 8, maxHeight: 420, overflowY: "auto" }}>
+              {selectedGift?.auto_assignment?.enabled && !!scheduledPreviewRows.length ? (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {scheduledPreviewRows.map((row) => (
+                    <div key={`sched-status-${row.student_id}`} style={libraryCard()}>
+                      <div style={{ fontWeight: 900 }}>{row.student_name} • {String(selectedGift?.name ?? "Gift")}</div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <span style={statusChipYellow()}>Scheduled</span>
+                        <span style={statusChipGray()}>Unopened (pending drop)</span>
+                      </div>
+                      <div style={{ fontSize: 12, opacity: 0.8 }}>{row.next_run_label}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               {!assignGiftId ? <div style={{ opacity: 0.7 }}>Select a gift item to view status.</div> : null}
               {assignGiftId && statusLoading ? <div style={{ opacity: 0.7 }}>Loading...</div> : null}
               {assignGiftId && !statusLoading && !statusRows.length ? <div style={{ opacity: 0.7 }}>No matching gift assignments.</div> : null}
@@ -862,6 +1189,75 @@ function fmtDateTime(value?: string | null) {
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return v;
   return d.toLocaleString();
+}
+
+function normalizeDayCode(value: unknown) {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "monday" || v === "mon") return "m";
+  if (v === "tuesday" || v === "tues" || v === "tue") return "t";
+  if (v === "wednesday" || v === "wed") return "w";
+  if (v === "thursday" || v === "thurs" || v === "thu" || v === "th") return "r";
+  if (v === "friday" || v === "fri") return "f";
+  if (v === "saturday" || v === "sat") return "sa";
+  if (v === "sunday" || v === "sun") return "su";
+  if (["m", "t", "w", "r", "f", "sa", "su"].includes(v)) return v;
+  return "";
+}
+
+function parseMinuteOfDay(value?: string | null) {
+  const raw = String(value ?? "").trim();
+  const m = /^(\d{1,2}):(\d{2})$/.exec(raw);
+  if (!m) return 16 * 60;
+  const h = Math.max(0, Math.min(23, Number(m[1] ?? 16) || 16));
+  const min = Math.max(0, Math.min(59, Number(m[2] ?? 0) || 0));
+  return h * 60 + min;
+}
+
+function getEasternNow() {
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = fmt.formatToParts(now);
+  const year = parts.find((p) => p.type === "year")?.value ?? "";
+  const month = parts.find((p) => p.type === "month")?.value ?? "";
+  const day = parts.find((p) => p.type === "day")?.value ?? "";
+  const dateKey = year && month && day ? `${year}-${month}-${day}` : now.toISOString().slice(0, 10);
+  const weekday = String(parts.find((p) => p.type === "weekday")?.value ?? "").toLowerCase();
+  const dayCode = weekday.startsWith("mon")
+    ? "m"
+    : weekday.startsWith("tue")
+    ? "t"
+    : weekday.startsWith("wed")
+    ? "w"
+    : weekday.startsWith("thu")
+    ? "r"
+    : weekday.startsWith("fri")
+    ? "f"
+    : weekday.startsWith("sat")
+    ? "sa"
+    : weekday.startsWith("sun")
+    ? "su"
+    : "";
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+  return { dateKey, dayCode, hour: Number.isFinite(hour) ? hour : 0, minute: Number.isFinite(minute) ? minute : 0 };
+}
+
+function isDateInRange(dateKey: string, startDate?: string | null, endDate?: string | null) {
+  const start = String(startDate ?? "").trim();
+  const end = String(endDate ?? "").trim();
+  if (start && dateKey < start) return false;
+  if (end && dateKey > end) return false;
+  return true;
 }
 
 function card(): React.CSSProperties {
@@ -1004,6 +1400,20 @@ function statusChipGray(): React.CSSProperties {
     borderColor: "rgba(148,163,184,0.5)",
     background: "rgba(51,65,85,0.35)",
     color: "#e2e8f0",
+    padding: "3px 8px",
+    fontSize: 12,
+    fontWeight: 900,
+  };
+}
+
+function statusChipYellow(): React.CSSProperties {
+  return {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "rgba(234,179,8,0.7)",
+    background: "rgba(161,98,7,0.28)",
+    color: "#fef3c7",
     padding: "3px 8px",
     fontSize: 12,
     fontWeight: 900,

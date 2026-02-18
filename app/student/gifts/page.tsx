@@ -64,7 +64,7 @@ export default function StudentGiftsPage() {
   const [student, setStudent] = useState<StudentRow | null>(null);
   const [gifts, setGifts] = useState<GiftRow[]>([]);
   const [msg, setMsg] = useState("");
-  const [openInventory, setOpenInventory] = useState(false);
+  const [hubMode, setHubMode] = useState<"giftbox" | "stash">("giftbox");
   const [openingId, setOpeningId] = useState("");
   const [result, setResult] = useState<null | { gift_name: string; category: string; points_awarded: number; remaining: number; package_items_added?: number }>(null);
   const [giftOpenAudio, setGiftOpenAudio] = useState("");
@@ -111,6 +111,16 @@ export default function StudentGiftsPage() {
     () => gifts.filter((g) => Math.max(0, Number(g.qty ?? 0) - Number(g.opened_qty ?? 0)) > 0),
     [gifts]
   );
+  const inventoryItems = useMemo(() => {
+    return gifts.filter((g) => {
+      const openedCount = Math.max(0, Number(g.opened_qty ?? 0));
+      if (!openedCount) return false;
+      const category = String(g.gift_items?.category ?? "").toLowerCase();
+      const points = Math.max(0, Number(g.gift_items?.points_value ?? 0));
+      const autoAward = category === "points" || category === "package" || points > 0;
+      return !autoAward;
+    });
+  }, [gifts]);
 
   async function openGift(gift: GiftRow) {
     if (!student?.id || !gift?.id) return;
@@ -141,7 +151,7 @@ export default function StudentGiftsPage() {
 
   return (
     <AuthGate>
-      <main style={{ minHeight: "100vh", padding: 18, color: "white", background: "radial-gradient(circle at 30% 8%, rgba(147,51,234,0.22), rgba(2,6,23,0.98) 58%)", display: "grid", gap: 14, alignContent: "start" }}>
+      <main className="gifts-page" style={{ minHeight: "100vh", color: "white", background: "radial-gradient(circle at 30% 8%, rgba(147,51,234,0.22), rgba(2,6,23,0.98) 58%)", display: "grid", gap: 14, alignContent: "start" }}>
         <style>{giftStyles}</style>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <div>
@@ -156,43 +166,90 @@ export default function StudentGiftsPage() {
         {!student?.id ? <div style={notice()}>No active student selected.</div> : null}
         {msg ? <div style={notice()}>{msg}</div> : null}
 
-        <button
-          type="button"
-          className={`gift-launch ${openInventory ? "gift-launch--open" : ""}`}
-          onClick={() => setOpenInventory((v) => !v)}
-        >
-          <span className="gift-launch__lid" />
-          <span className="gift-launch__ribbon gift-launch__ribbon--v" />
-          <span className="gift-launch__ribbon gift-launch__ribbon--h" />
-          <span className="gift-launch__bow" />
-          <span className="gift-launch__label">{openInventory ? "Close Gift Inventory" : "Open Gift Inventory"}</span>
-        </button>
-
-        {openInventory ? (
-          <section style={{ borderRadius: 16, border: "1px solid rgba(147,197,253,0.45)", background: "linear-gradient(160deg, rgba(15,23,42,0.82), rgba(2,6,23,0.94))", padding: 14, display: "grid", gap: 10 }}>
-            <div style={{ fontWeight: 900, fontSize: 18 }}>Your Gifts</div>
-            <div style={{ opacity: 0.8, fontSize: 13 }}>{unopened.length} unopened gift(s)</div>
+        <section style={{ borderRadius: 16, border: "1px solid rgba(147,197,253,0.45)", background: "linear-gradient(160deg, rgba(15,23,42,0.82), rgba(2,6,23,0.94))", padding: 14, display: "grid", gap: 10 }}>
+          <div style={{ fontWeight: 900, fontSize: 18 }}>Your Inventory</div>
+          <div className="inventory-hub">
+            <button
+              type="button"
+              className={`hub-card hub-card--gift ${hubMode === "giftbox" ? "hub-card--active" : ""}`}
+              onClick={() => setHubMode("giftbox")}
+            >
+              <span className="hub-card__giftbox" aria-hidden>
+                <span className="hub-card__lid" />
+                <span className="hub-card__rb hub-card__rb--v" />
+                <span className="hub-card__rb hub-card__rb--h" />
+                <span className="hub-card__bow" />
+                <span className="hub-card__glow" />
+              </span>
+              <span className="hub-card__title">Gift Box</span>
+              <span className="hub-card__meta">{unopened.length} unopened</span>
+            </button>
+            <button
+              type="button"
+              className={`hub-card hub-card--stash ${hubMode === "stash" ? "hub-card--active" : ""}`}
+              onClick={() => setHubMode("stash")}
+            >
+              <span className="hub-card__stash-icon" aria-hidden>🧰</span>
+              <span className="hub-card__title">Inventory Stash</span>
+              <span className="hub-card__meta">{inventoryItems.length} stored</span>
+            </button>
+          </div>
+          <div className="gift-tabs">
+            {hubMode === "giftbox" ? (
+              <button
+                type="button"
+                className="gift-tab gift-tab--active"
+              >
+                Unopened Gifts ({unopened.length})
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="gift-tab gift-tab--active"
+              >
+                Inventory Stash ({inventoryItems.length})
+              </button>
+            )}
+          </div>
             <div className="gift-grid">
-              {unopened.map((g) => {
+              {(hubMode === "giftbox" ? unopened : inventoryItems).map((g) => {
                 const item = g.gift_items;
                 const remaining = Math.max(0, Number(g.qty ?? 0) - Number(g.opened_qty ?? 0));
+                const openedCount = Math.max(0, Number(g.opened_qty ?? 0));
+                const giftPoints = Math.max(0, Number(item?.points_value ?? 0));
                 return (
                   <div key={g.id} className={`gift-card ${openingId === g.id ? "gift-card--opening" : ""}`}>
-                    <div className="gift-card__visual">{renderGiftVisual(g)}</div>
+                    <div className="gift-card__visual-shell">
+                      <div className="gift-card__visual">{renderGiftVisual(g)}</div>
+                      <div className="gift-card__burst" aria-hidden>
+                        <span />
+                        <span />
+                        <span />
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                    </div>
                     <div className="gift-card__name">{item?.name ?? "Gift"}</div>
                     <div className="gift-card__meta">
                       {(item?.category_tags && item.category_tags.length ? item.category_tags.join(", ") : item?.category ?? "item")} • {item?.gift_type ?? "generic"}
                     </div>
-                    <div className="gift-card__qty">x{remaining}</div>
-                    <button type="button" className="gift-card__open" disabled={openingId === g.id} onClick={() => openGift(g)}>
-                      {openingId === g.id ? "Opening..." : "Open Gift"}
-                    </button>
+                    {giftPoints > 0 ? <div className="gift-card__points">+{giftPoints} pts on open</div> : null}
+                    <div className="gift-card__qty">x{hubMode === "giftbox" ? remaining : openedCount}</div>
+                    {hubMode === "giftbox" ? (
+                      <button type="button" className="gift-card__open" disabled={openingId === g.id} onClick={() => openGift(g)}>
+                        {openingId === g.id ? "Opening..." : "Open Gift"}
+                      </button>
+                    ) : (
+                      <div className="gift-card__owned">In Inventory</div>
+                    )}
                   </div>
                 );
               })}
             </div>
+            {hubMode === "giftbox" && !unopened.length ? <div className="gift-empty">No unopened gifts.</div> : null}
+            {hubMode === "stash" && !inventoryItems.length ? <div className="gift-empty">No inventory items yet. Open non-auto-award gifts to store them here.</div> : null}
           </section>
-        ) : null}
 
         {result ? (
           <section className="gift-result">
@@ -212,61 +269,118 @@ export default function StudentGiftsPage() {
 }
 
 const giftStyles = `
-.gift-launch {
-  position: relative;
-  width: min(340px, 92vw);
-  height: 180px;
-  border-radius: 18px;
-  border: 1px solid rgba(250,204,21,0.52);
-  background: linear-gradient(160deg, rgba(180,83,9,0.86), rgba(146,64,14,0.94));
-  justify-self: center;
-  cursor: pointer;
-  overflow: hidden;
-  box-shadow: 0 24px 44px rgba(0,0,0,0.42), 0 0 32px rgba(250,204,21,0.26);
-  transition: transform .22s ease, box-shadow .22s ease;
+.gifts-page {
+  padding: 18px 18px 18px 88px;
 }
-.gift-launch:hover { transform: translateY(-3px) scale(1.01); box-shadow: 0 30px 52px rgba(0,0,0,0.46), 0 0 38px rgba(250,204,21,0.32); }
-.gift-launch__lid {
-  position: absolute;
-  left: 6%;
-  top: 9%;
-  width: 88%;
-  height: 32%;
+.inventory-hub {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.hub-card {
   border-radius: 14px;
-  background: linear-gradient(155deg, rgba(251,191,36,0.88), rgba(217,119,6,0.94));
-  transform-origin: bottom center;
-  transition: transform .35s ease;
+  border: 1px solid rgba(148,163,184,0.38);
+  background: linear-gradient(160deg, rgba(30,41,59,0.7), rgba(2,6,23,0.95));
+  color: #e2e8f0;
+  padding: 10px;
+  min-height: 132px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 6px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease;
 }
-.gift-launch--open .gift-launch__lid { transform: rotateX(55deg) translateY(-12px); }
-.gift-launch__ribbon { position: absolute; background: linear-gradient(180deg, rgba(147,51,234,0.92), rgba(126,34,206,0.98)); }
-.gift-launch__ribbon--v { left: 49%; top: 0; width: 16px; height: 100%; transform: translateX(-50%); }
-.gift-launch__ribbon--h { left: 0; top: 44%; width: 100%; height: 16px; transform: translateY(-50%); }
-.gift-launch__bow {
+.hub-card:hover { transform: translateY(-2px); border-color: rgba(125,211,252,0.5); }
+.hub-card--active {
+  border-color: rgba(56,189,248,0.72);
+  box-shadow: 0 0 26px rgba(56,189,248,0.25), inset 0 0 24px rgba(30,64,175,0.22);
+}
+.hub-card__title { font-size: 14px; font-weight: 1000; letter-spacing: 0.4px; }
+.hub-card__meta { font-size: 12px; opacity: .82; font-weight: 700; }
+.hub-card__giftbox {
+  position: relative;
+  width: 72px;
+  height: 58px;
+  border-radius: 10px;
+  background: linear-gradient(155deg, rgba(251,191,36,0.9), rgba(180,83,9,0.96));
+  box-shadow: 0 10px 18px rgba(0,0,0,0.35);
+}
+.hub-card__lid {
   position: absolute;
-  top: 22%;
+  left: 6px;
+  right: 6px;
+  top: -10px;
+  height: 18px;
+  border-radius: 8px;
+  background: linear-gradient(160deg, rgba(253,224,71,0.95), rgba(217,119,6,0.95));
+  transform-origin: 50% 100%;
+  transition: transform .28s ease;
+}
+.hub-card__rb {
+  position: absolute;
+  background: linear-gradient(180deg, rgba(147,51,234,0.95), rgba(109,40,217,0.98));
+}
+.hub-card__rb--v { width: 10px; left: 50%; top: 0; bottom: 0; transform: translateX(-50%); }
+.hub-card__rb--h { height: 10px; left: 0; right: 0; top: 46%; transform: translateY(-50%); }
+.hub-card__bow {
+  position: absolute;
+  top: -14px;
   left: 50%;
-  width: 56px;
-  height: 28px;
-  transform: translate(-50%, -50%);
-  background: radial-gradient(circle at 30% 50%, rgba(196,181,253,0.9), rgba(109,40,217,0.95));
+  width: 16px;
+  height: 16px;
+  transform: translateX(-50%);
   border-radius: 999px;
-  box-shadow: 30px 0 0 rgba(126,34,206,0.95), -30px 0 0 rgba(126,34,206,0.95);
+  background: radial-gradient(circle at 30% 30%, rgba(233,213,255,0.96), rgba(126,34,206,0.95));
+  box-shadow: 12px 0 0 rgba(126,34,206,0.95), -12px 0 0 rgba(126,34,206,0.95);
 }
-.gift-launch__label {
+.hub-card__glow {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 18px;
-  text-align: center;
-  color: #fff7ed;
-  font-size: 22px;
-  font-weight: 1000;
-  text-shadow: 0 2px 0 rgba(120,53,15,0.8);
+  inset: -12px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(125,211,252,0.24), rgba(125,211,252,0));
+  opacity: 0;
+}
+.hub-card--gift.hub-card--active .hub-card__lid { transform: rotateX(72deg) translateY(-6px); }
+.hub-card--gift.hub-card--active .hub-card__glow { opacity: 1; animation: hubPulse 1.2s ease-in-out infinite; }
+.hub-card__stash-icon {
+  font-size: 40px;
+  line-height: 1;
+  filter: drop-shadow(0 3px 8px rgba(56,189,248,0.3));
+}
+@keyframes hubPulse {
+  0%, 100% { transform: scale(0.94); opacity: 0.4; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+@media (max-width: 760px) {
+  .gifts-page { padding: 14px; }
+  .inventory-hub { grid-template-columns: 1fr; }
 }
 .gift-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+.gift-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.gift-tab {
+  border-radius: 999px;
+  border: 1px solid rgba(148,163,184,0.46);
+  background: rgba(15,23,42,0.62);
+  color: #e2e8f0;
+  font-weight: 900;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.gift-tab--active {
+  border-color: rgba(56,189,248,0.72);
+  background: linear-gradient(145deg, rgba(56,189,248,0.26), rgba(15,23,42,0.72));
+  color: #e0f2fe;
 }
 @media (max-width: 980px) { .gift-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .gift-card {
@@ -275,14 +389,65 @@ const giftStyles = `
   background: linear-gradient(160deg, rgba(15,23,42,0.76), rgba(2,6,23,0.94));
   padding: 10px;
   display: grid;
-  gap: 6px;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
 }
-.gift-card--opening { animation: shakeGift .4s ease-in-out 2; }
-@keyframes shakeGift { 0%{transform:translateX(0)} 25%{transform:translateX(-3px) rotate(-1deg)} 50%{transform:translateX(3px) rotate(1deg)} 75%{transform:translateX(-2px) rotate(-1deg)} 100%{transform:translateX(0)} }
-.gift-card__visual { width: 100%; aspect-ratio: 1/1; border-radius: 12px; overflow: hidden; border: 1px solid rgba(148,163,184,0.3); }
-.gift-card__name { font-weight: 900; font-size: 14px; line-height: 1.2; }
+.gift-card--opening { animation: shakeGift .46s ease-in-out 2, popGift .35s ease-out .45s 1; }
+@keyframes shakeGift { 0%{transform:translateX(0)} 20%{transform:translateX(-4px) rotate(-1.2deg)} 40%{transform:translateX(4px) rotate(1.2deg)} 60%{transform:translateX(-3px) rotate(-1deg)} 80%{transform:translateX(2px) rotate(.8deg)} 100%{transform:translateX(0)} }
+@keyframes popGift { 0%{transform:scale(1)} 55%{transform:scale(1.06)} 100%{transform:scale(1)} }
+.gift-card__visual-shell { position: relative; width: 100%; display: grid; justify-items: center; }
+.gift-card__visual {
+  width: 52%;
+  min-width: 64px;
+  max-width: 92px;
+  aspect-ratio: 1/1;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(148,163,184,0.3);
+  transition: transform .22s ease, filter .22s ease;
+}
+.gift-card--opening .gift-card__visual { transform: scale(1.16) rotate(-2deg); filter: brightness(1.18) saturate(1.2); }
+.gift-card__name { font-weight: 1000; font-size: 18px; line-height: 1.15; text-align: center; }
 .gift-card__meta { font-size: 12px; opacity: .75; }
+.gift-card__points {
+  font-size: 12px;
+  font-weight: 900;
+  color: #86efac;
+  text-shadow: 0 0 10px rgba(34,197,94,0.35);
+}
 .gift-card__qty { font-size: 12px; opacity: .9; font-weight: 800; }
+.gift-card__burst {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.gift-card__burst span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 26px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(56,189,248,0.72));
+  --rot: 0deg;
+  transform: translate(-50%, -50%) rotate(var(--rot)) scaleY(.15);
+  opacity: 0;
+}
+.gift-card__burst span:nth-child(1) { --rot: 0deg; }
+.gift-card__burst span:nth-child(2) { --rot: 60deg; }
+.gift-card__burst span:nth-child(3) { --rot: 120deg; }
+.gift-card__burst span:nth-child(4) { --rot: 180deg; }
+.gift-card__burst span:nth-child(5) { --rot: 240deg; }
+.gift-card__burst span:nth-child(6) { --rot: 300deg; }
+.gift-card--opening .gift-card__burst span {
+  animation: giftBurst .48s ease-out .36s 1;
+}
+@keyframes giftBurst {
+  0% { opacity: 0; }
+  20% { opacity: .95; transform: translate(-50%, -50%) rotate(var(--rot)) scaleY(.4); }
+  100% { opacity: 0; transform: translate(-50%, -150%) rotate(var(--rot)) scaleY(1.2); }
+}
 .gift-card__open {
   border-radius: 10px;
   border: 1px solid rgba(59,130,246,0.8);
@@ -290,6 +455,23 @@ const giftStyles = `
   color: white;
   font-weight: 900;
   padding: 8px 10px;
+}
+.gift-card__owned {
+  border-radius: 10px;
+  border: 1px solid rgba(74,222,128,0.58);
+  background: rgba(22,101,52,0.26);
+  color: #dcfce7;
+  font-weight: 900;
+  font-size: 12px;
+  text-align: center;
+  padding: 8px 10px;
+}
+.gift-empty {
+  border-radius: 10px;
+  border: 1px dashed rgba(148,163,184,0.42);
+  padding: 10px;
+  font-size: 12px;
+  opacity: 0.8;
 }
 .gift-result {
   border-radius: 14px;

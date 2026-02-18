@@ -188,7 +188,14 @@ export async function GET() {
     const id = String(row.student_id ?? "");
     if (!id) return;
     const category = String(row.category ?? "").toLowerCase();
-    if (category === "redeem_daily" || category === "avatar_daily" || category === "redeem_camp_role" || category === "redeem_event_daily") return;
+    if (
+      category === "redeem_daily" ||
+      category === "avatar_daily" ||
+      category === "redeem_camp_role" ||
+      category === "redeem_event_daily" ||
+      category === "roulette_spin" ||
+      category === "roulette"
+    ) return;
     const points = Number(row.points ?? 0);
     weekly.set(id, (weekly.get(id) ?? 0) + points);
   });
@@ -389,10 +396,19 @@ export async function GET() {
     taolu_today: "Taolu Tracker Sessions Today",
     mvp: "Battle MVP",
   };
+  const leaderboard_minimums: Record<string, number> = {
+    total: 0,
+    weekly: 0,
+    lifetime: 0,
+    skill_pulse_today: 0,
+    skill_pulse_reps_today: 0,
+    taolu_today: 0,
+    mvp: 0,
+  };
 
   const { data: stats, error: statsErr } = await supabase
     .from("stats")
-    .select("id,name,higher_is_better");
+    .select("id,name,higher_is_better,minimum_value_for_ranking");
   if (statsErr) return NextResponse.json({ ok: false, error: statsErr.message }, { status: 500 });
 
   const packMap = new Map(pack.map((p) => [p.student_id, p]));
@@ -400,6 +416,7 @@ export async function GET() {
     const statId = String((stat as any)?.id ?? "").trim();
     if (!statId) continue;
     const higherIsBetter = (stat as any)?.higher_is_better !== false;
+    const minValue = Math.max(0, Number((stat as any)?.minimum_value_for_ranking ?? 0) || 0);
     const { data: statRows, error: statRowsErr } = await supabase
       .from("student_stats")
       .select("student_id,value,recorded_at")
@@ -424,6 +441,7 @@ export async function GET() {
 
     const boardKey = `performance_stat:${statId}`;
     leaderboard_labels[boardKey] = String((stat as any)?.name ?? "Performance Stat");
+    leaderboard_minimums[boardKey] = minValue;
     leaderboards[boardKey] = topWithTies(
       Array.from(bestByStudent.entries())
       .map(([studentId, best]) => {
@@ -438,7 +456,7 @@ export async function GET() {
           avatar_bg: base?.avatar_bg ?? null,
           avatar_effect: base?.avatar_effect ?? null,
         };
-      }).filter((row) => Number(row.points ?? 0) > 0),
+      }).filter((row) => Number(row.points ?? 0) > 0 && Number(row.points ?? 0) >= minValue),
       higherIsBetter,
       10
     );
@@ -448,6 +466,7 @@ export async function GET() {
     ok: true,
     leaderboards,
     leaderboard_labels,
+    leaderboard_minimums,
   });
 }
 

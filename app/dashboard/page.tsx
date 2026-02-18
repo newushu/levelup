@@ -3679,7 +3679,7 @@ function flashCardPlateUnlock(key: string, points: number) {
         {msg && <div style={errorBox()}>{msg}</div>}
 
         <div style={outerWrap(isComp, flash)}>
-          <div style={{ display: "grid", gridTemplateColumns: "520px 1fr", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 14 }}>
             {/* LEFT */}
           <CompetitionPrestigeFrame
             show={isComp}

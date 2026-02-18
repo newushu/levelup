@@ -10,6 +10,7 @@ type StatRow = {
   category?: string | null;
   unit?: string | null;
   higher_is_better?: boolean;
+  minimum_value_for_ranking?: number | null;
   enabled?: boolean;
 };
 
@@ -40,6 +41,7 @@ export default function StatsAdminPage() {
     category: "",
     unit: "",
     higher_is_better: true,
+    minimum_value_for_ranking: 0,
     enabled: true,
   });
 
@@ -78,7 +80,7 @@ export default function StatsAdminPage() {
   async function createStat() {
     if (!newStat.name.trim()) return setMsg("Enter a stat name.");
     await saveStat(newStat);
-    setNewStat({ name: "", description: "", category: "", unit: "", higher_is_better: true, enabled: true });
+    setNewStat({ name: "", description: "", category: "", unit: "", higher_is_better: true, minimum_value_for_ranking: 0, enabled: true });
     setSavedAdd(true);
     window.setTimeout(() => setSavedAdd(false), 1800);
   }
@@ -123,7 +125,12 @@ export default function StatsAdminPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
         <div>
           <div style={{ fontSize: 26, fontWeight: 1000 }}>Performance Lab</div>
-          <div style={{ opacity: 0.7, fontSize: 12 }}>Configure student performance metrics and ranking direction.</div>
+          <div style={{ opacity: 0.7, fontSize: 12 }}>
+            Configure metrics, ranking direction, and leaderboard minimum requirements.
+          </div>
+          <div style={{ opacity: 0.68, fontSize: 12, marginTop: 4 }}>
+            `Leaderboard Minimum` is the required stat value to appear on leaderboards and receive daily leaderboard bonus points.
+          </div>
         </div>
         <Link href="/admin/custom" style={backLink()}>
           Return to Admin Workspace
@@ -201,7 +208,7 @@ export default function StatsAdminPage() {
             <div style={{ fontWeight: 1000 }}>Add Stat</div>
             {savedAdd ? <div style={savedBadge()}>Saved</div> : null}
           </div>
-          <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1.2fr 1fr 1fr 1fr auto" }}>
+          <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1.2fr 1fr 1fr 1fr 1fr auto" }}>
             <input
               value={newStat.name}
               onChange={(e) => setNewStat((s) => ({ ...s, name: e.target.value }))}
@@ -229,6 +236,16 @@ export default function StatsAdminPage() {
               <option value="higher">Higher is better</option>
               <option value="lower">Lower is better</option>
             </select>
+            <input
+              value={String(Number(newStat.minimum_value_for_ranking ?? 0))}
+              onChange={(e) => setNewStat((s) => ({ ...s, minimum_value_for_ranking: Math.max(0, Number(e.target.value) || 0) }))}
+              placeholder="Leaderboard minimum"
+              type="number"
+              min={0}
+              step="any"
+              title="Required value to rank on leaderboard and earn daily leaderboard bonus points."
+              style={input()}
+            />
             <button onClick={createStat} style={btn()}>
               Add
             </button>
@@ -251,7 +268,7 @@ export default function StatsAdminPage() {
         {filteredStats.map((stat) => (
           <div key={stat.id} style={card()}>
             <div style={{ display: "grid", gap: 8 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr 1fr 1fr auto", gap: 10, alignItems: "center" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr 1fr 1fr 1fr auto", gap: 10, alignItems: "center" }}>
                 <input
                   value={stat.name}
                   onChange={(e) => setStats((prev) => prev.map((s) => (s.id === stat.id ? { ...s, name: e.target.value } : s)))}
@@ -282,6 +299,22 @@ export default function StatsAdminPage() {
                   <option value="higher">Higher is better</option>
                   <option value="lower">Lower is better</option>
                 </select>
+                <input
+                  value={String(Number(stat.minimum_value_for_ranking ?? 0))}
+                  onChange={(e) =>
+                    setStats((prev) =>
+                      prev.map((s) =>
+                        s.id === stat.id ? { ...s, minimum_value_for_ranking: Math.max(0, Number(e.target.value) || 0) } : s
+                      )
+                    )
+                  }
+                  placeholder="Leaderboard minimum"
+                  type="number"
+                  min={0}
+                  step="any"
+                  title="Required value to rank on leaderboard and earn daily leaderboard bonus points."
+                  style={input()}
+                />
                 <div style={{ display: "grid", gap: 6, justifyItems: "end" }}>
                   <button onClick={() => saveStat(stat)} style={btn()} disabled={!!saving[stat.id ?? ""]}>
                     {saving[stat.id ?? ""] ? "Saving..." : "Save"}

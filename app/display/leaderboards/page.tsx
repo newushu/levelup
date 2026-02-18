@@ -44,6 +44,7 @@ type LeaderboardSlot = {
   metric: string;
   title: string;
   unit: string | null;
+  minimum_value_for_ranking?: number | null;
   rank_window?: "top5" | "next5" | "top10";
   rows: LeaderboardRow[];
 };
@@ -108,13 +109,17 @@ export default function LeaderboardsDisplayPage() {
       setRotationIndex((prev) => {
         const next: Record<number, number> = { ...prev };
         for (const slot of [1, 2, 3, 4, 5, 6]) {
-          next[slot] = ((prev[slot] ?? 0) + 1) % 3;
+          const rotationLen = Math.max(
+            1,
+            (largeRotations.find((r) => Number(r.slot) === slot)?.rotation?.length ?? 0) || (slot <= 4 ? 3 : 5)
+          );
+          next[slot] = ((prev[slot] ?? 0) + 1) % rotationLen;
         }
         return next;
       });
     }, interval);
     return () => clearInterval(timer);
-  }, [rotationSeconds]);
+  }, [rotationSeconds, largeRotations]);
 
   useEffect(() => {
     let mounted = true;
@@ -253,9 +258,12 @@ export default function LeaderboardsDisplayPage() {
                 <div>
                   <div style={cardTitle()}>{bundle.slot.title || `Leaderboard ${bundle.slot.slot}`}</div>
                   {bundle.slot.unit ? <div style={cardSubtitle()}>Unit: {bundle.slot.unit}</div> : null}
+                  {Number(bundle.slot.minimum_value_for_ranking ?? 0) > 0 ? (
+                    <div style={cardSubtitle()}>Min required: {Number(bundle.slot.minimum_value_for_ranking)}</div>
+                  ) : null}
                 </div>
                 <div style={rotationPill()}>
-                  Rotating {((rotationIndex[bundle.slotKey] ?? 0) % 3) + 1}/3
+                  Rotating {((rotationIndex[bundle.slotKey] ?? 0) % Math.max(1, bundle.rotation.length || (bundle.slotKey <= 4 ? 3 : 5))) + 1}/{Math.max(1, bundle.rotation.length || (bundle.slotKey <= 4 ? 3 : 5))}
                 </div>
               </div>
               <div style={rowsWrap()}>
@@ -271,9 +279,12 @@ export default function LeaderboardsDisplayPage() {
                 <div>
                   <div style={largeTitle()}>{bundle.slot.title || `Leaderboard ${bundle.slot.slot}`}</div>
                   {bundle.slot.unit ? <div style={cardSubtitle()}>Unit: {bundle.slot.unit}</div> : null}
+                  {Number(bundle.slot.minimum_value_for_ranking ?? 0) > 0 ? (
+                    <div style={cardSubtitle()}>Min required: {Number(bundle.slot.minimum_value_for_ranking)}</div>
+                  ) : null}
                 </div>
                 <div style={rotationPill()}>
-                  Rotating {((rotationIndex[idx === 0 ? 5 : 6] ?? 0) % 3) + 1}/3
+                  Rotating {((rotationIndex[idx === 0 ? 5 : 6] ?? 0) % Math.max(1, bundle.rotation.length || 5)) + 1}/{Math.max(1, bundle.rotation.length || 5)}
                 </div>
               </div>
               <div style={rowsWrap()}>

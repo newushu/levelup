@@ -262,7 +262,7 @@ export default function RewardsPage() {
       <style>{studentWorkspaceTopBarStyles()}</style>
       <style>{`
         .student-rewards {
-          padding: 20px 20px 54px 252px;
+          padding: 20px 20px 54px ${isEmbed || inStudentWorkspace ? "20px" : "180px"};
           position: relative;
         }
         .prize-vault {
@@ -299,7 +299,7 @@ export default function RewardsPage() {
         .prize-vault__grid {
           margin-top: 14px;
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
           gap: 14px;
           position: relative;
           z-index: 1;

@@ -13,6 +13,8 @@ const DEFAULT_LEADERBOARD_SLOTS = [
   { metric: "points_total", title: "Points Balance", rank_window: "top10" },
   { metric: "lifetime_points", title: "Lifetime Points", rank_window: "top10" },
   { metric: "mvp_count", title: "Total MVPs", rank_window: "top10" },
+  { metric: "rule_keeper_total", title: "Rule Keeper Total", rank_window: "top10" },
+  { metric: "skill_pulse_today", title: "Skill Pulse Today", rank_window: "top10" },
 ];
 
 const DEFAULT_LARGE_ROTATIONS = [
@@ -20,8 +22,8 @@ const DEFAULT_LARGE_ROTATIONS = [
   { slot: 2, rotation: [2, 9, 3] },
   { slot: 3, rotation: [3, 10, 4] },
   { slot: 4, rotation: [4, 7, 1] },
-  { slot: 5, rotation: [5, 6, 7] },
-  { slot: 6, rotation: [8, 9, 10] },
+  { slot: 5, rotation: [5, 6, 7, 8, 9] },
+  { slot: 6, rotation: [10, 11, 12, 5, 6] },
 ];
 
 const METRIC_LABELS: Record<string, string> = {
@@ -67,7 +69,8 @@ function normalizeLargeRotations(input: any) {
       raw.find((row: any) => Number(row?.slot ?? 0) === fallback.slot) ||
       {};
     const rotationRaw = Array.isArray(candidate?.rotation) ? candidate.rotation : fallback.rotation;
-    const rotation = Array.from({ length: 3 }, (_, rIdx) => clampSlot(rotationRaw[rIdx], fallback.rotation[rIdx]));
+    const expectedCount = Array.isArray(fallback.rotation) ? fallback.rotation.length : 3;
+    const rotation = Array.from({ length: expectedCount }, (_, rIdx) => clampSlot(rotationRaw[rIdx], fallback.rotation[rIdx]));
     return { slot: fallback.slot, rotation };
   });
 }
@@ -558,7 +561,14 @@ export async function GET(req: Request) {
     const id = String(row.student_id ?? "");
     if (!id) return;
     const category = String(row.category ?? "").toLowerCase();
-    if (category === "redeem_daily" || category === "avatar_daily" || category === "redeem_camp_role" || category === "redeem_event_daily") return;
+    if (
+      category === "redeem_daily" ||
+      category === "avatar_daily" ||
+      category === "redeem_camp_role" ||
+      category === "redeem_event_daily" ||
+      category === "roulette_spin" ||
+      category === "roulette"
+    ) return;
     weeklyPoints.set(id, (weeklyPoints.get(id) ?? 0) + Number(row.points ?? 0));
   });
 
@@ -567,7 +577,14 @@ export async function GET(req: Request) {
     const id = String(row.student_id ?? "");
     if (!id) return;
     const category = String(row.category ?? "").toLowerCase();
-    if (category === "redeem_daily" || category === "avatar_daily" || category === "redeem_camp_role" || category === "redeem_event_daily") return;
+    if (
+      category === "redeem_daily" ||
+      category === "avatar_daily" ||
+      category === "redeem_camp_role" ||
+      category === "redeem_event_daily" ||
+      category === "roulette_spin" ||
+      category === "roulette"
+    ) return;
     todayPoints.set(id, (todayPoints.get(id) ?? 0) + Number(row.points ?? 0));
   });
 
@@ -599,7 +616,7 @@ export async function GET(req: Request) {
     });
   }
 
-  const performanceStatMeta = new Map<string, { name: string; unit: string | null; higher_is_better: boolean }>();
+  const performanceStatMeta = new Map<string, { name: string; unit: string | null; higher_is_better: boolean; minimum_value_for_ranking: number }>();
   const performanceLeaderboards = new Map<
     string,
     Array<{ student_id: string; value: number; recorded_at: string }>
@@ -608,7 +625,7 @@ export async function GET(req: Request) {
   for (const statId of uniquePerformanceStats) {
     const { data: stat, error: statErr } = await admin
       .from("stats")
-      .select("id,name,unit,higher_is_better")
+      .select("id,name,unit,higher_is_better,minimum_value_for_ranking")
       .eq("id", statId)
       .maybeSingle();
     if (statErr || !stat) continue;
@@ -616,6 +633,7 @@ export async function GET(req: Request) {
       name: String(stat.name ?? "Stat"),
       unit: stat.unit ?? null,
       higher_is_better: !!stat.higher_is_better,
+      minimum_value_for_ranking: Math.max(0, Number((stat as any).minimum_value_for_ranking ?? 0) || 0),
     });
     const { data: statRows, error: rowErr } = await admin
       .from("student_stats")
@@ -699,6 +717,7 @@ export async function GET(req: Request) {
         metric: metricKey,
         title: slot.title || METRIC_LABELS.none,
         unit: null,
+        minimum_value_for_ranking: null,
         rows: [],
       };
     }
@@ -706,9 +725,10 @@ export async function GET(req: Request) {
       const statId = metricKey.replace("performance_stat:", "").trim();
       const meta = performanceStatMeta.get(statId);
       const rows = performanceLeaderboards.get(statId) ?? [];
+      const minValue = Math.max(0, Number(meta?.minimum_value_for_ranking ?? 0) || 0);
       const sorted = rows
         .slice()
-        .filter((row) => Number(row.value ?? 0) > 0)
+        .filter((row) => Number(row.value ?? 0) > 0 && Number(row.value ?? 0) >= minValue)
         .sort((a, b) => {
           if (a.value === b.value) return String(b.recorded_at).localeCompare(String(a.recorded_at));
           return (meta?.higher_is_better ?? true) ? b.value - a.value : a.value - b.value;
@@ -737,6 +757,7 @@ export async function GET(req: Request) {
         metric: metricKey,
         title: slot.title || meta?.name || "Performance Stat",
         unit: meta?.unit ?? null,
+        minimum_value_for_ranking: minValue,
         rows: applyRankWindow(sorted, String((slot as any).rank_window ?? "top10")),
       };
     }
@@ -746,6 +767,7 @@ export async function GET(req: Request) {
       metric: metricKey,
       title: slot.title || METRIC_LABELS[metricKey] || "Leaderboard",
       unit: null,
+      minimum_value_for_ranking: null,
       rows: applyRankWindow(rows, String((slot as any).rank_window ?? "top10")),
     };
   });

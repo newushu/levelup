@@ -32,6 +32,14 @@ export default function StudentNavPanel() {
             );
           })}
         </div>
+        <button
+          type="button"
+          className="student-nav__refresh"
+          onClick={() => window.location.reload()}
+          title="Refresh page"
+        >
+          ↻ Refresh
+        </button>
       </div>
       <nav className="student-mobile-nav" aria-label="Student navigation">
         {items.map((item) => {
@@ -57,7 +65,7 @@ export function studentNavStyles() {
       width: 220px;
       height: calc(100vh - 180px);
       display: grid;
-      grid-template-rows: auto 1fr;
+      grid-template-rows: auto 1fr auto;
       gap: 14px;
       padding: 16px;
       border-radius: 18px;
@@ -79,6 +87,29 @@ export function studentNavStyles() {
       display: grid;
       gap: 12px;
       align-content: start;
+    }
+
+    .student-nav__refresh {
+      min-height: 44px;
+      border-radius: 12px;
+      border: 1px solid rgba(56,189,248,0.36);
+      background: linear-gradient(160deg, rgba(14,165,233,0.42), rgba(15,23,42,0.85));
+      color: #e0f2fe;
+      font-weight: 900;
+      letter-spacing: 0.7px;
+      text-transform: uppercase;
+      font-size: 11px;
+      cursor: pointer;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 8px 16px rgba(0,0,0,0.35);
+      transition: transform 120ms ease, border-color 160ms ease, box-shadow 120ms ease;
+    }
+    .student-nav__refresh:hover {
+      transform: translateY(-1px);
+      border-color: rgba(56,189,248,0.55);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.16), 0 0 16px rgba(56,189,248,0.24);
+    }
+    .student-nav__refresh:active {
+      transform: translateY(1px);
     }
 
     .student-nav__item {

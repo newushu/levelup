@@ -7,7 +7,7 @@ export default function StudentLogsPage() {
     <div className="student-route-shell">
       <style>{`
         .student-route-shell {
-          padding-left: 252px;
+          padding-left: 180px;
           min-height: 100vh;
         }
         @media (max-width: 1100px) {

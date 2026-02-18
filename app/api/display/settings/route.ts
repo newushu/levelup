@@ -32,6 +32,8 @@ const DEFAULT_LEADERBOARD_SLOTS = [
   { metric: "points_total", title: "Points Balance", rank_window: "top10" },
   { metric: "lifetime_points", title: "Lifetime Points", rank_window: "top10" },
   { metric: "mvp_count", title: "Total MVPs", rank_window: "top10" },
+  { metric: "rule_keeper_total", title: "Rule Keeper Total", rank_window: "top10" },
+  { metric: "skill_pulse_today", title: "Skill Pulse Today", rank_window: "top10" },
 ];
 
 const DEFAULT_LARGE_ROTATIONS = [
@@ -39,8 +41,8 @@ const DEFAULT_LARGE_ROTATIONS = [
   { slot: 2, rotation: [2, 9, 3] },
   { slot: 3, rotation: [3, 10, 4] },
   { slot: 4, rotation: [4, 7, 1] },
-  { slot: 5, rotation: [5, 6, 7] },
-  { slot: 6, rotation: [8, 9, 10] },
+  { slot: 5, rotation: [5, 6, 7, 8, 9] },
+  { slot: 6, rotation: [10, 11, 12, 5, 6] },
 ];
 
 const DEFAULT_COACH_ACTIVITY_TYPES = ["battle_pulse_mvp", "level_up", "rule_keeper"];
@@ -103,7 +105,8 @@ function normalizeLargeRotations(input: any) {
       raw.find((row: any) => Number(row?.slot ?? 0) === fallback.slot) ||
       {};
     const rotationRaw = Array.isArray(candidate?.rotation) ? candidate.rotation : fallback.rotation;
-    const rotation = Array.from({ length: 3 }, (_, rIdx) => clampSlot(rotationRaw[rIdx], fallback.rotation[rIdx]));
+    const expectedCount = Array.isArray(fallback.rotation) ? fallback.rotation.length : 3;
+    const rotation = Array.from({ length: expectedCount }, (_, rIdx) => clampSlot(rotationRaw[rIdx], fallback.rotation[rIdx]));
     return { slot: fallback.slot, rotation };
   });
 }

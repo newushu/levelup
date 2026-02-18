@@ -14,7 +14,7 @@ export async function GET(req: Request) {
   const admin = supabaseAdmin();
   const { data: stat, error: statErr } = await admin
     .from("stats")
-    .select("id,name,unit,higher_is_better")
+    .select("id,name,unit,higher_is_better,minimum_value_for_ranking")
     .eq("id", statId)
     .single();
   if (statErr) return NextResponse.json({ ok: false, error: statErr.message }, { status: 500 });
@@ -61,7 +61,8 @@ export async function GET(req: Request) {
     return higherIsBetter ? b.value - a.value : a.value - b.value;
   });
 
-  const positiveRows = rows.filter((row) => Number(row.value ?? 0) > 0);
+  const minValue = Math.max(0, Number((stat as any)?.minimum_value_for_ranking ?? 0) || 0);
+  const positiveRows = rows.filter((row) => Number(row.value ?? 0) > 0 && Number(row.value ?? 0) >= minValue);
   const leaderboard: Array<{ rank: number; student_id: string; student_name: string; value: number; recorded_at: string }> = [];
   let prevValue: number | null = null;
   let prevRank = 0;

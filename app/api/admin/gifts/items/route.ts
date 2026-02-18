@@ -50,6 +50,52 @@ function isMissingRelation(err: any) {
   return msg.includes("does not exist") || msg.includes("relation") || msg.includes("not found");
 }
 
+function normalizeDayCode(value: unknown) {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (!v) return "";
+  if (v === "monday" || v === "mon") return "m";
+  if (v === "tuesday" || v === "tues" || v === "tue") return "t";
+  if (v === "wednesday" || v === "wed") return "w";
+  if (v === "thursday" || v === "thurs" || v === "thu" || v === "th") return "r";
+  if (v === "friday" || v === "fri") return "f";
+  if (v === "saturday" || v === "sat") return "sa";
+  if (v === "sunday" || v === "sun") return "su";
+  if (["m", "t", "w", "r", "f", "sa", "su"].includes(v)) return v;
+  return "";
+}
+
+function normalizeAutoAssignment(input: any) {
+  if (!input || input.enabled !== true) return null;
+  const scopeType = String(input.scope_type ?? "").trim().toLowerCase();
+  if (scopeType !== "camp_secondary_role") return null;
+  const rosterId = String(input.roster_id ?? "").trim();
+  const secondaryRole = String(input.secondary_role ?? "").trim().toLowerCase();
+  if (!rosterId || !secondaryRole) return null;
+  const dayCodes = Array.isArray(input.day_codes)
+    ? Array.from(new Set(input.day_codes.map(normalizeDayCode).filter(Boolean)))
+    : [];
+  const timeEtRaw = String(input.time_et ?? "16:00").trim();
+  const timeEt = /^(\d{1,2}):(\d{2})$/.test(timeEtRaw) ? timeEtRaw : "16:00";
+  const startDate = String(input.start_date ?? "").trim() || null;
+  const endDate = String(input.end_date ?? "").trim() || null;
+  const qty = Math.max(1, Number(input.qty ?? 1) || 1);
+  const studentIds = Array.isArray(input.student_ids)
+    ? Array.from(new Set(input.student_ids.map((v: any) => String(v ?? "").trim()).filter(Boolean)))
+    : [];
+  return {
+    scope_type: "camp_secondary_role",
+    roster_id: rosterId,
+    secondary_role: secondaryRole,
+    day_codes: dayCodes,
+    time_et: timeEt,
+    start_date: startDate,
+    end_date: endDate,
+    qty,
+    student_ids: studentIds,
+    enabled: true,
+  };
+}
+
 export async function GET() {
   const gate = await requireAdmin();
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 401 });
@@ -65,6 +111,7 @@ export async function GET() {
   const items = (data ?? []) as any[];
   const ids = items.map((r: any) => String(r.id ?? "")).filter(Boolean);
   let componentsByPackage: Record<string, any[]> = {};
+  let autoByGift: Record<string, any> = {};
   if (ids.length) {
     const { data: components, error: cErr } = await admin
       .from("gift_package_components")
@@ -82,10 +129,25 @@ export async function GET() {
     } else if (!isMissingRelation(cErr)) {
       return NextResponse.json({ ok: false, error: cErr.message }, { status: 500 });
     }
+
+    const { data: autos, error: aErr } = await admin
+      .from("gift_auto_assignments")
+      .select("id,gift_item_id,scope_type,roster_id,secondary_role,day_codes,time_et,start_date,end_date,qty,student_ids,enabled,created_at,updated_at")
+      .in("gift_item_id", ids);
+    if (!aErr) {
+      (autos ?? []).forEach((row: any) => {
+        const key = String(row.gift_item_id ?? "");
+        if (!key) return;
+        autoByGift[key] = row;
+      });
+    } else if (!isMissingRelation(aErr)) {
+      return NextResponse.json({ ok: false, error: aErr.message }, { status: 500 });
+    }
   }
   const merged = items.map((it: any) => ({
     ...it,
     package_components: componentsByPackage[String(it.id)] ?? [],
+    auto_assignment: autoByGift[String(it.id)] ?? null,
   }));
   return NextResponse.json({ ok: true, items: merged });
 }
@@ -114,6 +176,7 @@ export async function POST(req: Request) {
     updated_at: new Date().toISOString(),
   };
   const packageComponents = normalizePackageComponents(body?.package_components);
+  const autoAssignment = normalizeAutoAssignment(body?.auto_assignment);
 
   const admin = supabaseAdmin();
   if (!id) {
@@ -132,6 +195,21 @@ export async function POST(req: Request) {
         const { error: pErr } = await admin.from("gift_package_components").insert(rows);
         if (pErr && !isMissingRelation(pErr)) return NextResponse.json({ ok: false, error: pErr.message }, { status: 500 });
       }
+    }
+    if (autoAssignment) {
+      const { error: aErr } = await admin.from("gift_auto_assignments").upsert(
+        {
+          gift_item_id: data.id,
+          ...autoAssignment,
+          created_by: gate.user.id,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "gift_item_id" }
+      );
+      if (aErr && !isMissingRelation(aErr)) return NextResponse.json({ ok: false, error: aErr.message }, { status: 500 });
+    } else {
+      const { error: aDelErr } = await admin.from("gift_auto_assignments").delete().eq("gift_item_id", data.id);
+      if (aDelErr && !isMissingRelation(aDelErr)) return NextResponse.json({ ok: false, error: aDelErr.message }, { status: 500 });
     }
     return NextResponse.json({ ok: true, item: data });
   }
@@ -152,6 +230,21 @@ export async function POST(req: Request) {
     const rows = packageComponents.map((row: any) => ({ ...row, package_gift_item_id: id, updated_at: new Date().toISOString() }));
     const { error: pErr } = await admin.from("gift_package_components").insert(rows);
     if (pErr && !isMissingRelation(pErr)) return NextResponse.json({ ok: false, error: pErr.message }, { status: 500 });
+  }
+  if (autoAssignment) {
+    const { error: aErr } = await admin.from("gift_auto_assignments").upsert(
+      {
+        gift_item_id: id,
+        ...autoAssignment,
+        created_by: gate.user.id,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "gift_item_id" }
+    );
+    if (aErr && !isMissingRelation(aErr)) return NextResponse.json({ ok: false, error: aErr.message }, { status: 500 });
+  } else {
+    const { error: aDelErr } = await admin.from("gift_auto_assignments").delete().eq("gift_item_id", id);
+    if (aDelErr && !isMissingRelation(aDelErr)) return NextResponse.json({ ok: false, error: aDelErr.message }, { status: 500 });
   }
   return NextResponse.json({ ok: true, item: data });
 }

@@ -678,8 +678,16 @@ function MyMetricsInner() {
     return Math.max(0, Math.min(100, Math.round(pct)));
   };
 
+  const mostTrackedAttempts = Number(mostTracked?.lifetime_attempts ?? 0);
+  const mostTrackedSuccesses = Number(mostTracked?.lifetime_successes ?? 0);
+  const mostTrackedFails = Math.max(0, mostTrackedAttempts - mostTrackedSuccesses);
+  const mostTrackedRatePct = mostTracked ? Math.max(0, Math.round(Number(mostTracked.lifetime_rate ?? 0) * 100)) : 0;
+  const mostTrackedTier =
+    mostTrackedRatePct >= 75 ? "good" : mostTrackedRatePct >= 50 ? "warn" : "bad";
+  const mostTrackedCritical = mostTrackedRatePct <= 20 && mostTrackedAttempts > 0;
+
   return (
-    <main className="logs-page">
+    <main className={`logs-page ${inStudentWorkspace ? "logs-page--workspace" : ""}`}>
       <style>{pageStyles()}</style>
       {!inStudentWorkspace ? <style>{studentNavStyles()}</style> : null}
       {!inStudentWorkspace ? <StudentNavPanel /> : null}
@@ -743,19 +751,21 @@ function MyMetricsInner() {
               </div>
             </div>
             <div className="panel-card">
-              <div className="panel-title">Most Tracked Skill Stats</div>
+              <div className="panel-title">Most Tracked Skill</div>
+              <div className="panel-skill-name">{mostTracked?.skill_name ?? "-"}</div>
               <div className="panel-grid">
-                <div className="panel-metric">
+                <div className={`panel-metric panel-metric--grade-${mostTrackedTier}`}>
                   <div className="panel-label">Attempts</div>
-                  <div className="panel-value">{mostTracked?.lifetime_attempts ?? 0}</div>
+                  <div className="panel-value">{mostTrackedAttempts}</div>
                 </div>
-                <div className="panel-metric">
-                  <div className="panel-label">Successes</div>
-                  <div className="panel-value">{mostTracked?.lifetime_successes ?? 0}</div>
+                <div className={`panel-metric panel-metric--grade-${mostTrackedTier}`}>
+                  <div className="panel-label">Fails</div>
+                  <div className="panel-value">{mostTrackedFails}</div>
                 </div>
-                <div className="panel-metric">
+                <div className={`panel-metric panel-metric--grade-${mostTrackedTier} ${mostTrackedCritical ? "panel-metric--critical" : ""}`}>
                   <div className="panel-label">Success Rate</div>
-                  <div className="panel-value">{mostTracked ? Math.round(mostTracked.lifetime_rate * 100) : 0}%</div>
+                  <div className="panel-value">{mostTrackedRatePct}%</div>
+                  {mostTrackedCritical ? <div className="panel-metric__alert">!</div> : null}
                 </div>
               </div>
             </div>
@@ -1135,6 +1145,10 @@ function pageStyles() {
       margin: 0 auto;
     }
 
+    .logs-page--workspace {
+      padding-left: 16px;
+    }
+
     .back-btn {
       justify-self: start;
       padding: 8px 12px;
@@ -1296,6 +1310,18 @@ function pageStyles() {
       100% { box-shadow: 0 0 10px rgba(56,189,248,0.25); border-color: rgba(56,189,248,0.25); }
     }
 
+    @keyframes alertPulse {
+      0% { transform: scale(1); opacity: 0.9; }
+      50% { transform: scale(1.16); opacity: 1; }
+      100% { transform: scale(1); opacity: 0.9; }
+    }
+
+    @keyframes criticalPulse {
+      0% { box-shadow: 0 0 14px rgba(239,68,68,0.38); }
+      50% { box-shadow: 0 0 24px rgba(239,68,68,0.62); }
+      100% { box-shadow: 0 0 14px rgba(239,68,68,0.38); }
+    }
+
     .panel-card--trend {
       min-height: 220px;
     }
@@ -1414,6 +1440,51 @@ function pageStyles() {
       border: 1px solid rgba(148,163,184,0.16);
       display: grid;
       gap: 6px;
+      position: relative;
+    }
+
+    .panel-skill-name {
+      font-size: 18px;
+      font-weight: 1000;
+      letter-spacing: 0.2px;
+    }
+
+    .panel-metric--grade-good {
+      background: linear-gradient(145deg, rgba(22,163,74,0.28), rgba(20,83,45,0.32));
+      border-color: rgba(74,222,128,0.48);
+    }
+
+    .panel-metric--grade-warn {
+      background: linear-gradient(145deg, rgba(234,179,8,0.26), rgba(113,63,18,0.3));
+      border-color: rgba(250,204,21,0.5);
+    }
+
+    .panel-metric--grade-bad {
+      background: linear-gradient(145deg, rgba(220,38,38,0.24), rgba(127,29,29,0.3));
+      border-color: rgba(248,113,113,0.52);
+    }
+
+    .panel-metric--critical {
+      box-shadow: 0 0 18px rgba(239,68,68,0.5);
+      animation: criticalPulse 1.2s ease-in-out infinite;
+    }
+
+    .panel-metric__alert {
+      position: absolute;
+      top: -8px;
+      right: -8px;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      font-size: 13px;
+      font-weight: 1000;
+      color: #fee2e2;
+      border: 1px solid rgba(254,202,202,0.75);
+      background: rgba(220,38,38,0.9);
+      box-shadow: 0 0 14px rgba(239,68,68,0.6);
+      animation: alertPulse 1s ease-in-out infinite;
     }
 
     .panel-label {

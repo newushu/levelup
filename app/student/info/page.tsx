@@ -216,9 +216,14 @@ function buildDarkAvatarGradientFromHex(hex: string) {
 
 function pickerHexFromAvatarBg(value: string) {
   const raw = String(value ?? "").trim();
-  const gradientMatch = raw.match(/rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i);
-  if (gradientMatch) {
-    return rgbToHex(Number(gradientMatch[1]), Number(gradientMatch[2]), Number(gradientMatch[3]));
+  const gradientMatches = Array.from(raw.matchAll(/rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/gi));
+  if (gradientMatches.length) {
+    const light = gradientMatches[0];
+    const lr = Number(light?.[1] ?? 15);
+    const lg = Number(light?.[2] ?? 23);
+    const lb = Number(light?.[3] ?? 42);
+    // Keep the picker close to the visible top gradient color the student actually sees.
+    return rgbToHex(lr, lg, lb);
   }
   return toColorInputHex(raw);
 }
@@ -255,6 +260,7 @@ export default function StudentInfoPage() {
   const [seasonSettings, setSeasonSettings] = useState<SeasonSettings | null>(null);
   const [leaderboards, setLeaderboards] = useState<LeaderboardPayload | null>(null);
   const [leaderboardLabels, setLeaderboardLabels] = useState<Record<string, string>>({});
+  const [leaderboardMinimums, setLeaderboardMinimums] = useState<Record<string, number>>({});
   const [avatarCatalog, setAvatarCatalog] = useState<
     Array<{
       id: string;
@@ -291,6 +297,7 @@ export default function StudentInfoPage() {
   const [avatarPickerFilter, setAvatarPickerFilter] = useState<"all" | "unlocked" | "locked" | "limited" | "my_level" | "higher_level">("all");
   const [avatarPickerSort, setAvatarPickerSort] = useState<"level" | "name" | "daily_points" | "mvp_bonus">("level");
   const [pickerPreviewKey, setPickerPreviewKey] = useState("");
+  const [pickerBorderHoverKey, setPickerBorderHoverKey] = useState("");
   const [pickerBusyKey, setPickerBusyKey] = useState("");
   const [dailyRedeem, setDailyRedeem] = useState<DailyRedeemStatus | null>(null);
   const [redeemBurst, setRedeemBurst] = useState<{ points: number; text: string } | null>(null);
@@ -561,6 +568,7 @@ export default function StudentInfoPage() {
       if (leaderboardJson.ok) {
         setLeaderboards((leaderboardJson.json?.leaderboards ?? null) as LeaderboardPayload | null);
         setLeaderboardLabels((leaderboardJson.json?.leaderboard_labels ?? {}) as Record<string, string>);
+        setLeaderboardMinimums((leaderboardJson.json?.leaderboard_minimums ?? {}) as Record<string, number>);
       }
       const lastActionJson = await safeJson(lastActionRes);
       if (lastActionJson.ok) setLastAction((lastActionJson.json?.last_action ?? null) as LastAction | null);
@@ -958,6 +966,7 @@ export default function StudentInfoPage() {
   useEffect(() => {
     if (!avatarPickerOpen) return;
     setPickerPreviewKey("");
+    setPickerBorderHoverKey("");
   }, [avatarPickerTab, avatarPickerOpen]);
 
   const pickerAvatarRows = useMemo(() => {
@@ -1205,6 +1214,7 @@ export default function StudentInfoPage() {
       if (leaderboardJson.ok) {
         setLeaderboards((leaderboardJson.json?.leaderboards ?? null) as LeaderboardPayload | null);
         setLeaderboardLabels((leaderboardJson.json?.leaderboard_labels ?? {}) as Record<string, string>);
+        setLeaderboardMinimums((leaderboardJson.json?.leaderboard_minimums ?? {}) as Record<string, number>);
       }
     } finally {
       setRedeemingDaily(false);
@@ -1248,6 +1258,11 @@ export default function StudentInfoPage() {
             students={students}
             recentMvp={recentMvp}
             hasGift={giftCount > 0}
+            avatarBgOverride={avatarBg}
+            avatarSrcOverride={avatarSrc}
+            avatarZoomPctOverride={avatarZoomPct}
+            avatarEffectOverride={selectedEffect as any}
+            cornerBorderOverride={selectedBorder as any}
           />
           <section className="student-info__split">
             <aside className="student-info__left">
@@ -1549,6 +1564,7 @@ export default function StudentInfoPage() {
                 <div className="leaderboard-detail-grid">
                   {(dailyRedeem?.leaderboard_boards ?? []).map((key) => {
                     const label = leaderboardLabels[key] ?? leaderboardLabelByKey[key] ?? key;
+                    const minimum = Math.max(0, Number(leaderboardMinimums[key] ?? 0) || 0);
                     const rows = (leaderboards?.[key as keyof LeaderboardPayload] ?? []) as LeaderboardEntry[];
                     const myIndex = rows.findIndex((row) => String(row.student_id) === String(student?.id ?? ""));
                     const myRow = myIndex >= 0 ? rows[myIndex] : null;
@@ -1563,6 +1579,9 @@ export default function StudentInfoPage() {
                             {myIndex >= 0 ? `You: #${myIndex + 1}` : "You: --"}
                           </span>
                         </div>
+                        {minimum > 0 ? (
+                          <div className="leaderboard-detail-board__min">Minimum required: {minimum}</div>
+                        ) : null}
                         <div className={`leaderboard-detail-board__bonus ${awardPoints > 0 ? "leaderboard-detail-board__bonus--active" : ""}`}>
                           {awardPoints > 0 ? `Redeem bonus: +${awardPoints} (rank #${awardRank})` : "Redeem bonus: +0"}
                         </div>
@@ -1615,7 +1634,11 @@ export default function StudentInfoPage() {
                   id="avatar-bg-color"
                   type="color"
                   value={avatarBgInput}
-                  onChange={(e) => setAvatarBgInput(e.target.value)}
+                  onChange={(e) => {
+                    const nextHex = toColorInputHex(e.target.value);
+                    setAvatarBgInput(nextHex);
+                    setAvatarBg(buildDarkAvatarGradientFromHex(nextHex));
+                  }}
                   className="avatar-bg-input"
                 />
                 <button
@@ -1826,11 +1849,23 @@ export default function StudentInfoPage() {
                       : pickerBorderRows.map(({ item, key, unlockLevel, unlockPoints, state }) => (
                           (() => {
                             const blocked = !state.unlocked && (!state.levelOk || !state.eligibilityOk || Boolean((state as any).limitedBlocked));
+                            const hasPreviewSelection = avatarPickerTab === "border" && Boolean(pickerPreviewKey);
+                            const allowHoverAnimation = !hasPreviewSelection;
+                            const cardShouldAnimate = allowHoverAnimation && pickerBorderHoverKey === key;
                             return (
                           <div
                             key={`bd-${key}`}
                             className={`avatar-picker-item ${state.unlocked ? "" : "avatar-picker-item--locked"} ${blocked ? "avatar-picker-item--blocked" : ""} ${pickerPreviewKey === key ? "avatar-picker-item--preview" : ""}`}
-                            onClick={() => setPickerPreviewKey(key)}
+                            onClick={() => {
+                              setPickerPreviewKey(key);
+                              setPickerBorderHoverKey("");
+                            }}
+                            onMouseEnter={() => {
+                              if (allowHoverAnimation) setPickerBorderHoverKey(key);
+                            }}
+                            onMouseLeave={() => {
+                              if (pickerBorderHoverKey === key) setPickerBorderHoverKey("");
+                            }}
                           >
                             {item.limited_event_only ? <div className="avatar-picker-stamp">LIMITED TIME BORDER</div> : null}
                             <div className="avatar-picker-thumb">
@@ -1839,8 +1874,8 @@ export default function StudentInfoPage() {
                                 bg={avatarBg}
                                 avatarSrc={avatarSrc}
                                 avatarZoomPct={avatarZoomPct}
-                                effect={selectedEffect as any}
-                                border={item as any}
+                                effect={null}
+                                border={cardShouldAnimate ? (item as any) : null}
                                 showImageBorder={false}
                                 contextKey="student_info"
                                 fallback={<div className="avatar-picker-empty">BD</div>}
@@ -2508,6 +2543,18 @@ function pageStyles() {
     .leaderboard-detail-board__rows {
       display: grid;
       gap: 5px;
+    }
+    .leaderboard-detail-board__min {
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      color: #93c5fd;
+      border: 1px solid rgba(59,130,246,0.42);
+      background: rgba(30,58,138,0.24);
+      border-radius: 999px;
+      padding: 4px 8px;
+      width: fit-content;
     }
     .leaderboard-detail-board__bonus {
       font-size: 10px;

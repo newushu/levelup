@@ -81,7 +81,7 @@ const DEFAULT_SETTINGS: DisplaySettings = {
   leaderboard_display_enabled: true,
   live_activity_types: LIVE_ACTIVITY_TYPES.map((t) => t.key),
   coach_display_activity_types: ["battle_pulse_mvp", "level_up", "rule_keeper"],
-  leaderboard_slots: Array.from({ length: 10 }, (_, idx) => ({
+  leaderboard_slots: Array.from({ length: 12 }, (_, idx) => ({
     slot: idx + 1,
     metric: POINT_METRICS[(idx % (POINT_METRICS.length - 1)) + 1]?.key ?? "points_total",
     title: POINT_METRICS[(idx % (POINT_METRICS.length - 1)) + 1]?.label ?? "Leaderboard",
@@ -92,8 +92,8 @@ const DEFAULT_SETTINGS: DisplaySettings = {
     { slot: 2, rotation: [2, 9, 3] },
     { slot: 3, rotation: [3, 10, 4] },
     { slot: 4, rotation: [4, 7, 1] },
-    { slot: 5, rotation: [5, 6, 7] },
-    { slot: 6, rotation: [8, 9, 10] },
+    { slot: 5, rotation: [5, 6, 7, 8, 9] },
+    { slot: 6, rotation: [10, 11, 12, 5, 6] },
   ],
   display_blank_slots: Array.from({ length: 6 }, (_, idx) => ({ slot: idx + 1, module: "none" })),
 };
@@ -116,6 +116,11 @@ export default function DisplaySettingsPage() {
       }));
     return [...base, ...perf];
   }, [performanceStats]);
+  const metricLabelByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const opt of metricOptions) map.set(opt.value, opt.label);
+    return map;
+  }, [metricOptions]);
 
   useEffect(() => {
     let mounted = true;
@@ -224,6 +229,14 @@ export default function DisplaySettingsPage() {
 
   const updateSlot = (index: number, patch: Partial<LeaderboardSlot>) => {
     setSettings((prev) => {
+      const nextMetric = String(patch.metric ?? "").trim();
+      if (nextMetric && nextMetric !== "none") {
+        const usedElsewhere = prev.leaderboard_slots.some((slot, idx) => idx !== index && String(slot.metric ?? "").trim() === nextMetric);
+        if (usedElsewhere) {
+          setStatus("Each leaderboard source metric must be unique. Pick a different source metric.");
+          return prev;
+        }
+      }
       const next = [...prev.leaderboard_slots];
       const current = next[index] ?? { slot: index + 1, metric: "points_total", title: "" };
       next[index] = { ...current, ...patch, slot: index + 1 };
@@ -234,11 +247,12 @@ export default function DisplaySettingsPage() {
   const updateLargeRotation = (index: number, rotationIndex: number, value: number) => {
     setSettings((prev) => {
       const next = [...prev.leaderboard_large_rotations];
-      const current = next[index] ?? { slot: index + 5, rotation: [5, 6, 7] };
+      const expectedCount = (next[index]?.slot ?? index + 1) <= 4 ? 3 : 5;
+      const current = next[index] ?? { slot: index + 1, rotation: Array.from({ length: expectedCount }, (_, idx2) => idx2 + 1) };
       const rotation = [...(current.rotation ?? [])];
-      while (rotation.length < 3) rotation.push((rotation[rotation.length - 1] ?? 1));
+      while (rotation.length < expectedCount) rotation.push((rotation[rotation.length - 1] ?? 1));
       rotation[rotationIndex] = value;
-      next[index] = { slot: current.slot ?? index + 5, rotation };
+      next[index] = { slot: current.slot ?? index + 1, rotation };
       return { ...prev, leaderboard_large_rotations: next };
     });
   };
@@ -249,6 +263,80 @@ export default function DisplaySettingsPage() {
       next[index] = { slot: index + 1, module };
       return { ...prev, display_blank_slots: next };
     });
+  };
+
+  const fillAllSlotsWithPerformanceStats = () => {
+    const perf = performanceStats.filter((row) => row.id);
+    if (!perf.length) {
+      setStatus("No Performance Lab stats found yet.");
+      return;
+    }
+    setSettings((prev) => {
+      const next = [...prev.leaderboard_slots];
+      for (let i = 0; i < next.length; i++) {
+        const stat = perf[i % perf.length];
+        const current = next[i] ?? { slot: i + 1, metric: "points_total", title: "", rank_window: "top10" as const };
+        next[i] = {
+          ...current,
+          slot: i + 1,
+          metric: `performance_stat:${stat.id}`,
+          title: `Perf Lab: ${stat.name}`,
+          rank_window: "top10",
+        };
+      }
+      return { ...prev, leaderboard_slots: next };
+    });
+    setStatus("All leaderboard slots set to Performance Lab stats. Save settings to publish.");
+  };
+
+  const applyPerformanceLabRotationPreset = () => {
+    const perf = performanceStats.filter((row) => row.id).slice(0, 3);
+    if (!perf.length) {
+      setStatus("No Performance Lab stats found yet.");
+      return;
+    }
+
+    setSettings((prev) => {
+      const slots = [...prev.leaderboard_slots];
+      const targetSlots = [8, 9, 10];
+      perf.forEach((row, idx) => {
+        const slotNumber = targetSlots[idx] ?? targetSlots[targetSlots.length - 1];
+        const slotIndex = Math.max(0, slotNumber - 1);
+        const current = slots[slotIndex] ?? { slot: slotNumber, metric: "points_total", title: "", rank_window: "top10" as const };
+        slots[slotIndex] = {
+          ...current,
+          slot: slotNumber,
+          metric: `performance_stat:${row.id}`,
+          title: `Perf Lab: ${row.name}`,
+          rank_window: "top10",
+        };
+      });
+
+      const nextRotations = [...prev.leaderboard_large_rotations];
+      const rotationPresets = [
+        [8, 2, 9],
+        [9, 3, 10],
+        [10, 4, 8],
+        [8, 1, 9],
+        [8, 9, 10, 11, 12],
+        [12, 11, 10, 9, 8],
+      ];
+      for (let i = 0; i < nextRotations.length; i++) {
+        const current = nextRotations[i] ?? { slot: i + 1, rotation: [1, 2, 3] };
+        nextRotations[i] = {
+          ...current,
+          slot: current.slot ?? i + 1,
+          rotation: rotationPresets[i] ?? current.rotation ?? [1, 2, 3],
+        };
+      }
+
+      return {
+        ...prev,
+        leaderboard_slots: slots,
+        leaderboard_large_rotations: nextRotations,
+      };
+    });
+    setStatus("Applied Performance Lab leaderboard preset. Save settings to publish.");
   };
 
   return (
@@ -341,12 +429,22 @@ export default function DisplaySettingsPage() {
       <div style={card()}>
         <div style={{ fontWeight: 1000, marginBottom: 6 }}>Leaderboard Slots</div>
         <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 10 }}>
-          Display 1-4 are small tiles. Display 5-6 are large tiles that rotate through 3 selections.
+          All 12 source slots can use Performance Lab metrics. Displays 1-4 (small) and 5-6 (large) rotate through these source slots.
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <button type="button" onClick={fillAllSlotsWithPerformanceStats} style={miniBtn()}>
+            Fill All Slots With Performance Lab Stats
+          </button>
         </div>
         <div style={slotGrid()}>
           {settings.leaderboard_slots.map((slot, idx) => (
             <div key={slot.slot} style={slotCard()}>
-              <div style={{ fontWeight: 900 }}>Slot {slot.slot}</div>
+              <div style={{ display: "grid", gap: 2 }}>
+                <div style={{ fontWeight: 900 }}>Source Slot {slot.slot}</div>
+                <div style={{ fontSize: 11, opacity: 0.68 }}>
+                  {slot.slot <= 4 ? "Default source for Small Displays 1-4" : slot.slot <= 6 ? "Default source for Large Displays 5-6" : "Extra source slot for rotation pools"}
+                </div>
+              </div>
               <label style={fieldStack()}>
                 <span style={fieldLabel()}>Title</span>
                 <input
@@ -364,7 +462,16 @@ export default function DisplaySettingsPage() {
                   style={textInput()}
                 >
                   {metricOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
+                    <option
+                      key={opt.value}
+                      value={opt.value}
+                      disabled={
+                        opt.value !== "none" &&
+                        settings.leaderboard_slots.some(
+                          (other, otherIdx) => otherIdx !== idx && String(other.metric ?? "").trim() === opt.value
+                        )
+                      }
+                    >
                       {opt.label}
                     </option>
                   ))}
@@ -390,23 +497,53 @@ export default function DisplaySettingsPage() {
       <div style={card()}>
         <div style={{ fontWeight: 1000, marginBottom: 6 }}>Leaderboard Rotations (10s each)</div>
         <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 10 }}>
-          Choose which 3 slots rotate in each tile (left 1-4 and large 5-6).
+          All 6 display panels rotate (Small Displays 1-4, Large Displays 5-6). Small panels rotate 3 sources, large panels rotate 5 sources. You can reuse the same source in multiple rotation positions.
+        </div>
+        <div style={{ marginBottom: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(2,6,23,0.45)", padding: 10 }}>
+          <div style={{ fontWeight: 900, fontSize: 12, marginBottom: 8, opacity: 0.9 }}>Legend (Display Layout)</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 6 }}>
+              {[1, 2, 3, 4].map((n) => (
+                <div key={`small-legend-${n}`} style={{ borderRadius: 8, border: "1px solid rgba(56,189,248,0.45)", background: "rgba(56,189,248,0.14)", padding: "6px 8px", fontSize: 11, fontWeight: 900 }}>
+                  Small Display {n}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+              {[5, 6].map((n) => (
+                <div key={`large-legend-${n}`} style={{ borderRadius: 8, border: "1px solid rgba(34,197,94,0.45)", background: "rgba(34,197,94,0.14)", padding: "7px 9px", fontSize: 11, fontWeight: 900 }}>
+                  Large Display {n}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <button
+            type="button"
+            onClick={applyPerformanceLabRotationPreset}
+            style={miniBtn()}
+          >
+            Apply Performance Lab Rotation Preset
+          </button>
         </div>
         <div style={slotGrid()}>
           {settings.leaderboard_large_rotations.map((rotation, idx) => (
             <div key={rotation.slot} style={slotCard()}>
-              <div style={{ fontWeight: 900 }}>Large Display {rotation.slot}</div>
-              {[0, 1, 2].map((rotIdx) => (
+              <div style={{ fontWeight: 900 }}>
+                {rotation.slot <= 4 ? `Small Display ${rotation.slot}` : `Large Display ${rotation.slot}`}
+              </div>
+              {Array.from({ length: rotation.slot <= 4 ? 3 : 5 }, (_, rotIdx) => rotIdx).map((rotIdx) => (
                 <label key={`rot-${rotation.slot}-${rotIdx}`} style={fieldStack()}>
                   <span style={fieldLabel()}>Rotation {rotIdx + 1}</span>
                   <select
-                    value={rotation.rotation?.[rotIdx] ?? 1}
-                    onChange={(e) => updateLargeRotation(idx, rotIdx, Number(e.target.value))}
+                    value={String(rotation.rotation?.[rotIdx] ?? 1)}
+                    onChange={(e) => updateLargeRotation(idx, rotIdx, Number.parseInt(e.target.value, 10) || 1)}
                     style={textInput()}
                   >
                     {settings.leaderboard_slots.map((slot) => (
-                      <option key={`slot-${slot.slot}`} value={slot.slot}>
-                        {slot.slot}. {slot.title || `Leaderboard ${slot.slot}`}
+                      <option key={`slot-${slot.slot}`} value={String(slot.slot)}>
+                        {slot.slot}. {slot.title || `Leaderboard ${slot.slot}`} ({metricLabelByKey.get(slot.metric) || slot.metric})
                       </option>
                     ))}
                   </select>
@@ -508,7 +645,8 @@ function normalizeLargeRotations(input: any): LeaderboardLargeRotation[] {
       raw.find((row: any) => Number(row?.slot ?? 0) === fallback.slot) ||
       {};
     const rotationRaw = Array.isArray(candidate?.rotation) ? candidate.rotation : fallback.rotation;
-    const rotation = Array.from({ length: 3 }, (_, rIdx) => clampSlot(rotationRaw[rIdx], fallback.rotation[rIdx]));
+    const expectedCount = Array.isArray(fallback.rotation) ? fallback.rotation.length : 3;
+    const rotation = Array.from({ length: expectedCount }, (_, rIdx) => clampSlot(rotationRaw[rIdx], fallback.rotation[rIdx]));
     return { slot: fallback.slot, rotation };
   });
 }

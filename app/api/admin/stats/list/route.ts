@@ -27,7 +27,7 @@ export async function GET() {
   const admin = supabaseAdmin();
   const { data, error } = await admin
     .from("stats")
-    .select("id,name,description,category,unit,higher_is_better,enabled,created_at")
+    .select("id,name,description,category,unit,higher_is_better,minimum_value_for_ranking,enabled,created_at")
     .order("name", { ascending: true });
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 

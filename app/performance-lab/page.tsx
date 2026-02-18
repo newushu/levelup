@@ -11,6 +11,7 @@ type StatRow = {
   category?: string | null;
   unit?: string | null;
   higher_is_better?: boolean;
+  minimum_value_for_ranking?: number | null;
 };
 
 type StudentRow = {
@@ -98,6 +99,9 @@ function PerformanceLabInner() {
   const [leaderboardDataA, setLeaderboardDataA] = useState<LeaderboardData | null>(null);
   const [leaderboardDataB, setLeaderboardDataB] = useState<LeaderboardData | null>(null);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [quickLeaderboardOpen, setQuickLeaderboardOpen] = useState(false);
+  const [quickLeaderboardData, setQuickLeaderboardData] = useState<LeaderboardData | null>(null);
+  const [quickLeaderboardLoading, setQuickLeaderboardLoading] = useState(false);
   const canEdit = role === "admin" || role === "coach";
   const canView = canEdit || role === "classroom";
 
@@ -227,6 +231,23 @@ function PerformanceLabInner() {
       .filter((s) => s.name.toLowerCase().includes(q))
       .slice(0, 8);
   }, [studentQuery, students, selectedStudents]);
+
+  async function openQuickLeaderboard(statId: string) {
+    if (!statId) return;
+    setQuickLeaderboardLoading(true);
+    setQuickLeaderboardOpen(true);
+    const res = await fetch(`/api/performance-lab/leaderboard?stat_id=${encodeURIComponent(statId)}&limit=10`, {
+      cache: "no-store",
+    });
+    const sj = await safeJson(res);
+    setQuickLeaderboardLoading(false);
+    if (!sj.ok) {
+      setMsg(sj.json?.error || "Failed to load leaderboard");
+      setQuickLeaderboardData(null);
+      return;
+    }
+    setQuickLeaderboardData((sj.json?.leaderboard ?? null) as LeaderboardData | null);
+  }
 
   async function saveStatValue(studentId: string, stat: StatRow) {
     const raw = (drafts[`${studentId}:${stat.id}`] ?? "").trim();
@@ -563,8 +584,8 @@ function PerformanceLabInner() {
             {canEdit ? (
               <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
                 <div style={{ fontWeight: 900, fontSize: 12, opacity: 0.8 }}>Pull roster from today</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
-                  <select value={classSessionId} onChange={(e) => setClassSessionId(e.target.value)} style={selectModern()}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+                      <select value={classSessionId} onChange={(e) => setClassSessionId(e.target.value)} style={selectModern()}>
                     <option value="">Select a class</option>
                     {classSessions.map((session) => (
                       <option key={session.instance_id} value={session.instance_id}>
@@ -688,11 +709,17 @@ function PerformanceLabInner() {
                           <div style={{ opacity: 0.7, fontSize: 12 }}>
                             {statCategories(stat).length ? `${statCategories(stat).join(" • ")} • ` : ""}
                             {stat.unit ? `Unit: ${stat.unit}` : "No unit"}
+                            {Number(stat.minimum_value_for_ranking ?? 0) > 0 ? ` • Min rank value: ${Number(stat.minimum_value_for_ranking)}` : ""}
                           </div>
                         </div>
-                        <button onClick={() => removeStat(id)} style={chipRemove()} aria-label="Remove stat">
-                          ×
-                        </button>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <button onClick={() => void openQuickLeaderboard(id)} style={miniEmojiBtn()} title="Open leaderboard">
+                            📊
+                          </button>
+                          <button onClick={() => removeStat(id)} style={chipRemove()} aria-label="Remove stat">
+                            ×
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -730,12 +757,39 @@ function PerformanceLabInner() {
               <TimerTool mode="button" triggerLabel="Timer" />
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <input
+                value={studentQuery}
+                onChange={(e) => setStudentQuery(e.target.value)}
+                placeholder="Add student in overlay..."
+                style={{ ...input(), minWidth: 240 }}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  const next = studentSuggestions[0];
+                  if (!next) return;
+                  toggleStudent(next.id);
+                  setStudentQuery("");
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const next = studentSuggestions[0];
+                  if (!next) return;
+                  toggleStudent(next.id);
+                  setStudentQuery("");
+                }}
+                style={btnGhost()}
+              >
+                Add Student
+              </button>
               {selectedStats.map((id) => {
                 const stat = stats.find((s) => s.id === id);
                 if (!stat) return null;
                 return (
                   <div key={id} style={chip()}>
                     <span>{stat.name}</span>
+                    <button onClick={() => void openQuickLeaderboard(id)} style={miniEmojiBtn()} title="Open leaderboard">📊</button>
                     <button onClick={() => removeStat(id)} style={chipRemove()} aria-label="Remove stat">×</button>
                   </div>
                 );
@@ -849,11 +903,23 @@ function PerformanceLabInner() {
           </div>
         </Overlay>
       )}
+      {quickLeaderboardOpen && (
+        <Overlay title="Stat Leaderboard" maxWidth={640} onClose={() => setQuickLeaderboardOpen(false)}>
+          <div style={{ display: "grid", gap: 10 }}>
+            {quickLeaderboardLoading ? <div style={leaderboardEmpty()}>Loading leaderboard...</div> : null}
+            {!quickLeaderboardLoading ? renderLeaderboard(quickLeaderboardData) : null}
+          </div>
+        </Overlay>
+      )}
       <style>{`
         @keyframes leaderboardDrift {
           0% { background-position: 0% 50%; }
           50% { background-position: 100% 50%; }
           100% { background-position: 0% 50%; }
+        }
+        select option {
+          color: #0f172a;
+          background: #f8fafc;
         }
       `}</style>
     </main>
@@ -1034,9 +1100,9 @@ function selectModern(): React.CSSProperties {
   return {
     padding: "10px 36px 10px 12px",
     borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.2)",
-    background: "linear-gradient(135deg, rgba(15,23,42,0.9), rgba(2,6,23,0.95))",
-    color: "white",
+    border: "1px solid rgba(148,163,184,0.5)",
+    background: "linear-gradient(135deg, rgba(248,250,252,0.98), rgba(226,232,240,0.96))",
+    color: "#0f172a",
     fontWeight: 900,
     width: "100%",
     appearance: "none",
@@ -1219,6 +1285,22 @@ function recentPill(): React.CSSProperties {
     background: "rgba(255,255,255,0.08)",
     fontSize: 11,
     fontWeight: 900,
+  };
+}
+
+function miniEmojiBtn(): React.CSSProperties {
+  return {
+    borderRadius: 999,
+    border: "1px solid rgba(56,189,248,0.45)",
+    background: "rgba(2,132,199,0.22)",
+    color: "white",
+    width: 24,
+    height: 24,
+    display: "grid",
+    placeItems: "center",
+    cursor: "pointer",
+    fontSize: 12,
+    lineHeight: 1,
   };
 }
 

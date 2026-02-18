@@ -59,22 +59,6 @@ function getEasternHour(value: Date) {
   return Number.isFinite(hour) ? hour : 0;
 }
 
-function getEasternDayCode(value: Date) {
-  const dayName = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    weekday: "short",
-  })
-    .format(value)
-    .toLowerCase();
-  if (dayName.startsWith("mon")) return "m";
-  if (dayName.startsWith("tue")) return "t";
-  if (dayName.startsWith("wed")) return "w";
-  if (dayName.startsWith("thu")) return "r";
-  if (dayName.startsWith("fri")) return "f";
-  if (dayName.startsWith("sat")) return "sa";
-  if (dayName.startsWith("sun")) return "su";
-  return "";
-}
 
 function addDaysToDateKey(key: string, days: number) {
   const [y, m, d] = key.split("-").map(Number);
@@ -140,14 +124,6 @@ function normalizeDayCode(value: unknown) {
   return v;
 }
 
-function roleDayAllowed(role: string, days: unknown, todayCode: string) {
-  if (!todayCode) return false;
-  if (role !== "seller" && role !== "cleaner") return false;
-  const list = Array.isArray(days) ? days : [];
-  if (!list.length) return true;
-  return list.map((d) => normalizeDayCode(d)).includes(todayCode);
-}
-
 async function getCampRolePointMap(admin: AdminClient) {
   const settingsRes = await admin
     .from("camp_settings")
@@ -205,7 +181,6 @@ async function getCampRoleDailyPoints(admin: AdminClient, studentId: string) {
   const todayEt = getEasternDateKey(new Date());
   const easternHour = getEasternHour(new Date());
   const roleRedeemWindowOpen = easternHour >= CAMP_ROLE_REDEEM_HOUR_ET;
-  const todayDayCode = getEasternDayCode(new Date());
   const rolePoints = await getCampRolePointMap(admin);
   const alreadyClaimedRes = await wasCampRoleClaimedToday(admin, studentId, todayEt);
   if ("error" in alreadyClaimedRes) return { error: alreadyClaimedRes.error };
@@ -268,13 +243,6 @@ async function getCampRoleDailyPoints(admin: AdminClient, studentId: string) {
         fallbackPoints += pts;
         labels.push(`${displayRole[0]?.toUpperCase() ?? ""}${displayRole.slice(1)}`);
       }
-      const secondaryRole = normalizeRole(m.secondary_role);
-      if (secondaryRole && roleDayAllowed(secondaryRole, m.secondary_role_days, todayDayCode)) {
-        const pts = Number(rolePoints[secondaryRole] ?? 0);
-        if (pts <= 0) continue;
-        fallbackPoints += pts;
-        labels.push(`${secondaryRole[0]?.toUpperCase() ?? ""}${secondaryRole.slice(1)}`);
-      }
     }
     const uniqueLabels = Array.from(new Set(labels));
     if (!roleRedeemWindowOpen && fallbackPoints > 0) {
@@ -313,13 +281,6 @@ async function getCampRoleDailyPoints(admin: AdminClient, studentId: string) {
       if (pts <= 0) continue;
       points += pts;
       labels.push(`${displayRole[0]?.toUpperCase() ?? ""}${displayRole.slice(1)}`);
-    }
-    const secondaryRole = normalizeRole(m.secondary_role);
-    if (secondaryRole && roleDayAllowed(secondaryRole, m.secondary_role_days, todayDayCode)) {
-      const pts = Number(rolePoints[secondaryRole] ?? 0);
-      if (pts <= 0) continue;
-      points += pts;
-      labels.push(`${secondaryRole[0]?.toUpperCase() ?? ""}${secondaryRole.slice(1)}`);
     }
   }
 
@@ -499,7 +460,7 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
   const weekStart = getWeekStartUTC(new Date()).toISOString();
   const { data: weekLedger, error: wErr } = await admin
     .from("ledger")
-    .select("student_id,points")
+    .select("student_id,points,category")
     .gte("created_at", weekStart);
   if (wErr) return { ok: false as const, error: wErr.message };
 
@@ -507,6 +468,15 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
   (weekLedger ?? []).forEach((r: any) => {
     const sid = String(r.student_id ?? "");
     if (!sid) return;
+    const category = String(r.category ?? "").toLowerCase();
+    if (
+      category === "redeem_daily" ||
+      category === "avatar_daily" ||
+      category === "redeem_camp_role" ||
+      category === "redeem_event_daily" ||
+      category === "roulette_spin" ||
+      category === "roulette"
+    ) return;
     weeklyById.set(sid, (weeklyById.get(sid) ?? 0) + Number(r.points ?? 0));
   });
 
@@ -662,7 +632,7 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
     ...rankWithTies(rows.map((r) => ({ student_id: r.student_id, points: mvpById.get(r.student_id) ?? 0 })), "mvp", true)
   );
 
-  const statsRes = await admin.from("stats").select("id,higher_is_better");
+  const statsRes = await admin.from("stats").select("id,higher_is_better,minimum_value_for_ranking");
   const statsRows = statsRes.error && isMissingRelation(statsRes.error, "stats") ? [] : (statsRes.data ?? []);
   if (statsRes.error && !isMissingRelation(statsRes.error, "stats")) {
     return { ok: false as const, error: statsRes.error.message };
@@ -672,6 +642,7 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
     const statId = String(stat?.id ?? "").trim();
     if (!statId) continue;
     const higherIsBetter = stat?.higher_is_better !== false;
+    const minimumValueForRanking = Math.max(0, Number(stat?.minimum_value_for_ranking ?? 0) || 0);
     const statRowsRes = await admin
       .from("student_stats")
       .select("student_id,value,recorded_at")
@@ -686,6 +657,7 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
       const sid = String(row?.student_id ?? "");
       if (!sid) return;
       const value = Number(row?.value ?? 0);
+      if (value < minimumValueForRanking) return;
       const recordedAt = String(row?.recorded_at ?? "");
       const existing = bestByStudent.get(sid);
       if (!existing) {

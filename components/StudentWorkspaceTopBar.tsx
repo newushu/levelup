@@ -23,6 +23,11 @@ export default function StudentWorkspaceTopBar({
   recentMvp = false,
   hasGift = false,
   hideWhenNoStudent = false,
+  avatarBgOverride,
+  avatarSrcOverride,
+  avatarZoomPctOverride,
+  avatarEffectOverride,
+  cornerBorderOverride,
 }: {
   student: StudentSummary | null;
   onClearStudent?: () => void;
@@ -32,6 +37,11 @@ export default function StudentWorkspaceTopBar({
   recentMvp?: boolean;
   hasGift?: boolean;
   hideWhenNoStudent?: boolean;
+  avatarBgOverride?: string | null;
+  avatarSrcOverride?: string | null;
+  avatarZoomPctOverride?: number | null;
+  avatarEffectOverride?: any;
+  cornerBorderOverride?: any;
 }) {
   const [studentQuery, setStudentQuery] = useState("");
   const [avatarCatalog, setAvatarCatalog] = useState<Array<{ id: string; storage_path: string | null; enabled?: boolean | null }>>([]);
@@ -106,7 +116,14 @@ export default function StudentWorkspaceTopBar({
     return cornerBorders.find((b) => String(b.key) === String(cornerBorderKey) && b.enabled !== false) ?? null;
   }, [cornerBorderKey, cornerBorders]);
 
-  const avatarZoomPct = Math.max(50, Math.min(200, Number(student?.avatar_zoom_pct ?? 100)));
+  const avatarZoomPct = Math.max(
+    50,
+    Math.min(200, Number(avatarZoomPctOverride ?? student?.avatar_zoom_pct ?? 100))
+  );
+  const resolvedAvatarBg = String(avatarBgOverride ?? "").trim() || avatarBg;
+  const resolvedAvatarSrc = String(avatarSrcOverride ?? "").trim() || avatarSrc;
+  const resolvedEffect = avatarEffectOverride ?? selectedEffect;
+  const resolvedBorder = cornerBorderOverride ?? selectedBorder;
   const points = Number(student?.points_balance ?? student?.points_total ?? 0);
   const level = Number(student?.level ?? 1);
   const initials = (student?.name || "").trim().slice(0, 2).toUpperCase() || "LA";
@@ -120,11 +137,11 @@ export default function StudentWorkspaceTopBar({
         <div className="student-workspace-topbar__avatar">
           <AvatarRender
             size={116}
-            bg={avatarBg}
-            avatarSrc={avatarSrc}
+            bg={resolvedAvatarBg}
+            avatarSrc={resolvedAvatarSrc}
             avatarZoomPct={avatarZoomPct}
-            effect={selectedEffect as any}
-            border={selectedBorder as any}
+            effect={resolvedEffect as any}
+            border={resolvedBorder as any}
             showImageBorder={false}
             style={{ borderRadius: 16 }}
             contextKey="student_workspace"

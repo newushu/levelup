@@ -31,6 +31,7 @@ export async function POST(req: Request) {
   const category = String(body?.category ?? "").trim();
   const unit = String(body?.unit ?? "").trim();
   const higher_is_better = Boolean(body?.higher_is_better);
+  const minimum_value_for_ranking = Math.max(0, Number(body?.minimum_value_for_ranking ?? 0) || 0);
   const enabled = body?.enabled !== false;
 
   if (!name) return NextResponse.json({ ok: false, error: "Name is required" }, { status: 400 });
@@ -41,6 +42,7 @@ export async function POST(req: Request) {
     category: category || null,
     unit: unit || null,
     higher_is_better,
+    minimum_value_for_ranking,
     enabled,
   };
 
@@ -49,7 +51,7 @@ export async function POST(req: Request) {
     const { data, error } = await admin
       .from("stats")
       .upsert({ id, ...payload }, { onConflict: "id" })
-      .select("id,name,description,category,unit,higher_is_better,enabled")
+      .select("id,name,description,category,unit,higher_is_better,minimum_value_for_ranking,enabled")
       .single();
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, stat: data });
@@ -58,7 +60,7 @@ export async function POST(req: Request) {
   const { data, error } = await admin
     .from("stats")
     .insert(payload)
-    .select("id,name,description,category,unit,higher_is_better,enabled")
+    .select("id,name,description,category,unit,higher_is_better,minimum_value_for_ranking,enabled")
     .single();
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, stat: data });
