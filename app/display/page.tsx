@@ -17,6 +17,7 @@ type FeedItem = {
 
 const DISPLAY_MENU = [
   { value: "/display", label: "Live Activity" },
+  { value: "/display/skill-sprint-timeline", label: "Skill Sprint Timeline" },
   { value: "/display/skill-pulse", label: "Skill Pulse" },
   { value: "/display/battle-pulse", label: "Battle Pulse" },
   { value: "/display/badges", label: "Badges" },

@@ -4,6 +4,8 @@ import { getStudentModifierStack } from "@/lib/modifierStack";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BOARD_POINTS_PER_TOP10 = 15;
 const BOARD_POINTS_TOP1 = 50;
+const MIN_PARTICIPANTS_FOR_FREE_POINTS = 6;
+const PERFORMANCE_STAT_MIN_PARTICIPANTS_FOR_AWARDS = 10;
 const CAMP_ROLE_REDEEM_HOUR_ET = 16;
 const DEFAULT_CAMP_ROLE_DAILY_POINTS: Record<string, number> = {
   seller: 300,
@@ -32,6 +34,12 @@ function getWeekStartUTC(now: Date) {
   d.setUTCDate(d.getUTCDate() - diff);
   d.setUTCHours(0, 0, 0, 0);
   return d;
+}
+
+function passesMinimumForRanking(value: number, minValue: number, higherIsBetter: boolean) {
+  if (value <= 0) return false;
+  if (minValue <= 0) return true;
+  return higherIsBetter ? value >= minValue : value <= minValue;
 }
 
 function getEasternDateKey(value: Date) {
@@ -365,7 +373,13 @@ async function getLimitedEventDailyPoints(admin: AdminClient, studentId: string)
   return { ok: true, points, chips, event_keys: eventKeys };
 }
 
-function rankWithTies(rows: RankedRow[], boardKey: string, higherIsBetter = true, excludeNonPositive = false): BoardAward[] {
+function rankWithTies(
+  rows: RankedRow[],
+  boardKey: string,
+  higherIsBetter = true,
+  excludeNonPositive = false,
+  minParticipants = 1
+): BoardAward[] {
   const sorted = rows
     .filter((r) => String(r.student_id ?? "").trim())
     .filter((r) => (excludeNonPositive ? Number(r.points ?? 0) > 0 : true))
@@ -378,6 +392,8 @@ function rankWithTies(rows: RankedRow[], boardKey: string, higherIsBetter = true
       }
       return higherIsBetter ? b.points - a.points : a.points - b.points;
     });
+
+  if (sorted.length < Math.max(1, minParticipants)) return [];
 
   const awards: BoardAward[] = [];
   let prevPoints: number | null = null;
@@ -608,7 +624,6 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
 
   const awards: BoardAward[] = [];
   awards.push(
-    ...rankWithTies(rows.map((r) => ({ student_id: r.student_id, points: weeklyById.get(r.student_id) ?? 0 })), "weekly", true),
     ...rankWithTies(
       rows.map((r) => ({
         student_id: r.student_id,
@@ -617,7 +632,8 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
       })),
       "taolu_today",
       true,
-      true
+      true,
+      MIN_PARTICIPANTS_FOR_FREE_POINTS
     ),
     ...rankWithTies(
       rows.map((r) => ({
@@ -627,9 +643,16 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
       })),
       "skill_pulse_reps_today",
       true,
-      true
+      true,
+      MIN_PARTICIPANTS_FOR_FREE_POINTS
     ),
-    ...rankWithTies(rows.map((r) => ({ student_id: r.student_id, points: mvpById.get(r.student_id) ?? 0 })), "mvp", true)
+    ...rankWithTies(
+      rows.map((r) => ({ student_id: r.student_id, points: mvpById.get(r.student_id) ?? 0 })),
+      "mvp",
+      true,
+      false,
+      MIN_PARTICIPANTS_FOR_FREE_POINTS
+    )
   );
 
   const statsRes = await admin.from("stats").select("id,higher_is_better,minimum_value_for_ranking");
@@ -657,7 +680,7 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
       const sid = String(row?.student_id ?? "");
       if (!sid) return;
       const value = Number(row?.value ?? 0);
-      if (value < minimumValueForRanking) return;
+      if (!passesMinimumForRanking(value, minimumValueForRanking, higherIsBetter)) return;
       const recordedAt = String(row?.recorded_at ?? "");
       const existing = bestByStudent.get(sid);
       if (!existing) {
@@ -669,6 +692,11 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
       if (isBetter || isTieNewer) bestByStudent.set(sid, { value, recordedAt });
     });
 
+    // Performance stat board points only count when enough students are eligible.
+    if (bestByStudent.size < PERFORMANCE_STAT_MIN_PARTICIPANTS_FOR_AWARDS) {
+      continue;
+    }
+
     awards.push(
       ...rankWithTies(
         Array.from(bestByStudent.entries()).map(([student_id, entry]) => ({
@@ -679,6 +707,7 @@ async function computeLiveLeaderboardBoardAwards(admin: AdminClient): Promise<Li
         `performance_stat:${statId}`,
         higherIsBetter
         , true
+        , PERFORMANCE_STAT_MIN_PARTICIPANTS_FOR_AWARDS
       )
     );
   }

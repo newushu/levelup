@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/authz";
 import { supabaseServer } from "@/lib/supabase/server";
 
+function isMissingColumn(error: any, col: string) {
+  const msg = String(error?.message ?? "").toLowerCase();
+  return msg.includes("column") && msg.includes(col.toLowerCase()) && msg.includes("does not exist");
+}
+
 export async function POST(req: Request) {
   const gate = await requireAdmin();
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 403 });
@@ -21,6 +26,7 @@ export async function POST(req: Request) {
       name: String(m.name ?? "").trim(),
       enabled: m.enabled !== false,
       display_order: Number.isFinite(Number(m.display_order)) ? Number(m.display_order) : idx,
+      price_modifier_pct: Number.isFinite(Number(m.price_modifier_pct)) ? Number(m.price_modifier_pct) : 0,
     };
   });
 
@@ -35,11 +41,27 @@ export async function POST(req: Request) {
   });
 
   if (fresh.length) {
-    const { error: insErr } = await supabase.from("camp_menus").insert(fresh);
+    let { error: insErr } = await supabase.from("camp_menus").insert(fresh);
+    if (insErr && isMissingColumn(insErr, "price_modifier_pct")) {
+      const legacy = fresh.map((row: any) => {
+        const { price_modifier_pct, ...rest } = row;
+        return rest;
+      });
+      const retried = await supabase.from("camp_menus").insert(legacy);
+      insErr = retried.error as any;
+    }
     if (insErr) return NextResponse.json({ ok: false, error: insErr.message }, { status: 500 });
   }
   if (existing.length) {
-    const { error: upErr } = await supabase.from("camp_menus").upsert(existing, { onConflict: "id" });
+    let { error: upErr } = await supabase.from("camp_menus").upsert(existing, { onConflict: "id" });
+    if (upErr && isMissingColumn(upErr, "price_modifier_pct")) {
+      const legacy = existing.map((row: any) => {
+        const { price_modifier_pct, ...rest } = row;
+        return rest;
+      });
+      const retried = await supabase.from("camp_menus").upsert(legacy, { onConflict: "id" });
+      upErr = retried.error as any;
+    }
     if (upErr) return NextResponse.json({ ok: false, error: upErr.message }, { status: 500 });
   }
 

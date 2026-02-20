@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/authz";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+function passesMinimumForRanking(value: number, minValue: number, higherIsBetter: boolean) {
+  if (value <= 0) return false;
+  if (minValue <= 0) return true;
+  return higherIsBetter ? value >= minValue : value <= minValue;
+}
+
 export async function GET(req: Request) {
   const gate = await requireUser();
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 401 });
@@ -62,7 +68,9 @@ export async function GET(req: Request) {
   });
 
   const minValue = Math.max(0, Number((stat as any)?.minimum_value_for_ranking ?? 0) || 0);
-  const positiveRows = rows.filter((row) => Number(row.value ?? 0) > 0 && Number(row.value ?? 0) >= minValue);
+  const positiveRows = rows.filter((row) =>
+    passesMinimumForRanking(Number(row.value ?? 0), minValue, higherIsBetter)
+  );
   const leaderboard: Array<{ rank: number; student_id: string; student_name: string; value: number; recorded_at: string }> = [];
   let prevValue: number | null = null;
   let prevRank = 0;
@@ -82,6 +90,7 @@ export async function GET(req: Request) {
       stat_name: (stat as any)?.name ?? "Stat",
       unit: (stat as any)?.unit ?? null,
       higher_is_better: higherIsBetter,
+      minimum_value_for_ranking: minValue,
       rows: leaderboard,
     },
   });

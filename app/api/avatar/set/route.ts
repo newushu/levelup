@@ -85,7 +85,9 @@ export async function POST(req: Request) {
   const unlockedByDefault = !limitedEventOnly && unlockPoints <= 0 && levelOk;
 
   const criteriaEligible = !criteriaMatch.hasRequirements || criteriaMatch.matched;
-  if (limitedEventOnly && !criteriaEligible) {
+  // If the student already unlocked this avatar, they can keep using it
+  // even if they are no longer currently eligible for the limited event.
+  if (limitedEventOnly && !criteriaEligible && !hasCustomUnlock) {
     return NextResponse.json({ ok: false, error: "Limited event avatar requires eligibility" }, { status: 400 });
   }
 

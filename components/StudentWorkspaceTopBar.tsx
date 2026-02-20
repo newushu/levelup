@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import AvatarRender from "@/components/AvatarRender";
+import { skillSprintPoolDropped, skillSprintPrizeNow } from "@/lib/skillSprintMath";
 
 type StudentSummary = {
   id?: string;
@@ -13,6 +14,42 @@ type StudentSummary = {
   avatar_zoom_pct?: number | null;
   is_competition_team?: boolean | null;
 };
+
+type SkillCountdownSummary = {
+  active_count: number;
+  overdue_count: number;
+  next_due_at: string | null;
+  next_due_in_ms: number | null;
+  total_penalty_points_per_day: number;
+  total_reward_points: number;
+};
+
+type SkillSprintRow = {
+  id: string;
+  assigned_at?: string | null;
+  due_at?: string | null;
+  reward_points?: number | null;
+  charged_days?: number | null;
+  penalty_points_per_day?: number | null;
+  remaining_ms?: number | null;
+  status?: "upcoming" | "overdue";
+};
+
+function formatRemaining(ms: number | null | undefined) {
+  const value = Number(ms ?? 0);
+  if (!Number.isFinite(value)) return "";
+  if (value <= 0) {
+    const overdueHours = Math.floor(Math.abs(value) / (60 * 60 * 1000));
+    const overdueDays = Math.floor(overdueHours / 24);
+    const overdueH = overdueHours % 24;
+    return `${overdueDays}d ${overdueH}h overdue`;
+  }
+  const totalHours = Math.floor(value / (60 * 60 * 1000));
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  if (days > 0) return `${days}d ${hours}h left`;
+  return `${Math.max(0, hours)}h left`;
+}
 
 export default function StudentWorkspaceTopBar({
   student,
@@ -49,6 +86,8 @@ export default function StudentWorkspaceTopBar({
   const [avatarBg, setAvatarBg] = useState("rgba(15,23,42,0.65)");
   const [avatarEffectKey, setAvatarEffectKey] = useState<string | null>(null);
   const [cornerBorderKey, setCornerBorderKey] = useState<string | null>(null);
+  const [countdownSummary, setCountdownSummary] = useState<SkillCountdownSummary | null>(null);
+  const [skillSprintRows, setSkillSprintRows] = useState<SkillSprintRow[]>([]);
   const [effectCatalog, setEffectCatalog] = useState<Array<{ key: string; config?: any; render_mode?: string | null; z_layer?: string | null; html?: string | null; css?: string | null; js?: string | null }>>([]);
   const [cornerBorders, setCornerBorders] = useState<Array<{ key: string; image_url?: string | null; render_mode?: string | null; z_layer?: string | null; html?: string | null; css?: string | null; js?: string | null; offset_x?: number | null; offset_y?: number | null; offsets_by_context?: Record<string, { x?: number | null; y?: number | null; scale?: number | null; rotate?: number | null }> | null; enabled?: boolean | null }>>([]);
 
@@ -93,6 +132,29 @@ export default function StudentWorkspaceTopBar({
     })();
   }, [student?.id]);
 
+  useEffect(() => {
+    if (!student?.id) {
+      setCountdownSummary(null);
+      setSkillSprintRows([]);
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const loadCountdown = async () => {
+      const res = await fetch(`/api/skill-sprint/student?student_id=${encodeURIComponent(String(student.id))}`, { cache: "no-store" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || cancelled) return;
+      setCountdownSummary((json?.summary ?? null) as SkillCountdownSummary | null);
+      setSkillSprintRows((json?.rows ?? []) as SkillSprintRow[]);
+    };
+    loadCountdown();
+    timer = setInterval(loadCountdown, 60_000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [student?.id]);
+
   const avatarSrc = useMemo(() => {
     const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
     if (!base) return null;
@@ -128,6 +190,15 @@ export default function StudentWorkspaceTopBar({
   const level = Number(student?.level ?? 1);
   const initials = (student?.name || "").trim().slice(0, 2).toUpperCase() || "LA";
   const competition = Boolean(student?.is_competition_team);
+  const sprintTimeLabel = formatRemaining(countdownSummary?.next_due_in_ms);
+  const sprintPrize = skillSprintRows.reduce(
+    (sum, row) => sum + skillSprintPrizeNow(Number(row.reward_points ?? 0), row.assigned_at ?? null, row.due_at ?? null),
+    0
+  );
+  const sprintPoolDropped = skillSprintRows.reduce(
+    (sum, row) => sum + skillSprintPoolDropped(Number(row.reward_points ?? 0), row.assigned_at ?? null, row.due_at ?? null),
+    0
+  );
 
   if (!student && hideWhenNoStudent) return null;
 
@@ -157,6 +228,20 @@ export default function StudentWorkspaceTopBar({
             <span className="student-workspace-topbar__chip">Level {level}</span>
             <span className="student-workspace-topbar__chip student-workspace-topbar__chip--points">{points.toLocaleString()} pts</span>
             {competition ? <span className="student-workspace-topbar__chip student-workspace-topbar__chip--team">Competition Team</span> : null}
+            {countdownSummary?.active_count ? (
+              <div className="student-workspace-topbar__sprint-chip" title="Skill Sprint status">
+                <span className="student-workspace-topbar__sprint-label">Skill Sprint</span>
+                <span className="student-workspace-topbar__sprint-seg student-workspace-topbar__sprint-seg--time">
+                  {sprintTimeLabel || "No timer"}
+                </span>
+                <span className="student-workspace-topbar__sprint-seg student-workspace-topbar__sprint-seg--loss">
+                  Pool dropped {sprintPoolDropped}
+                </span>
+                <span className="student-workspace-topbar__sprint-seg student-workspace-topbar__sprint-seg--prize">
+                  Prize Pool {sprintPrize}
+                </span>
+              </div>
+            ) : null}
             {recentMvp ? <div className="student-workspace-topbar__recent-mvp">Recent <span>MVP</span></div> : null}
           </div>
         </div>
@@ -164,6 +249,11 @@ export default function StudentWorkspaceTopBar({
       <div className="student-workspace-topbar__right">
         {onSelectStudentByName ? (
           <div className="student-workspace-topbar__picker">
+            {onClearStudent ? (
+              <button className="student-workspace-topbar__clear" onClick={onClearStudent}>
+                Clear
+              </button>
+            ) : null}
             <input
               list="student-workspace-picker"
               value={studentQuery}
@@ -185,11 +275,6 @@ export default function StudentWorkspaceTopBar({
               Select
             </button>
           </div>
-        ) : null}
-        {onClearStudent ? (
-          <button className="student-workspace-topbar__clear" onClick={onClearStudent}>
-            Clear Student
-          </button>
         ) : null}
         {!student && onSelectStudent ? (
           <button className="student-workspace-topbar__pick" onClick={onSelectStudent}>
@@ -302,6 +387,43 @@ export function studentWorkspaceTopBarStyles() {
       border-color: rgba(251,191,36,0.55);
       background: rgba(251,191,36,0.22);
       color: #fde68a;
+    }
+
+    .student-workspace-topbar__sprint-chip {
+      display: inline-flex;
+      align-items: stretch;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid rgba(148,163,184,0.45);
+      box-shadow: 0 0 12px rgba(56,189,248,0.18);
+    }
+    .student-workspace-topbar__sprint-label {
+      padding: 7px 10px;
+      background: rgba(15,23,42,0.95);
+      font-size: 12px;
+      font-weight: 1000;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+    }
+    .student-workspace-topbar__sprint-seg {
+      padding: 7px 9px;
+      font-size: 12px;
+      font-weight: 1000;
+      white-space: nowrap;
+      border-left: 1px solid rgba(255,255,255,0.22);
+      text-shadow: 0 0 8px rgba(0,0,0,0.38);
+    }
+    .student-workspace-topbar__sprint-seg--time {
+      color: #dbeafe;
+      background: linear-gradient(135deg, rgba(30,64,175,0.9), rgba(2,132,199,0.84));
+    }
+    .student-workspace-topbar__sprint-seg--loss {
+      color: #fee2e2;
+      background: linear-gradient(135deg, rgba(153,27,27,0.9), rgba(220,38,38,0.82));
+    }
+    .student-workspace-topbar__sprint-seg--prize {
+      color: #dcfce7;
+      background: linear-gradient(135deg, rgba(21,128,61,0.9), rgba(22,163,74,0.82));
     }
 
     .student-workspace-topbar__right {

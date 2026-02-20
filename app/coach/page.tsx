@@ -60,6 +60,7 @@ export default function CoachDashboardPage() {
   >([]);
   const [lockedInstanceId, setLockedInstanceId] = useState("");
   const [lockedClassId, setLockedClassId] = useState("");
+  const [hasManualClassLock, setHasManualClassLock] = useState(false);
   const [classroomReloadNonce, setClassroomReloadNonce] = useState(0);
   const [checkinName, setCheckinName] = useState("");
   const [checkinMatch, setCheckinMatch] = useState<{ id: string; name: string } | null>(null);
@@ -139,15 +140,6 @@ export default function CoachDashboardPage() {
         if (res.ok && data?.ok) setCoachTodos(data.todos ?? []);
       } catch {}
     })();
-  }, []);
-
-  useEffect(() => {
-    try {
-      const savedInstance = localStorage.getItem("coach_dashboard_lock_instance") || "";
-      const savedClass = localStorage.getItem("coach_dashboard_lock_class") || "";
-      if (savedInstance) setLockedInstanceId(savedInstance);
-      if (savedClass) setLockedClassId(savedClass);
-    } catch {}
   }, []);
 
   useEffect(() => {
@@ -248,6 +240,20 @@ export default function CoachDashboardPage() {
       active = false;
     };
   }, [blocked]);
+
+  useEffect(() => {
+    if (!todaySessions.length || hasManualClassLock) return;
+    const first = todaySessions[0];
+    if (!first?.instance_id) return;
+    const nextInstance = String(first.instance_id);
+    const nextClass = String(first.class_id ?? "");
+    setLockedInstanceId(nextInstance);
+    setLockedClassId(nextClass);
+    try {
+      localStorage.setItem("coach_dashboard_lock_instance", nextInstance);
+      localStorage.setItem("coach_dashboard_lock_class", nextClass);
+    } catch {}
+  }, [todaySessions, hasManualClassLock]);
 
   async function checkInByName(override?: { id: string; name: string }) {
     setCheckinMsg("");
@@ -522,6 +528,7 @@ export default function CoachDashboardPage() {
                           value={lockedInstanceId}
                           onChange={(e) => {
                             const next = e.target.value;
+                            setHasManualClassLock(true);
                             setLockedInstanceId(next);
                             const match = todaySessions.find((s) => String(s.instance_id) === String(next));
                             if (match) setLockedClassId(String(match.class_id));

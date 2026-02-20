@@ -48,7 +48,7 @@ export async function POST(req: Request) {
   if (dErr) return NextResponse.json({ ok: false, error: dErr.message }, { status: 500 });
 
   const liveCount = (deductions ?? []).filter((d: any) => !d.voided).length;
-  const pointsLost = liveCount * 4;
+  const pointsLost = liveCount * 6;
   const pointsEarned = 10 - pointsLost;
 
   const { data: form } = await admin

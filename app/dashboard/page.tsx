@@ -102,8 +102,14 @@ type AvatarEffectChoice = {
     size?: number;
     speed?: number;
     opacity?: number;
+    frequency?: number;
+    scale?: number;
+    scale_by_context?: Record<string, { scale?: number | null; rotate?: number | null }> | null;
+    __layer?: { z_index?: number | null } | null;
   } | null;
   render_mode?: string | null;
+  z_layer?: string | null;
+  z_index?: number | null;
   html?: string | null;
   css?: string | null;
   js?: string | null;
@@ -4376,33 +4382,32 @@ function flashCardPlateUnlock(key: string, points: number) {
                           disabled={!levelOk}
                           style={effectTile(isSelected, levelOk)}
                         >
-                          <div style={effect.render_mode === "code" ? { ...effectPreview(isUnlocked), overflow: "visible" } : effectPreview(isUnlocked)}>
-                            {effect.render_mode === "code" ? (
-                              <CodePreviewFrame
-                                html={effect.html}
-                                css={effect.css}
-                                js={effect.js}
-                                bleed={20}
-                                style={{ zIndex: 0 }}
-                              />
-                            ) : (
-                              <AvatarEffectParticles effectKey={effect.key} config={effect.config ?? undefined} />
-                            )}
-                            {avatarImgSrc ? (
-                              <img
-                                src={avatarImgSrc}
-                                alt={selectedAvatar?.name ?? "Avatar"}
-                                style={{
-                                  width: "85%",
-                                  height: "85%",
-                                  objectFit: "contain",
-                                  position: "relative",
-                                  zIndex: 1,
-                                  transform: `scale(${avatarZoomPct / 100})`,
-                                  transformOrigin: "center",
-                                }}
-                              />
-                            ) : null}
+                          <div style={{ ...effectPreview(isUnlocked), overflow: "visible" }}>
+                            <AvatarRender
+                              size={96}
+                              bg="transparent"
+                              effect={{
+                                key: effect.key,
+                                config: effect.config ?? undefined,
+                                render_mode: effect.render_mode ?? null,
+                                z_layer: effect.z_layer ?? null,
+                                z_index: effect.z_index ?? null,
+                                html: effect.html ?? null,
+                                css: effect.css ?? null,
+                                js: effect.js ?? null,
+                              }}
+                              avatarSrc={avatarImgSrc || null}
+                              avatarZoomPct={avatarZoomPct}
+                              bleed={20}
+                              contextKey="dashboard"
+                              style={{
+                                width: "85%",
+                                height: "85%",
+                                position: "relative",
+                                zIndex: 1,
+                              }}
+                              fallback={<EvolvingAvatar level={effectiveLevel} size={84} variant="dragon" />}
+                            />
                             {effectUnlockToast && effectUnlockToast.key === effect.key ? (
                               <div style={unlockToast()}>
                                 Unlocked -{effectUnlockToast.points} pts

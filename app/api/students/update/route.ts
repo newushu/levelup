@@ -17,6 +17,10 @@ export async function POST(req: Request) {
   if (Object.prototype.hasOwnProperty.call(body, "last_name")) {
     payload.last_name = String(body?.last_name ?? "").trim() || null;
   }
+  if (Object.prototype.hasOwnProperty.call(body, "gender")) {
+    const gender = String(body?.gender ?? "").trim().toLowerCase();
+    payload.gender = gender === "female" ? "female" : gender === "male" ? "male" : null;
+  }
   if (Object.prototype.hasOwnProperty.call(body, "dob")) {
     payload.dob = body?.dob ? String(body.dob) : null;
   }
@@ -61,6 +65,7 @@ export async function POST(req: Request) {
         "is_competition_team",
         "first_name",
         "last_name",
+        "gender",
         "dob",
         "email",
         "phone",

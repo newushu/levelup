@@ -307,7 +307,10 @@ const defaultValues = {
 
 const AVATAR_CONTEXT_PREVIEWS = [
   { label: "Dashboard", key: "dashboard", size: 150 },
-  { label: "Student Picker", key: "student_picker", size: 120 },
+  { label: "Student Picker", key: "picker", size: 120 },
+  { label: "Student Info", key: "student_info", size: 120 },
+  { label: "Student Logs", key: "student_logs", size: 120 },
+  { label: "Student Workspace", key: "student_workspace", size: 120 },
   { label: "Live Activity", key: "live_activity", size: 110 },
   { label: "Battle Pulse", key: "battle_pulse", size: 100 },
   { label: "Skill Pulse", key: "skill_pulse", size: 110 },

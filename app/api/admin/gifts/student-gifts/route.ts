@@ -10,6 +10,10 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const studentQuery = String(url.searchParams.get("student_query") ?? "").trim();
   const giftItemId = String(url.searchParams.get("gift_item_id") ?? "").trim();
+  const giftItemIdsRaw = String(url.searchParams.get("gift_item_ids") ?? "").trim();
+  const giftItemIds = giftItemIdsRaw
+    ? Array.from(new Set(giftItemIdsRaw.split(",").map((v) => String(v ?? "").trim()).filter(Boolean)))
+    : [];
 
   let studentIds: string[] | null = null;
   if (studentQuery) {
@@ -30,25 +34,34 @@ export async function GET(req: Request) {
       gift_item_id,
       qty,
       opened_qty,
+      expires_at,
+      expired_at,
       note,
       enabled,
       created_at,
       updated_at,
       students(name,points_total),
-      gift_items(name,category,category_tags,gift_type,points_value)
+      gift_items(name,category,category_tags,gift_type,points_value,design_image_url,gift_designs(preview_image_url))
     `)
     .eq("enabled", true)
     .order("created_at", { ascending: false })
     .limit(1000);
 
-  if (giftItemId) q = q.eq("gift_item_id", giftItemId);
+  if (giftItemIds.length) q = q.in("gift_item_id", giftItemIds);
+  else if (giftItemId) q = q.eq("gift_item_id", giftItemId);
   if (studentIds) q = q.in("student_id", studentIds);
 
   const { data, error } = await q;
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
   const rows = (data ?? []) as any[];
-  const studentGiftIds = rows.map((r) => String(r?.id ?? "")).filter(Boolean);
+  const now = Date.now();
+  const normalizedRows = rows.map((row) => {
+    const expiresMs = Date.parse(String(row?.expires_at ?? ""));
+    const isExpired = Boolean(row?.expired_at) || (Number.isFinite(expiresMs) && expiresMs <= now);
+    return { ...row, is_expired: isExpired };
+  });
+  const studentGiftIds = normalizedRows.map((r) => String(r?.id ?? "")).filter(Boolean);
   const latestByStudentGiftId = new Map<string, any>();
 
   if (studentGiftIds.length) {
@@ -66,7 +79,7 @@ export async function GET(req: Request) {
     }
   }
 
-  const payload = rows.map((row) => ({
+  const payload = normalizedRows.map((row) => ({
     ...row,
     latest_open_event: latestByStudentGiftId.get(String(row?.id ?? "")) ?? null,
   }));

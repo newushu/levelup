@@ -18,6 +18,10 @@ export async function GET(req: Request) {
   const range = String(url.searchParams.get("range") ?? "7d").trim().toLowerCase();
   const studentQuery = String(url.searchParams.get("student_query") ?? "").trim();
   const giftItemId = String(url.searchParams.get("gift_item_id") ?? "").trim();
+  const giftItemIdsRaw = String(url.searchParams.get("gift_item_ids") ?? "").trim();
+  const giftItemIds = giftItemIdsRaw
+    ? Array.from(new Set(giftItemIdsRaw.split(",").map((v) => String(v ?? "").trim()).filter(Boolean)))
+    : [];
 
   let studentIds: string[] | null = null;
   if (studentQuery) {
@@ -43,14 +47,15 @@ export async function GET(req: Request) {
       opened_at,
       ledger_id,
       students(name,points_total),
-      gift_items(name,category,category_tags,gift_type)
+      gift_items(name,category,category_tags,gift_type,design_image_url,gift_designs(preview_image_url))
     `)
     .order("opened_at", { ascending: false })
     .limit(600);
 
   const since = rangeToSince(range);
   if (since) q = q.gte("opened_at", since);
-  if (giftItemId) q = q.eq("gift_item_id", giftItemId);
+  if (giftItemIds.length) q = q.in("gift_item_id", giftItemIds);
+  else if (giftItemId) q = q.eq("gift_item_id", giftItemId);
   if (studentIds) q = q.in("student_id", studentIds);
 
   const { data, error } = await q;

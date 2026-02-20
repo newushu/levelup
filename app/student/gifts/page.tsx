@@ -11,6 +11,9 @@ type GiftRow = {
   gift_item_id: string;
   qty: number;
   opened_qty: number;
+  expires_at?: string | null;
+  expired_at?: string | null;
+  is_expired?: boolean;
   gift_items?: {
     id: string;
     name: string;
@@ -30,6 +33,25 @@ type GiftRow = {
       css?: string | null;
       js?: string | null;
     } | null;
+  } | null;
+};
+
+type GiftOpenLogRow = {
+  id: string;
+  student_id: string;
+  student_gift_id: string;
+  gift_item_id: string;
+  points_awarded: number;
+  points_before_open?: number | null;
+  points_after_open?: number | null;
+  opened_at: string;
+  gift_items?: {
+    name?: string | null;
+    category?: string | null;
+    category_tags?: string[] | null;
+    gift_type?: string | null;
+    design_image_url?: string | null;
+    gift_designs?: { preview_image_url?: string | null } | null;
   } | null;
 };
 
@@ -60,14 +82,26 @@ function renderGiftVisual(g: GiftRow) {
   );
 }
 
+function formatExpiryMeta(expiresAt?: string | null) {
+  const raw = String(expiresAt ?? "").trim();
+  if (!raw) return "";
+  const ts = Date.parse(raw);
+  if (!Number.isFinite(ts)) return "";
+  const now = Date.now();
+  const diffMs = ts - now;
+  const hoursLeft = Math.max(0, Math.floor(diffMs / (60 * 60 * 1000)));
+  return `${new Date(ts).toLocaleString()} (${hoursLeft}h left)`;
+}
+
 export default function StudentGiftsPage() {
   const [student, setStudent] = useState<StudentRow | null>(null);
   const [gifts, setGifts] = useState<GiftRow[]>([]);
   const [msg, setMsg] = useState("");
-  const [hubMode, setHubMode] = useState<"giftbox" | "stash">("giftbox");
+  const [hubMode, setHubMode] = useState<"giftbox" | "stash" | "expired">("giftbox");
   const [openingId, setOpeningId] = useState("");
   const [result, setResult] = useState<null | { gift_name: string; category: string; points_awarded: number; remaining: number; package_items_added?: number }>(null);
   const [giftOpenAudio, setGiftOpenAudio] = useState("");
+  const [openLogs, setOpenLogs] = useState<GiftOpenLogRow[]>([]);
 
   async function loadStudent() {
     const res = await fetch("/api/students/list", { cache: "no-store" });
@@ -89,6 +123,13 @@ export default function StudentGiftsPage() {
     setGifts((sj?.gifts ?? []) as GiftRow[]);
   }
 
+  async function loadOpenLogs(studentId: string) {
+    const res = await fetch(`/api/student/gifts/logs?student_id=${encodeURIComponent(studentId)}`, { cache: "no-store" });
+    const sj = await res.json().catch(() => ({}));
+    if (!res.ok) return;
+    setOpenLogs((sj?.logs ?? []) as GiftOpenLogRow[]);
+  }
+
   useEffect(() => {
     loadStudent();
     (async () => {
@@ -105,14 +146,29 @@ export default function StudentGiftsPage() {
   useEffect(() => {
     if (!student?.id) return;
     loadGifts(student.id);
+    loadOpenLogs(student.id);
   }, [student?.id]);
 
+  const expiredGifts = useMemo(() => {
+    const now = Date.now();
+    return gifts.filter((g) => {
+      if (g.is_expired || g.expired_at) return true;
+      const expiresMs = Date.parse(String(g.expires_at ?? ""));
+      return Number.isFinite(expiresMs) && expiresMs <= now;
+    });
+  }, [gifts]);
+  const expiredGiftIds = useMemo(
+    () => new Set(expiredGifts.map((g) => String(g.id ?? "")).filter(Boolean)),
+    [expiredGifts]
+  );
   const unopened = useMemo(
-    () => gifts.filter((g) => Math.max(0, Number(g.qty ?? 0) - Number(g.opened_qty ?? 0)) > 0),
-    [gifts]
+    () =>
+      gifts.filter((g) => !expiredGiftIds.has(String(g.id ?? ""))).filter((g) => Math.max(0, Number(g.qty ?? 0) - Number(g.opened_qty ?? 0)) > 0),
+    [gifts, expiredGiftIds]
   );
   const inventoryItems = useMemo(() => {
     return gifts.filter((g) => {
+      if (expiredGiftIds.has(String(g.id ?? ""))) return false;
       const openedCount = Math.max(0, Number(g.opened_qty ?? 0));
       if (!openedCount) return false;
       const category = String(g.gift_items?.category ?? "").toLowerCase();
@@ -120,7 +176,7 @@ export default function StudentGiftsPage() {
       const autoAward = category === "points" || category === "package" || points > 0;
       return !autoAward;
     });
-  }, [gifts]);
+  }, [gifts, expiredGiftIds]);
 
   async function openGift(gift: GiftRow) {
     if (!student?.id || !gift?.id) return;
@@ -147,20 +203,31 @@ export default function StudentGiftsPage() {
     if (!res.ok) return setMsg(String(sj?.error ?? "Failed to open gift"));
     setResult(sj?.result ?? null);
     await loadGifts(student.id);
+    await loadOpenLogs(student.id);
   }
 
   return (
     <AuthGate>
       <main className="gifts-page" style={{ minHeight: "100vh", color: "white", background: "radial-gradient(circle at 30% 8%, rgba(147,51,234,0.22), rgba(2,6,23,0.98) 58%)", display: "grid", gap: 14, alignContent: "start" }}>
         <style>{giftStyles}</style>
+        <style>{`
+          .gifts-page {
+            padding-left: 252px;
+            padding-right: 14px;
+          }
+          @media (max-width: 1100px) {
+            .gifts-page {
+              padding-left: 0;
+              padding-right: 0;
+              padding-bottom: 92px;
+            }
+          }
+        `}</style>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 34, fontWeight: 1000 }}>Gift Box</div>
             <div style={{ opacity: 0.76 }}>Open rewards and see what you got.</div>
           </div>
-          <a href="/student/info" style={{ borderRadius: 999, border: "1px solid rgba(148,163,184,0.45)", background: "rgba(15,23,42,0.65)", color: "white", textDecoration: "none", padding: "8px 12px", fontWeight: 800 }}>
-            Back to Student Info
-          </a>
         </div>
 
         {!student?.id ? <div style={notice()}>No active student selected.</div> : null}
@@ -193,6 +260,15 @@ export default function StudentGiftsPage() {
               <span className="hub-card__title">Inventory Stash</span>
               <span className="hub-card__meta">{inventoryItems.length} stored</span>
             </button>
+            <button
+              type="button"
+              className={`hub-card hub-card--expired ${hubMode === "expired" ? "hub-card--active" : ""}`}
+              onClick={() => setHubMode("expired")}
+            >
+              <span className="hub-card__stash-icon" aria-hidden>⌛</span>
+              <span className="hub-card__title">Expired Gifts</span>
+              <span className="hub-card__meta">{expiredGifts.length} expired</span>
+            </button>
           </div>
           <div className="gift-tabs">
             {hubMode === "giftbox" ? (
@@ -202,21 +278,30 @@ export default function StudentGiftsPage() {
               >
                 Unopened Gifts ({unopened.length})
               </button>
-            ) : (
+            ) : hubMode === "stash" ? (
               <button
                 type="button"
                 className="gift-tab gift-tab--active"
               >
                 Inventory Stash ({inventoryItems.length})
               </button>
+            ) : (
+              <button
+                type="button"
+                className="gift-tab gift-tab--active"
+              >
+                Expired Gifts ({expiredGifts.length})
+              </button>
             )}
           </div>
             <div className="gift-grid">
-              {(hubMode === "giftbox" ? unopened : inventoryItems).map((g) => {
+              {(hubMode === "giftbox" ? unopened : hubMode === "stash" ? inventoryItems : expiredGifts).map((g) => {
                 const item = g.gift_items;
                 const remaining = Math.max(0, Number(g.qty ?? 0) - Number(g.opened_qty ?? 0));
                 const openedCount = Math.max(0, Number(g.opened_qty ?? 0));
                 const giftPoints = Math.max(0, Number(item?.points_value ?? 0));
+                const expiresLabel = String(g.expires_at ?? "").trim();
+                const expiryMeta = formatExpiryMeta(expiresLabel);
                 return (
                   <div key={g.id} className={`gift-card ${openingId === g.id ? "gift-card--opening" : ""}`}>
                     <div className="gift-card__visual-shell">
@@ -234,14 +319,17 @@ export default function StudentGiftsPage() {
                     <div className="gift-card__meta">
                       {(item?.category_tags && item.category_tags.length ? item.category_tags.join(", ") : item?.category ?? "item")} • {item?.gift_type ?? "generic"}
                     </div>
+                    {expiresLabel ? <div className="gift-card__meta">Expires: {expiryMeta || new Date(expiresLabel).toLocaleString()}</div> : null}
                     {giftPoints > 0 ? <div className="gift-card__points">+{giftPoints} pts on open</div> : null}
-                    <div className="gift-card__qty">x{hubMode === "giftbox" ? remaining : openedCount}</div>
+                    <div className="gift-card__qty">x{hubMode === "giftbox" ? remaining : hubMode === "stash" ? openedCount : remaining}</div>
                     {hubMode === "giftbox" ? (
                       <button type="button" className="gift-card__open" disabled={openingId === g.id} onClick={() => openGift(g)}>
                         {openingId === g.id ? "Opening..." : "Open Gift"}
                       </button>
-                    ) : (
+                    ) : hubMode === "stash" ? (
                       <div className="gift-card__owned">In Inventory</div>
+                    ) : (
+                      <div className="gift-card__owned">Expired</div>
                     )}
                   </div>
                 );
@@ -249,6 +337,7 @@ export default function StudentGiftsPage() {
             </div>
             {hubMode === "giftbox" && !unopened.length ? <div className="gift-empty">No unopened gifts.</div> : null}
             {hubMode === "stash" && !inventoryItems.length ? <div className="gift-empty">No inventory items yet. Open non-auto-award gifts to store them here.</div> : null}
+            {hubMode === "expired" && !expiredGifts.length ? <div className="gift-empty">No expired gifts.</div> : null}
           </section>
 
         {result ? (
@@ -263,6 +352,30 @@ export default function StudentGiftsPage() {
             <div className="gift-result__line">Remaining of this gift: {result.remaining}</div>
           </section>
         ) : null}
+        <section style={{ borderRadius: 14, border: "1px solid rgba(148,163,184,0.4)", background: "linear-gradient(160deg, rgba(15,23,42,0.7), rgba(2,6,23,0.94))", padding: 12, display: "grid", gap: 8 }}>
+          <div style={{ fontSize: 18, fontWeight: 1000 }}>Opened Gifts Log</div>
+          {!openLogs.length ? <div className="gift-empty">No gifts opened yet.</div> : null}
+          {openLogs.map((log) => {
+            const thumb = String(log.gift_items?.design_image_url ?? log.gift_items?.gift_designs?.preview_image_url ?? "").trim();
+            const before = Math.round(Number(log.points_before_open ?? 0));
+            const after = Math.round(Number(log.points_after_open ?? 0));
+            return (
+              <div key={log.id} style={{ borderRadius: 10, border: "1px solid rgba(148,163,184,0.35)", background: "rgba(15,23,42,0.55)", padding: 10, display: "grid", gap: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {thumb ? <img src={thumb} alt={String(log.gift_items?.name ?? "Gift")} style={{ width: 24, height: 24, borderRadius: 6, objectFit: "cover" }} /> : <span>🎁</span>}
+                  <div style={{ fontWeight: 900 }}>{String(log.gift_items?.name ?? "Gift")}</div>
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.82 }}>
+                  +{Math.round(Number(log.points_awarded ?? 0))} pts • {String(log.gift_items?.category ?? "item")}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.72 }}>
+                  Before {before} → After {after}
+                </div>
+                <div style={{ fontSize: 11, opacity: 0.66 }}>{new Date(log.opened_at).toLocaleString()}</div>
+              </div>
+            );
+          })}
+        </section>
       </main>
     </AuthGate>
   );
@@ -274,7 +387,7 @@ const giftStyles = `
 }
 .inventory-hub {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 .hub-card {
@@ -349,6 +462,10 @@ const giftStyles = `
   font-size: 40px;
   line-height: 1;
   filter: drop-shadow(0 3px 8px rgba(56,189,248,0.3));
+}
+.hub-card--expired {
+  background: linear-gradient(160deg, rgba(120,53,15,0.68), rgba(30,41,59,0.95));
+  border-color: rgba(251,146,60,0.4);
 }
 @keyframes hubPulse {
   0%, 100% { transform: scale(0.94); opacity: 0.4; }

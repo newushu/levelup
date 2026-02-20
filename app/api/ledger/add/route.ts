@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabase/server";
 import { getStudentModifierStack } from "@/lib/modifierStack";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 
 export async function POST(req: Request) {
   const supabase = await supabaseServer();
+  const admin = supabaseAdmin();
 
 
   const { data: u, error: uErr } = await supabase.auth.getUser();
@@ -46,7 +48,7 @@ export async function POST(req: Request) {
     }
   }
 
-  const ins = await supabase.from("ledger").insert({
+  const ins = await admin.from("ledger").insert({
     student_id,
     points: adjustedPoints,
     points_base: pointsBase,
@@ -61,37 +63,56 @@ export async function POST(req: Request) {
 
 
   // recompute balance + lifetime + level
-  const rpc = await supabase.rpc("recompute_student_points", { p_student_id: student_id });
-  if (rpc.error) return NextResponse.json({ ok: false, error: rpc.error.message }, { status: 500 });
+  const rpc = await admin.rpc("recompute_student_points", { p_student_id: student_id });
+  let recomputeWarning: string | null = null;
+  if (rpc.error) {
+    recomputeWarning = rpc.error.message;
+    const { data: current } = await admin
+      .from("students")
+      .select("id,points_total,points_balance,lifetime_points")
+      .eq("id", student_id)
+      .maybeSingle();
+    if (current) {
+      const prevTotal = Number(current.points_total ?? current.points_balance ?? 0);
+      const prevBalance = Number(current.points_balance ?? current.points_total ?? 0);
+      const prevLifetime = Number(current.lifetime_points ?? 0);
+      const nextTotal = prevTotal + adjustedPoints;
+      const nextBalance = prevBalance + adjustedPoints;
+      const nextLifetime = prevLifetime + Math.max(0, adjustedPoints);
+      await admin
+        .from("students")
+        .update({
+          points_total: nextTotal,
+          points_balance: nextBalance,
+          lifetime_points: nextLifetime,
+        })
+        .eq("id", student_id);
+    }
+  }
 
 
   const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "";
   const proto = req.headers.get("x-forwarded-proto") ?? "http";
   const baseUrl = process.env.APP_URL ?? (host ? `${proto}://${host}` : "");
   const prestigeSecret = process.env.ACHIEVEMENTS_CRON_SECRET ?? "";
-  let prestigeAutoError: string | null = null;
   if (baseUrl && prestigeSecret) {
-    try {
-      const res = await fetch(`${baseUrl}/api/achievements/auto/prestige`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-achievement-secret": prestigeSecret,
-        },
-        body: JSON.stringify({ student_id }),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        prestigeAutoError = text || `Failed to auto-award prestige badges (${res.status})`;
-      }
-    } catch (err: any) {
-      prestigeAutoError = err?.message || "Failed to auto-award prestige badges";
-    }
+    void (async () => {
+      try {
+        await fetch(`${baseUrl}/api/achievements/auto/prestige`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-achievement-secret": prestigeSecret,
+          },
+          body: JSON.stringify({ student_id }),
+        });
+      } catch {}
+    })();
   }
 
 
   // return fresh student snapshot so UI can update immediately
-  const { data: s, error: sErr } = await supabase
+  const { data: s, error: sErr } = await admin
     .from("students")
     .select("id,name,level,points_total,points_balance,lifetime_points,is_competition_team")
     .eq("id", student_id)
@@ -99,5 +120,5 @@ export async function POST(req: Request) {
 
 
   if (sErr) return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
-  return NextResponse.json({ ok: true, student: s, prestigeAutoError });
+  return NextResponse.json({ ok: true, student: s, prestigeAutoError: null, recomputeWarning });
 }

@@ -8,6 +8,7 @@ export default function RouteNav() {
   const isParent = path.startsWith("/parent");
   const hideNav =
     isParent ||
+    path.startsWith("/admin/accounting") ||
     path === "/camp" ||
     path.startsWith("/camp/register") ||
     path.startsWith("/camp/classroom") ||

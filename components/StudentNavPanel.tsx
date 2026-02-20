@@ -5,10 +5,12 @@ import { usePathname } from "next/navigation";
 
 const items = [
   { key: "info", label: "Student Info", href: "/student/info", tone: "tone-teal" },
-  { key: "inventory", label: "Inventory", href: "/student/gifts", tone: "tone-amber" },
   { key: "rewards", label: "Rewards", href: "/student/rewards", tone: "tone-rose" },
   { key: "logs", label: "Logs & Reports", href: "/student/logs", tone: "tone-violet" },
   { key: "challenges", label: "Challenge Vault", href: "/student/challenges", tone: "tone-green" },
+  { key: "skill-sprint", label: "Skill Sprint", href: "/student/skill-sprint", tone: "tone-blue" },
+  { key: "inventory", label: "Inventory", href: "/student/gifts", tone: "tone-amber" },
+  { key: "class-tools", label: "Class Tools", href: "/student/class-tools", tone: "tone-cyan" },
 ];
 
 export default function StudentNavPanel() {
@@ -32,14 +34,6 @@ export default function StudentNavPanel() {
             );
           })}
         </div>
-        <button
-          type="button"
-          className="student-nav__refresh"
-          onClick={() => window.location.reload()}
-          title="Refresh page"
-        >
-          ↻ Refresh
-        </button>
       </div>
       <nav className="student-mobile-nav" aria-label="Student navigation">
         {items.map((item) => {
@@ -89,29 +83,6 @@ export function studentNavStyles() {
       align-content: start;
     }
 
-    .student-nav__refresh {
-      min-height: 44px;
-      border-radius: 12px;
-      border: 1px solid rgba(56,189,248,0.36);
-      background: linear-gradient(160deg, rgba(14,165,233,0.42), rgba(15,23,42,0.85));
-      color: #e0f2fe;
-      font-weight: 900;
-      letter-spacing: 0.7px;
-      text-transform: uppercase;
-      font-size: 11px;
-      cursor: pointer;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 8px 16px rgba(0,0,0,0.35);
-      transition: transform 120ms ease, border-color 160ms ease, box-shadow 120ms ease;
-    }
-    .student-nav__refresh:hover {
-      transform: translateY(-1px);
-      border-color: rgba(56,189,248,0.55);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.16), 0 0 16px rgba(56,189,248,0.24);
-    }
-    .student-nav__refresh:active {
-      transform: translateY(1px);
-    }
-
     .student-nav__item {
       min-height: 88px;
       padding: 12px;
@@ -154,6 +125,11 @@ export function studentNavStyles() {
     .student-nav__item.tone-violet {
       background: linear-gradient(160deg, rgba(139,92,246,0.45), rgba(15,23,42,0.85));
       border-color: rgba(139,92,246,0.35);
+    }
+
+    .student-nav__item.tone-cyan {
+      background: linear-gradient(160deg, rgba(6,182,212,0.45), rgba(15,23,42,0.85));
+      border-color: rgba(6,182,212,0.35);
     }
 
     .student-nav__item.tone-green {
@@ -206,15 +182,15 @@ export function studentNavStyles() {
         background: rgba(30,41,59,0.72);
         color: #e2e8f0;
         text-decoration: none;
-        min-height: 52px;
+        min-height: 76px;
         display: grid;
         place-items: center;
         text-align: center;
-        font-size: 11px;
+        font-size: 18px;
         font-weight: 900;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.7px;
         text-transform: uppercase;
-        padding: 6px 8px;
+        padding: 12px 14px;
       }
       .student-mobile-nav__item--active {
         border-color: rgba(56,189,248,0.7);

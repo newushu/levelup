@@ -72,16 +72,24 @@ export async function POST(req: Request) {
 
     const refund = Number(redemption.cost ?? 0);
     if (refund > 0) {
-      const { error: ledErr } = await supabase.from("ledger").insert({
-        student_id: redemption.student_id,
-        points: Math.abs(refund),
-        note: "Hold request rejected (refund)",
-        category: "redeem_hold_refund",
-      });
-      if (ledErr) return NextResponse.json({ ok: false, error: ledErr.message }, { status: 500 });
+      const { data: student, error: sErr } = await supabase
+        .from("students")
+        .select("id,points_total,points_balance")
+        .eq("id", redemption.student_id)
+        .single();
+      if (sErr) return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
 
-      const { error: rpcErr } = await supabase.rpc("recompute_student_points", { p_student_id: redemption.student_id });
-      if (rpcErr) return NextResponse.json({ ok: false, error: rpcErr.message }, { status: 500 });
+      const beforeBalance = Number(student.points_balance ?? student.points_total ?? 0);
+      const nextBalance = beforeBalance + Math.abs(refund);
+
+      const { error: uErr } = await supabase
+        .from("students")
+        .update({
+          points_balance: nextBalance,
+          points_total: nextBalance,
+        })
+        .eq("id", redemption.student_id);
+      if (uErr) return NextResponse.json({ ok: false, error: uErr.message }, { status: 500 });
     }
   }
 

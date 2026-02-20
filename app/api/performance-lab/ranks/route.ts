@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { supabaseServer } from "@/lib/supabase/server";
 
+function passesMinimumForRanking(value: number, minValue: number, higherIsBetter: boolean) {
+  if (value <= 0) return false;
+  if (minValue <= 0) return true;
+  return higherIsBetter ? value >= minValue : value <= minValue;
+}
+
 export async function POST(req: Request) {
   const supabase = await supabaseServer();
   const { data: u } = await supabase.auth.getUser();
@@ -52,7 +58,8 @@ export async function POST(req: Request) {
   const byStat = new Map<string, Array<{ student_id: string; value: number }>>();
   latestByStudentStat.forEach((row) => {
     const minValue = minByStat.get(row.stat_id) ?? 0;
-    if (Number(row.value ?? 0) <= 0 || Number(row.value ?? 0) < minValue) return;
+    const higherIsBetter = higherByStat.get(row.stat_id) !== false;
+    if (!passesMinimumForRanking(Number(row.value ?? 0), minValue, higherIsBetter)) return;
     if (!byStat.has(row.stat_id)) byStat.set(row.stat_id, []);
     byStat.get(row.stat_id)!.push({ student_id: row.student_id, value: row.value });
   });

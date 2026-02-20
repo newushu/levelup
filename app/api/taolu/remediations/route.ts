@@ -72,7 +72,7 @@ export async function POST(req: Request) {
   if (sErr) return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
   if (!session) return NextResponse.json({ ok: false, error: "Session not found" }, { status: 404 });
 
-  const pointsAwarded = deduction_ids.length * 2;
+  const pointsAwarded = deduction_ids.length * 5;
   const { data: remediation, error } = await admin
     .from("taolu_remediations")
     .insert({
@@ -95,7 +95,7 @@ export async function POST(req: Request) {
     .eq("id", session.taolu_form_id)
     .maybeSingle();
   const formName = String(form?.name ?? "Taolu");
-  const note = `Taolu Tracker • Refinement Round • ${formName}`;
+  const note = `Taolu Tracker • Refinement Round • ${formName} (non-lifetime)`;
   const { error: ledErr } = await admin.from("ledger").insert({
     student_id: session.student_id,
     points: pointsAwarded,

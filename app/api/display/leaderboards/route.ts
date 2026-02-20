@@ -83,6 +83,12 @@ function getWeekStartUTC(now: Date) {
   return d;
 }
 
+function passesMinimumForRanking(value: number, minValue: number, higherIsBetter: boolean) {
+  if (value <= 0) return false;
+  if (minValue <= 0) return true;
+  return higherIsBetter ? value >= minValue : value <= minValue;
+}
+
 function buildThresholdsFromSettings(baseJump: number, difficultyPct: number, maxLevel = 20) {
   const rows: Array<{ level: number; min: number }> = [];
   for (let level = 1; level <= maxLevel; level += 1) {
@@ -726,12 +732,13 @@ export async function GET(req: Request) {
       const meta = performanceStatMeta.get(statId);
       const rows = performanceLeaderboards.get(statId) ?? [];
       const minValue = Math.max(0, Number(meta?.minimum_value_for_ranking ?? 0) || 0);
+      const higherIsBetter = meta?.higher_is_better ?? true;
       const sorted = rows
         .slice()
-        .filter((row) => Number(row.value ?? 0) > 0 && Number(row.value ?? 0) >= minValue)
+        .filter((row) => passesMinimumForRanking(Number(row.value ?? 0), minValue, higherIsBetter))
         .sort((a, b) => {
           if (a.value === b.value) return String(b.recorded_at).localeCompare(String(a.recorded_at));
-          return (meta?.higher_is_better ?? true) ? b.value - a.value : a.value - b.value;
+          return higherIsBetter ? b.value - a.value : a.value - b.value;
         })
         .slice(0, limit)
         .map((row, idx) => {

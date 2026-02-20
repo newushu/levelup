@@ -23,12 +23,19 @@ type MenuItem = {
 };
 
 type Menu = { id: string; name: string; enabled: boolean; items: MenuItem[] };
+type MenuWithModifier = Menu & { price_modifier_pct?: number | null };
 
 type StudentPick = { id: string; name: string };
 
 type Payer = { student: StudentPick; amount: string };
 
 const CAMP_MENU_SYNC_CHANNEL = "camp-menu-sync";
+
+function applyMenuModifier(points: number, modifierPct: number) {
+  const base = Number.isFinite(Number(points)) ? Number(points) : 0;
+  const pct = Number.isFinite(Number(modifierPct)) ? Number(modifierPct) : 0;
+  return Math.max(0, Math.round(base * (1 + pct / 100)));
+}
 
 function broadcastCampMenuSync(reason: string) {
   if (typeof window === "undefined") return;
@@ -46,7 +53,7 @@ export default function CampRegisterPage() {
   const [leaderMsg, setLeaderMsg] = useState("");
   const [msg, setMsg] = useState("");
 
-  const [menus, setMenus] = useState<Menu[]>([]);
+  const [menus, setMenus] = useState<MenuWithModifier[]>([]);
   const [selectedItems, setSelectedItems] = useState<Record<string, { qty: number; second: boolean }>>({});
 
   const [payStep, setPayStep] = useState(false);
@@ -84,7 +91,7 @@ export default function CampRegisterPage() {
   async function loadMenus() {
     const res = await fetch("/api/camp/menus?items=1", { cache: "no-store" });
     const data = await res.json().catch(() => ({}));
-    if (res.ok) setMenus((data.menus ?? []) as Menu[]);
+    if (res.ok) setMenus((data.menus ?? []) as MenuWithModifier[]);
   }
 
   useEffect(() => {
@@ -265,6 +272,7 @@ export default function CampRegisterPage() {
       .map((menu) => ({
         id: menu.id,
         name: menu.name,
+        price_modifier_pct: Number(menu.price_modifier_pct ?? 0),
         items: (menu.items ?? []).filter((i) => i.enabled !== false && i.visible_on_pos !== false),
       }))
       .filter((menu) => menu.items.length);
@@ -314,6 +322,51 @@ export default function CampRegisterPage() {
     setMsg(nextSoldOut ? `${item.name} marked SOLD OUT.` : `${item.name} marked IN STOCK.`);
   }
 
+  async function toggleMenuVisibility(item: MenuItem) {
+    if (!canManageMenuStock) return;
+    const currentlyVisible = item.visible_on_menu !== false;
+    const nextVisible = !currentlyVisible;
+    const prompt = nextVisible
+      ? `Show "${item.name}" on menu?`
+      : `Hide "${item.name}" from menu?`;
+    if (typeof window !== "undefined" && !window.confirm(prompt)) return;
+    const res = await fetch("/api/camp/items/upsert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items: [
+          {
+            id: item.id,
+            menu_id: item.menu_id,
+            name: item.name,
+            price_points: item.price_points,
+            allow_second: item.allow_second,
+            second_price_points: item.second_price_points ?? null,
+            image_url: item.image_url ?? "",
+            image_text: item.image_text ?? "",
+            use_text: item.use_text === true,
+            image_x: item.image_x ?? null,
+            image_y: item.image_y ?? null,
+            image_zoom: item.image_zoom ?? null,
+            enabled: item.enabled !== false,
+            visible_on_menu: nextVisible,
+            visible_on_pos: item.visible_on_pos !== false,
+            sold_out: item.sold_out === true,
+            display_order: Number.isFinite(Number(item.display_order)) ? Number(item.display_order) : 0,
+          },
+        ],
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setMsg(data?.error || "Failed to update menu visibility.");
+      return;
+    }
+    await loadMenus();
+    broadcastCampMenuSync(nextVisible ? "item_show_menu" : "item_hide_menu");
+    setMsg(nextVisible ? `${item.name} shown on menu.` : `${item.name} hidden from menu.`);
+  }
+
   useEffect(() => {
     if (!menuSections.length) {
       setActiveMenuId("");
@@ -334,13 +387,16 @@ export default function CampRegisterPage() {
       .map(([itemId, sel]) => {
         const item = flatItems.find((i) => i.id === itemId);
         if (!item) return null;
-        const price = sel.second && item.allow_second
+        const menu = menus.find((m) => String(m.id) === String(item.menu_id));
+        const modifier = Number(menu?.price_modifier_pct ?? 0);
+        const basePrice = sel.second && item.allow_second
           ? Number(item.second_price_points ?? item.price_points)
           : Number(item.price_points ?? 0);
-        return { item, price, qty: Math.max(1, sel.qty || 1), second: sel.second && item.allow_second };
+        const price = applyMenuModifier(basePrice, modifier);
+        return { item, price, qty: Math.max(1, sel.qty || 1), second: sel.second && item.allow_second, menuModifier: modifier };
       })
-      .filter(Boolean) as Array<{ item: MenuItem; price: number; qty: number; second: boolean }>;
-  }, [flatItems, selectedItems]);
+      .filter(Boolean) as Array<{ item: MenuItem; price: number; qty: number; second: boolean; menuModifier: number }>;
+  }, [flatItems, selectedItems, menus]);
 
   const totalPoints = useMemo(() => {
     return cartItems.reduce((sum, entry) => sum + entry.price * entry.qty, 0);
@@ -516,6 +572,7 @@ export default function CampRegisterPage() {
         id: entry.item.id,
         name: entry.item.name,
         price_points: entry.price,
+        menu_modifier_pct: entry.menuModifier,
         qty: entry.qty,
         second: entry.second,
       }));
@@ -747,11 +804,21 @@ export default function CampRegisterPage() {
             <div style={{ display: "grid", gap: 16 }}>
               {activeMenuSection ? (
                 <div key={activeMenuSection.id} style={categoryCard()}>
-                  <div style={{ fontWeight: 900, fontSize: 18 }}>{activeMenuSection.name}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ fontWeight: 900, fontSize: 18 }}>{activeMenuSection.name}</div>
+                    <div style={{ fontSize: 12, opacity: 0.8 }}>
+                      Modifier: {Math.round(Number(activeMenuSection.price_modifier_pct ?? 0))}%
+                    </div>
+                  </div>
                   <div style={itemsGrid()}>
                     {activeMenuSection.items.map((item) => {
                       const selected = !!selectedItems[item.id];
                       const soldOut = item.sold_out === true;
+                      const visibleOnMenu = item.visible_on_menu !== false;
+                      const adjustedPrice = applyMenuModifier(
+                        Number(item.price_points ?? 0),
+                        Number(activeMenuSection.price_modifier_pct ?? 0)
+                      );
                       return (
                         <button
                           key={item.id}
@@ -773,16 +840,30 @@ export default function CampRegisterPage() {
                           style={itemCard(selected, item.name, soldOut)}
                         >
                           {canManageMenuStock ? (
-                            <span
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                toggleSoldOut(item);
-                              }}
-                              style={stockToggleChip(soldOut)}
-                            >
-                              {soldOut ? "Sold Out" : "In Stock"}
-                            </span>
+                            <div style={itemAdminChipStack()}>
+                              <span
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  toggleSoldOut(item);
+                                }}
+                                style={stockToggleChip(soldOut)}
+                                title="Toggle sold out"
+                              >
+                                {soldOut ? "Sold Out" : "In Stock"}
+                              </span>
+                              <span
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  toggleMenuVisibility(item);
+                                }}
+                                style={visibilityToggleChip(visibleOnMenu)}
+                                title="Toggle menu visibility"
+                              >
+                                {visibleOnMenu ? "Show Menu" : "Hide Menu"}
+                              </span>
+                            </div>
                           ) : null}
                           <div style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "flex-start" }}>
                             <div style={itemThumb(item)}>
@@ -793,7 +874,7 @@ export default function CampRegisterPage() {
                             </div>
                             <div style={{ display: "grid", gap: 4, textAlign: "left" }}>
                               <div style={{ fontWeight: 900, fontSize: 22 }}>{item.name}</div>
-                              <div style={{ opacity: 0.9, fontSize: 16 }}>{item.price_points} pts</div>
+                              <div style={{ opacity: 0.9, fontSize: 16 }}>{adjustedPrice} pts</div>
                             </div>
                           </div>
                           {soldOut ? (
@@ -1129,30 +1210,32 @@ export default function CampRegisterPage() {
 
               <div style={discountCard(discountAuthorized)}>
                 <div style={{ fontWeight: 900, marginBottom: 6 }}>Discount</div>
-                <label style={label()}>
-                  Discount points
-                  <input value={discountInput} onChange={(e) => setDiscountInput(e.target.value)} style={bigInput()} />
-                </label>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-                  <button
-                    onClick={() => setDiscountApplied(true)}
-                    style={btnGhostSmall()}
-                    disabled={!discountAuthorized}
-                  >
-                    Apply discount
-                  </button>
-                  <button
-                    onClick={() => setDiscountApplied(false)}
-                    style={btnGhostSmall()}
-                    disabled={!discountApplied}
-                  >
-                    Clear
-                  </button>
-                </div>
-                {!discountAuthorized ? (
-                  <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
+                  <div style={{ display: "grid", gap: 8 }}>
                     <label style={label()}>
-                      Admin PIN / NFC
+                      Discount points
+                      <input value={discountInput} onChange={(e) => setDiscountInput(e.target.value)} style={bigInput()} />
+                    </label>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                      <button
+                        onClick={() => setDiscountApplied(true)}
+                        style={btnGhostSmall()}
+                        disabled={!discountAuthorized}
+                      >
+                        Apply discount
+                      </button>
+                      <button
+                        onClick={() => setDiscountApplied(false)}
+                        style={btnGhostSmall()}
+                        disabled={!discountApplied}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <label style={label()}>
+                      Admin PIN
                       <input
                         value={adminPin}
                         onChange={(e) => setAdminPin(e.target.value)}
@@ -1163,10 +1246,10 @@ export default function CampRegisterPage() {
                       />
                     </label>
                     <button onClick={unlockDiscount} style={btnPrimary()}>
-                      Unlock discount
+                      {discountAuthorized ? "Discount unlocked" : "Unlock discount"}
                     </button>
                   </div>
-                ) : null}
+                </div>
               </div>
 
               <label style={label()}>
@@ -1176,7 +1259,11 @@ export default function CampRegisterPage() {
 
               {msg ? <div style={{ color: "crimson" }}>{msg}</div> : null}
 
-              <button onClick={submitPayment} style={btnPrimary()} disabled={isSubmittingPayment}>
+              <button
+                onClick={submitPayment}
+                style={{ ...btnPrimary(), padding: "16px 14px", minHeight: 56, fontSize: 18 }}
+                disabled={isSubmittingPayment}
+              >
                 {isSubmittingPayment ? "Submitting..." : "Submit payment"}
               </button>
             </div>
@@ -1462,20 +1549,43 @@ function soldOutOverlay(): React.CSSProperties {
   };
 }
 
-function stockToggleChip(soldOut: boolean): React.CSSProperties {
+function itemAdminChipStack(): React.CSSProperties {
   return {
     position: "absolute",
     top: 8,
     right: 8,
     zIndex: 3,
+    display: "grid",
+    gap: 5,
+    justifyItems: "end",
+  };
+}
+
+function stockToggleChip(soldOut: boolean): React.CSSProperties {
+  return {
     borderRadius: 999,
-    padding: "4px 10px",
+    padding: "2px 8px",
     border: soldOut ? "1px solid rgba(248,113,113,0.95)" : "1px solid rgba(74,222,128,0.9)",
     background: soldOut ? "rgba(185,28,28,0.88)" : "rgba(22,163,74,0.88)",
     color: "white",
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: 900,
     cursor: "pointer",
+    lineHeight: 1.2,
+  };
+}
+
+function visibilityToggleChip(visibleOnMenu: boolean): React.CSSProperties {
+  return {
+    borderRadius: 999,
+    padding: "2px 8px",
+    border: visibleOnMenu ? "1px solid rgba(125,211,252,0.9)" : "1px solid rgba(251,191,36,0.9)",
+    background: visibleOnMenu ? "rgba(2,132,199,0.88)" : "rgba(180,83,9,0.88)",
+    color: "white",
+    fontSize: 10,
+    fontWeight: 900,
+    cursor: "pointer",
+    lineHeight: 1.2,
   };
 }
 

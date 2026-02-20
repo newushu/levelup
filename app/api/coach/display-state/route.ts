@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-const TOOL_KEYS = new Set(["default", "lesson_forge", "timers", "warmup", "classroom_roster"]);
+const TOOL_KEYS = new Set(["default", "lesson_forge", "timers", "warmup", "classroom_roster", "taolu_tracker"]);
 
 async function getRoles() {
   const supabase = await supabaseServer();
@@ -32,7 +32,8 @@ export async function GET(req: Request) {
   if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: 401 });
   const isAdmin = gate.roleList.includes("admin");
   const isCoach = gate.roleList.includes("coach");
-  if (!isAdmin && !isCoach) return NextResponse.json({ ok: false, error: "Coach access required" }, { status: 403 });
+  const isDisplay = gate.roleList.includes("display");
+  if (!isAdmin && !isCoach && !isDisplay) return NextResponse.json({ ok: false, error: "Coach/display access required" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
   const requestedId = String(searchParams.get("coach_user_id") ?? "").trim();

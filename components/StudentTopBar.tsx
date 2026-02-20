@@ -80,7 +80,7 @@ export default function StudentTopBar({
   const [bgColor, setBgColor] = useState<string>("rgba(0,0,0,0.22)");
   const [avatarImgSrc, setAvatarImgSrc] = useState<string>("");
   const [avatarEffectKey, setAvatarEffectKey] = useState<string | null>(null);
-  const [effectCatalog, setEffectCatalog] = useState<Array<{ key: string; config?: any; render_mode?: string | null; html?: string | null; css?: string | null; js?: string | null }>>([]);
+  const [effectCatalog, setEffectCatalog] = useState<Array<{ key: string; config?: any; render_mode?: string | null; z_layer?: string | null; z_index?: number | null; html?: string | null; css?: string | null; js?: string | null }>>([]);
   const [visible, setVisible] = useState(true);
   const [clientReady, setClientReady] = useState(false);
   const [navLinksEnabled, setNavLinksEnabled] = useState(false);
@@ -437,6 +437,8 @@ export default function StudentTopBar({
                     key: selectedEffect.key ?? null,
                     config: selectedEffect.config,
                     render_mode: selectedEffect.render_mode ?? null,
+                    z_layer: selectedEffect.z_layer ?? null,
+                    z_index: selectedEffect.z_index ?? null,
                     html: selectedEffect.html ?? null,
                     css: selectedEffect.css ?? null,
                     js: selectedEffect.js ?? null,

@@ -218,6 +218,11 @@ const adminSections = [
         href: "/admin/custom/skill-tracker",
       },
       {
+        title: "Skill Sprint",
+        desc: "Assign skill deadlines, daily losses, and decaying completion prizes.",
+        href: "/admin/custom/skill-sprint",
+      },
+      {
         title: "Parent Pairing",
         desc: "Approve parent requests and link student accounts.",
         href: "/admin/parent-pairing",
@@ -261,6 +266,11 @@ const adminSections = [
         title: "Camp Settings",
         desc: "Manage camp points, leaders, PIN access, and quick links.",
         href: "/admin/custom/camp",
+      },
+      {
+        title: "Accounting",
+        desc: "Camp accounting ledger, pricing matrix, and expense tabs.",
+        href: "/admin/accounting",
       },
       {
         title: "Camp Display Roster",

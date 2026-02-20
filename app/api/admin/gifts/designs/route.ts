@@ -55,5 +55,18 @@ export async function POST(req: Request) {
     .single();
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  // Keep linked gift items in sync so design edits propagate everywhere design_id is used.
+  const { error: syncErr } = await admin
+    .from("gift_items")
+    .update({
+      design_image_url: data?.preview_image_url ?? null,
+      design_html: data?.html ?? null,
+      design_css: data?.css ?? null,
+      design_js: data?.js ?? null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("design_id", id);
+  if (syncErr) return NextResponse.json({ ok: false, error: syncErr.message }, { status: 500 });
+
   return NextResponse.json({ ok: true, design: data });
 }

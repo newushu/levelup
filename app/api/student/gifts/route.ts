@@ -19,6 +19,8 @@ export async function GET(req: Request) {
       gift_item_id,
       qty,
       opened_qty,
+      expires_at,
+      expired_at,
       created_at,
       enabled,
       gift_items(
@@ -42,5 +44,33 @@ export async function GET(req: Request) {
     .order("created_at", { ascending: false });
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, gifts: data ?? [] });
+  const now = Date.now();
+  const rows = (data ?? []) as Array<any>;
+  const justExpiredIds = rows
+    .filter((row) => !row?.expired_at)
+    .filter((row) => {
+      const ts = Date.parse(String(row?.expires_at ?? ""));
+      return Number.isFinite(ts) && ts <= now;
+    })
+    .map((row) => String(row?.id ?? ""))
+    .filter(Boolean);
+
+  if (justExpiredIds.length) {
+    await admin
+      .from("student_gifts")
+      .update({ expired_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .in("id", justExpiredIds)
+      .is("expired_at", null);
+  }
+
+  const payload = rows.map((row) => {
+    const expiresMs = Date.parse(String(row?.expires_at ?? ""));
+    const isExpiredByDate = Number.isFinite(expiresMs) && expiresMs <= now;
+    return {
+      ...row,
+      is_expired: Boolean(row?.expired_at) || isExpiredByDate,
+    };
+  });
+
+  return NextResponse.json({ ok: true, gifts: payload });
 }

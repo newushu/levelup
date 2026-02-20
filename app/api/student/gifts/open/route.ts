@@ -16,12 +16,24 @@ export async function POST(req: Request) {
   const admin = supabaseAdmin();
   const { data: giftRow, error: giftErr } = await admin
     .from("student_gifts")
-    .select("id,student_id,gift_item_id,qty,opened_qty,enabled")
+    .select("id,student_id,gift_item_id,qty,opened_qty,enabled,expires_at,expired_at")
     .eq("id", studentGiftId)
     .eq("student_id", studentId)
     .maybeSingle();
   if (giftErr) return NextResponse.json({ ok: false, error: giftErr.message }, { status: 500 });
   if (!giftRow?.id || giftRow.enabled === false) return NextResponse.json({ ok: false, error: "Gift not found" }, { status: 404 });
+  const expiresMs = Date.parse(String(giftRow.expires_at ?? ""));
+  const alreadyExpired = Boolean(giftRow.expired_at) || (Number.isFinite(expiresMs) && expiresMs <= Date.now());
+  if (alreadyExpired) {
+    if (!giftRow.expired_at) {
+      await admin
+        .from("student_gifts")
+        .update({ expired_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq("id", studentGiftId)
+        .is("expired_at", null);
+    }
+    return NextResponse.json({ ok: false, error: "Gift expired" }, { status: 400 });
+  }
 
   const qty = Math.max(0, Number(giftRow.qty ?? 0));
   const openedQty = Math.max(0, Number(giftRow.opened_qty ?? 0));
@@ -86,6 +98,8 @@ export async function POST(req: Request) {
         gift_item_id: String(newGift?.id),
         qty,
         opened_qty: 0,
+        expires_at: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+        expired_at: null,
         granted_by: gate.user.id,
         note: `From package: ${String(giftItem.name ?? "Package")}`,
         enabled: true,

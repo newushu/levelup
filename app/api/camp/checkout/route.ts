@@ -3,6 +3,17 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/authz";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+function applyMenuModifier(points: number, modifierPct: number) {
+  const base = Number.isFinite(points) ? points : 0;
+  const pct = Number.isFinite(modifierPct) ? modifierPct : 0;
+  return Math.max(0, Math.round(base * (1 + pct / 100)));
+}
+
+function isMissingColumn(error: any, col: string) {
+  const msg = String(error?.message ?? "").toLowerCase();
+  return msg.includes("column") && msg.includes(col.toLowerCase()) && msg.includes("does not exist");
+}
+
 export async function POST(req: Request) {
   const auth = await requireUser();
   if (!auth.ok) return NextResponse.json({ ok: false, error: auth.error }, { status: 401 });
@@ -17,16 +28,64 @@ export async function POST(req: Request) {
   const aura_discount_points = Number.isFinite(Number(body?.aura_discount_points))
     ? Math.max(0, Number(body.aura_discount_points))
     : 0;
-  const items_total = items.reduce((sum: number, item: any) => {
-    const price = Number(item?.price_points ?? 0);
-    const qty = Number(item?.qty ?? 1);
-    const safePrice = Number.isFinite(price) ? price : 0;
-    const safeQty = Number.isFinite(qty) && qty > 0 ? qty : 1;
-    return sum + safePrice * safeQty;
-  }, 0);
-  const total_points = Math.max(0, items_total - Math.max(0, discount_points) - Math.max(0, aura_discount_points));
 
   if (!items.length) return NextResponse.json({ ok: false, error: "No items selected" }, { status: 400 });
+  const admin = supabaseAdmin();
+  const supabase = await supabaseServer();
+
+  const itemIds = Array.from(new Set(items.map((item: any) => String(item?.id ?? "").trim()).filter(Boolean)));
+  if (!itemIds.length) return NextResponse.json({ ok: false, error: "No valid items selected" }, { status: 400 });
+  let { data: menuItemRows, error: menuItemErr } = await admin
+    .from("camp_menu_items")
+    .select("id,name,price_points,allow_second,second_price_points,menu_id,camp_menus(price_modifier_pct)")
+    .in("id", itemIds);
+  if (menuItemErr && isMissingColumn(menuItemErr, "price_modifier_pct")) {
+    const fallback = await admin
+      .from("camp_menu_items")
+      .select("id,name,price_points,allow_second,second_price_points,menu_id")
+      .in("id", itemIds);
+    menuItemRows = (fallback.data ?? []).map((row: any) => ({ ...row, camp_menus: { price_modifier_pct: 0 } }));
+    menuItemErr = fallback.error as any;
+  }
+  if (menuItemErr) return NextResponse.json({ ok: false, error: menuItemErr.message }, { status: 500 });
+  const itemById = new Map<string, any>();
+  (menuItemRows ?? []).forEach((row: any) => itemById.set(String(row.id), row));
+
+  const normalizedOrderItems = items
+    .map((item: any) => {
+      const id = String(item?.id ?? "").trim();
+      const row = itemById.get(id);
+      if (!id || !row) return null;
+      const qtyRaw = Number(item?.qty ?? 1);
+      const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? Math.floor(qtyRaw) : 1;
+      const second = item?.second === true && row.allow_second === true;
+      const basePrice = second ? Number(row.second_price_points ?? row.price_points ?? 0) : Number(row.price_points ?? 0);
+      const modifierPct = Number(row?.camp_menus?.price_modifier_pct ?? 0);
+      const adjustedPrice = applyMenuModifier(basePrice, modifierPct);
+      return {
+        id,
+        name: String(row.name ?? item?.name ?? "Item"),
+        qty,
+        second,
+        base_price_points: Math.max(0, Math.round(basePrice)),
+        menu_modifier_pct: modifierPct,
+        price_points: adjustedPrice,
+      };
+    })
+    .filter(Boolean) as Array<{
+      id: string;
+      name: string;
+      qty: number;
+      second: boolean;
+      base_price_points: number;
+      menu_modifier_pct: number;
+      price_points: number;
+    }>;
+  if (!normalizedOrderItems.length) {
+    return NextResponse.json({ ok: false, error: "Selected items are unavailable" }, { status: 400 });
+  }
+  const items_total = normalizedOrderItems.reduce((sum, item) => sum + item.price_points * item.qty, 0);
+  const total_points = Math.max(0, items_total - Math.max(0, discount_points) - Math.max(0, aura_discount_points));
 
   const rawPayments = Array.isArray(body?.payments) ? body.payments : [];
   const payments = (rawPayments.length
@@ -44,9 +103,6 @@ export async function POST(req: Request) {
     const amt = Number(p?.amount_points ?? 0);
     return sum + (Number.isFinite(amt) ? amt : 0);
   }, 0);
-  const expectedTotal = Math.max(0, total_points);
-  const supabase = await supabaseServer();
-  const admin = supabaseAdmin();
   let coupon_discount_points = 0;
   const couponUpdates: Array<{ coupon_type_id: string; remaining_qty: number }> = [];
   const coupons_used: any[] = [];
@@ -86,7 +142,7 @@ export async function POST(req: Request) {
         const safePercent = Math.max(0, Number.isFinite(percentValue) ? percentValue : 0);
         const itemId = String(typeRow.item_id ?? "").trim();
         if (itemId) {
-          const cartItem = items.find((i: any) => String(i.id ?? "") === itemId);
+          const cartItem = normalizedOrderItems.find((i: any) => String(i.id ?? "") === itemId);
           if (!cartItem) continue;
           const itemPrice = Number(cartItem?.price_points ?? 0);
           const perItemDiscount = Math.round(Math.max(0, itemPrice) * (safePercent / 100));
@@ -111,7 +167,7 @@ export async function POST(req: Request) {
       } else if (typeName === "item") {
         const itemId = String(typeRow.item_id ?? "").trim();
         if (!itemId) continue;
-        const cartItem = items.find((i: any) => String(i.id ?? "") === itemId);
+        const cartItem = normalizedOrderItems.find((i: any) => String(i.id ?? "") === itemId);
         if (!cartItem) continue;
         const itemPrice = Number(cartItem?.price_points ?? 0);
         coupon_discount_points += Math.max(0, itemPrice) * appliedQty;
@@ -145,7 +201,7 @@ export async function POST(req: Request) {
 
   const primaryStudentId = String(payments[0]?.student_id ?? "").trim();
   const duplicateWindowIso = new Date(Date.now() - 10_000).toISOString();
-  const normalizedItems = JSON.stringify(normalizeItems(items));
+  const normalizedItems = JSON.stringify(normalizeItems(normalizedOrderItems));
   const normalizedPayments = JSON.stringify(normalizePayments(payments));
   if (primaryStudentId) {
     const { data: recentOrders } = await supabase
@@ -214,7 +270,7 @@ export async function POST(req: Request) {
       student_id: payments[0]?.student_id ? String(payments[0].student_id) : student_id || null,
       student_name: payments[0]?.student_name ? String(payments[0].student_name) : student_name || null,
       paid_by: paid_by || null,
-      items,
+      items: normalizedOrderItems,
       total_points: final_total_points,
       discount_points: discount_points || null,
       coupons_used: coupons_used.length ? coupons_used : null,

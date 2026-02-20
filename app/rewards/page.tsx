@@ -398,12 +398,14 @@ export default function RewardsPage() {
         </div>
       ) : null}
       {!inStudentWorkspace ? <StudentNavPanel /> : null}
-      <StudentWorkspaceTopBar
-        student={activeStudent}
-        onClearStudent={clearSelectedStudent}
-        onSelectStudentByName={selectStudentByName}
-        students={students}
-      />
+      {!inStudentWorkspace ? (
+        <StudentWorkspaceTopBar
+          student={activeStudent}
+          onClearStudent={clearSelectedStudent}
+          onSelectStudentByName={selectStudentByName}
+          students={students}
+        />
+      ) : null}
       {!isEmbed && (
         <div style={{ position: "fixed", left: 12, top: 150, width: 320, zIndex: 120, display: isStudentView ? "none" : "grid", gap: 12 }}>
           <StudentTopBar

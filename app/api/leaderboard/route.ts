@@ -54,6 +54,12 @@ function topWithTies(rows: BoardRow[], higherIsBetter = true, limitRank = 10) {
   return out;
 }
 
+function passesMinimumForRanking(value: number, minValue: number, higherIsBetter: boolean) {
+  if (value <= 0) return false;
+  if (minValue <= 0) return true;
+  return higherIsBetter ? value >= minValue : value <= minValue;
+}
+
 export async function GET() {
   const supabase = await supabaseServer();
   const { data: u } = await supabase.auth.getUser();
@@ -456,7 +462,7 @@ export async function GET() {
           avatar_bg: base?.avatar_bg ?? null,
           avatar_effect: base?.avatar_effect ?? null,
         };
-      }).filter((row) => Number(row.points ?? 0) > 0 && Number(row.points ?? 0) >= minValue),
+      }).filter((row) => passesMinimumForRanking(Number(row.points ?? 0), minValue, higherIsBetter)),
       higherIsBetter,
       10
     );

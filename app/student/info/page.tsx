@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import AuthGate from "../../../components/AuthGate";
 import AvatarRender from "@/components/AvatarRender";
 import StudentWorkspaceTopBar, { studentWorkspaceTopBarStyles } from "@/components/StudentWorkspaceTopBar";
 import { supabaseClient } from "@/lib/supabase/client";
+import { skillSprintPoolDropped, skillSprintPrizeDropPerDay, skillSprintPrizeNow } from "@/lib/skillSprintMath";
 
 type StudentRow = {
   id: string;
@@ -156,6 +158,28 @@ type LevelThresholdRow = {
   level: number;
   min_lifetime_points: number;
 };
+type SkillCountdownSummary = {
+  active_count: number;
+  overdue_count: number;
+  next_due_at: string | null;
+  next_due_in_ms: number | null;
+  total_penalty_points_per_day: number;
+  total_reward_points: number;
+};
+type SkillCountdownRow = {
+  id: string;
+  source_type: "skill_tree" | "skill_pulse" | "manual";
+  source_label: string;
+  note?: string | null;
+  assigned_at?: string | null;
+  due_at: string;
+  penalty_points_per_day: number;
+  reward_points: number;
+  charged_days: number;
+  remaining_ms: number;
+  overdue_days: number;
+  status: "upcoming" | "overdue";
+};
 const medalTierOrder = ["bronze", "silver", "gold", "platinum", "diamond", "master"];
 
 async function safeJson(res: Response) {
@@ -201,16 +225,22 @@ function rgbToHex(r: number, g: number, b: number) {
   return `#${[clamp(r), clamp(g), clamp(b)].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function buildDarkAvatarGradientFromHex(hex: string) {
+function ensureDarkHex(hex: string) {
   const { r, g, b } = hexToRgb(hex);
   const maxChannel = Math.max(r, g, b, 1);
-  const targetMax = 70;
+  const targetMax = 96;
   const scale = Math.min(1, targetMax / maxChannel);
   const dr = Math.max(8, Math.round(r * scale));
   const dg = Math.max(8, Math.round(g * scale));
   const db = Math.max(8, Math.round(b * scale));
-  const light = `rgba(${Math.min(255, Math.round(dr * 1.1))},${Math.min(255, Math.round(dg * 1.1))},${Math.min(255, Math.round(db * 1.1))},0.9)`;
-  const dark = `rgba(${Math.max(0, Math.round(dr * 0.45))},${Math.max(0, Math.round(dg * 0.45))},${Math.max(0, Math.round(db * 0.45))},0.98)`;
+  return rgbToHex(dr, dg, db);
+}
+
+function buildDarkAvatarGradientFromHex(hex: string) {
+  const darkHex = ensureDarkHex(hex);
+  const { r, g, b } = hexToRgb(darkHex);
+  const light = `rgba(${Math.min(255, Math.round(r * 1.16))},${Math.min(255, Math.round(g * 1.16))},${Math.min(255, Math.round(b * 1.16))},0.92)`;
+  const dark = `rgba(${Math.max(0, Math.round(r * 0.48))},${Math.max(0, Math.round(g * 0.48))},${Math.max(0, Math.round(b * 0.48))},0.98)`;
   return `linear-gradient(160deg, ${light}, ${dark})`;
 }
 
@@ -223,9 +253,9 @@ function pickerHexFromAvatarBg(value: string) {
     const lg = Number(light?.[2] ?? 23);
     const lb = Number(light?.[3] ?? 42);
     // Keep the picker close to the visible top gradient color the student actually sees.
-    return rgbToHex(lr, lg, lb);
+    return ensureDarkHex(rgbToHex(lr, lg, lb));
   }
-  return toColorInputHex(raw);
+  return ensureDarkHex(toColorInputHex(raw));
 }
 
 function normalizeAvatarBgForDisplay(value: string) {
@@ -233,10 +263,27 @@ function normalizeAvatarBgForDisplay(value: string) {
   if (!raw) return buildDarkAvatarGradientFromHex("#0f172a");
   if (/linear-gradient\(/i.test(raw)) return raw;
   if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(raw) || /^rgb(a)?\(/i.test(raw)) {
-    return buildDarkAvatarGradientFromHex(toColorInputHex(raw));
+    return buildDarkAvatarGradientFromHex(ensureDarkHex(toColorInputHex(raw)));
   }
   return buildDarkAvatarGradientFromHex("#0f172a");
 }
+
+function formatCountdownRemaining(ms: number | null | undefined) {
+  const value = Number(ms ?? 0);
+  if (!Number.isFinite(value)) return "";
+  if (value <= 0) return "Due now";
+  const totalHours = Math.floor(value / (60 * 60 * 1000));
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  if (days > 0) return `${days}d ${hours}h left`;
+  return `${Math.max(0, hours)}h left`;
+}
+
+const AVATAR_BG_PRESETS = [
+  "#0f172a", "#111827", "#172554", "#1e1b4b", "#312e81", "#052e16", "#064e3b", "#14532d",
+  "#0c4a6e", "#1e3a8a", "#0f766e", "#365314", "#3f3f46", "#3b0764", "#4c1d95", "#4a044e",
+  "#7f1d1d", "#78350f", "#431407", "#374151",
+].map(ensureDarkHex);
 
 export default function StudentInfoPage() {
   const [checked, setChecked] = useState(false);
@@ -274,6 +321,8 @@ export default function StudentInfoPage() {
       daily_free_points?: number | null;
       challenge_completion_bonus_pct?: number | null;
       mvp_bonus_pct?: number | null;
+      competition_only?: boolean | null;
+      competition_discount_pct?: number | null;
       unlock_level?: number | null;
       unlock_points?: number | null;
       limited_event_only?: boolean | null;
@@ -310,6 +359,8 @@ export default function StudentInfoPage() {
   const [giftCount, setGiftCount] = useState(0);
   const [giftButtonImageUrl, setGiftButtonImageUrl] = useState("");
   const [giftButtonEmoji, setGiftButtonEmoji] = useState("🎁");
+  const [countdownSummary, setCountdownSummary] = useState<SkillCountdownSummary | null>(null);
+  const [countdownRows, setCountdownRows] = useState<SkillCountdownRow[]>([]);
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
@@ -427,6 +478,31 @@ export default function StudentInfoPage() {
         setCornerBorderKey(borderKey || null);
       }
     })();
+  }, [student?.id]);
+
+  useEffect(() => {
+    if (!student?.id) {
+      setCountdownSummary(null);
+      setCountdownRows([]);
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const loadCountdown = async () => {
+      const res = await fetch(`/api/skill-sprint/student?student_id=${encodeURIComponent(String(student.id))}`, { cache: "no-store" });
+      const sj = await safeJson(res);
+      if (!sj.ok || cancelled) return;
+      setCountdownSummary((sj.json?.summary ?? null) as SkillCountdownSummary | null);
+      setCountdownRows((sj.json?.rows ?? []) as SkillCountdownRow[]);
+    };
+
+    loadCountdown();
+    timer = setInterval(loadCountdown, 60_000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
   }, [student?.id]);
 
   useEffect(() => {
@@ -576,7 +652,13 @@ export default function StudentInfoPage() {
       const giftsJson = await safeJson(giftsRes);
       if (giftsJson.ok) {
         const rows = Array.isArray(giftsJson.json?.gifts) ? giftsJson.json.gifts : [];
-        const count = rows.reduce((sum: number, row: any) => sum + Math.max(0, Number(row?.qty ?? 0) - Number(row?.opened_qty ?? 0)), 0);
+        const now = Date.now();
+        const count = rows.reduce((sum: number, row: any) => {
+          const expiresMs = Date.parse(String(row?.expires_at ?? ""));
+          const isExpired = Boolean(row?.is_expired) || Boolean(row?.expired_at) || (Number.isFinite(expiresMs) && expiresMs <= now);
+          if (isExpired) return sum;
+          return sum + Math.max(0, Number(row?.qty ?? 0) - Number(row?.opened_qty ?? 0));
+        }, 0);
         setGiftCount(count);
       } else {
         setGiftCount(0);
@@ -631,7 +713,13 @@ export default function StudentInfoPage() {
       const giftsJson = await safeJson(giftsRes);
       if (giftsJson.ok && !cancelled) {
         const rows = Array.isArray(giftsJson.json?.gifts) ? giftsJson.json.gifts : [];
-        const count = rows.reduce((sum: number, row: any) => sum + Math.max(0, Number(row?.qty ?? 0) - Number(row?.opened_qty ?? 0)), 0);
+        const now = Date.now();
+        const count = rows.reduce((sum: number, row: any) => {
+          const expiresMs = Date.parse(String(row?.expires_at ?? ""));
+          const isExpired = Boolean(row?.is_expired) || Boolean(row?.expired_at) || (Number.isFinite(expiresMs) && expiresMs <= now);
+          if (isExpired) return sum;
+          return sum + Math.max(0, Number(row?.qty ?? 0) - Number(row?.opened_qty ?? 0));
+        }, 0);
         setGiftCount(count);
       }
     }
@@ -855,6 +943,15 @@ export default function StudentInfoPage() {
     skill_pulse_today: "Skill Pulse Today",
     mvp: "Battle MVP",
   };
+  const leaderboardUsesDecimalDisplay = (key: string, rows: LeaderboardEntry[], minimumValue: number) => {
+    if (!Number.isInteger(minimumValue)) return true;
+    return rows.some((row) => !Number.isInteger(Number(row.points ?? 0)));
+  };
+  const formatLeaderboardValue = (value: number, useDecimals: boolean) => {
+    const n = Number(value ?? 0);
+    if (!Number.isFinite(n)) return useDecimals ? "0.00" : "0";
+    return useDecimals ? n.toFixed(2) : String(Math.round(n));
+  };
 
   const fulfilledCriteriaKeys = useMemo(() => {
     return new Set(
@@ -889,16 +986,18 @@ export default function StudentInfoPage() {
     itemKey: string,
     unlockLevel: number,
     unlockPoints: number,
-    limitedOnly = false
+    limitedOnly = false,
+    competitionOnly = false
   ) {
     const level = Math.max(1, Number(levelDisplay ?? 1));
     const levelOk = level >= Math.max(1, Number(unlockLevel ?? 1));
+    const competitionOk = !competitionOnly || Boolean(student?.is_competition_team);
     const needsPointsPurchase = Math.max(0, Number(unlockPoints ?? 0)) > 0;
     const customUnlocked = customUnlockSet.has(`${itemType}:${itemKey}`);
     const reqKeys = Array.from(new Set(criteriaByItem.get(`${itemType}:${itemKey}`) ?? []));
     const hasCriteriaReq = reqKeys.length > 0;
     const criteriaMatched = hasCriteriaReq && reqKeys.every((k) => fulfilledCriteriaKeys.has(k));
-    const unlockedByDefault = !limitedOnly && !needsPointsPurchase && levelOk;
+    const unlockedByDefault = !limitedOnly && !needsPointsPurchase && levelOk && competitionOk;
     const eligibilityOk = !hasCriteriaReq || criteriaMatched;
     const limitedBlocked = limitedOnly && !criteriaMatched;
     const unlocked = customUnlocked || unlockedByDefault;
@@ -911,6 +1010,7 @@ export default function StudentInfoPage() {
       hasCriteriaReq,
       requiredCriteriaKeys: reqKeys,
       levelOk,
+      competitionOk,
       needsPointsPurchase,
     };
   }
@@ -924,6 +1024,7 @@ export default function StudentInfoPage() {
     const reasons: string[] = [];
     if ((state as any).limitedBlocked) reasons.push("Limited event eligibility required");
     if (state.hasCriteriaReq && !state.criteriaMatched) reasons.push("Required criteria not fulfilled");
+    if ((state as any).competitionOk === false) reasons.push("Competition team only");
     if (!state.levelOk) reasons.push(`Needs level ${Math.max(1, Number(unlockLevel ?? 1))}`);
     if (state.needsPointsPurchase) reasons.push(`Needs ${Math.max(0, Number(unlockPoints ?? 0))} unlock points`);
     return reasons.join(" • ");
@@ -976,7 +1077,14 @@ export default function StudentInfoPage() {
         const key = String(item.id ?? "");
         const unlockLevel = Math.max(1, Number(item.unlock_level ?? 1));
         const unlockPoints = Math.max(0, Number(item.unlock_points ?? 0));
-        const state = getItemUnlockState("avatar", key, unlockLevel, unlockPoints, Boolean(item.limited_event_only));
+        const state = getItemUnlockState(
+          "avatar",
+          key,
+          unlockLevel,
+          unlockPoints,
+          Boolean(item.limited_event_only),
+          Boolean(item.competition_only)
+        );
         return { item, key, unlockLevel, unlockPoints, state };
       })
       .filter((row) => matchesPickerFilter(row.state, row.unlockLevel, Boolean(row.item.limited_event_only)));
@@ -1058,10 +1166,19 @@ export default function StudentInfoPage() {
     currentValue: number,
     previewValue: number,
     formatValue: (value: number) => string,
-    formatDelta: (delta: number) => string
+    formatDelta: (delta: number) => string,
+    invertDeltaColor = false
   ) {
     const delta = previewValue - currentValue;
-    const deltaClass = delta > 0 ? "avatar-picker-preview-delta--up" : delta < 0 ? "avatar-picker-preview-delta--down" : "avatar-picker-preview-delta--same";
+    const deltaClass = delta === 0
+      ? "avatar-picker-preview-delta--same"
+      : invertDeltaColor
+        ? delta < 0
+          ? "avatar-picker-preview-delta--up"
+          : "avatar-picker-preview-delta--down"
+        : delta > 0
+          ? "avatar-picker-preview-delta--up"
+          : "avatar-picker-preview-delta--down";
     return (
       <div className="avatar-picker-preview-stat-row">
         <span>{label}</span>
@@ -1360,14 +1477,14 @@ export default function StudentInfoPage() {
                     <div className="redeem-card__title">Daily Points to Redeem</div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       {giftCount > 0 ? (
-                        <a href="/student/gifts" className="gift-icon-btn" title="Open Gift Box">
+                        <Link href="/student/gifts" className="gift-icon-btn" title="Open Gift Box">
                           {giftButtonImageUrl ? (
                             <img src={giftButtonImageUrl} alt="Gift" className="gift-icon-btn__img" />
                           ) : (
                             <span className="gift-icon-btn__emoji">{giftButtonEmoji || "🎁"}</span>
                           )}
                           <span className="gift-icon-btn__badge">{giftCount}</span>
-                        </a>
+                        </Link>
                       ) : null}
                       <div className="redeem-card__pts">+{Math.round(Number(dailyRedeem?.available_points ?? 0))}</div>
                     </div>
@@ -1418,6 +1535,44 @@ export default function StudentInfoPage() {
                       </div>
                     </div>
                   ) : null}
+                </div>
+                <div className="redeem-card">
+                  <div className="redeem-card__head">
+                    <div className="redeem-card__title">Skill Sprint</div>
+                    <div className="redeem-card__pts" style={{ fontSize: 14, minWidth: 108 }}>
+                      {countdownSummary?.active_count
+                        ? `${countdownSummary.active_count} active`
+                        : "None"}
+                    </div>
+                  </div>
+                  {!countdownSummary?.active_count ? (
+                    <div className="redeem-next">No Skill Sprint assigned.</div>
+                  ) : (
+                    <>
+                      <div className="redeem-next">
+                        {countdownSummary.overdue_count > 0
+                          ? `${countdownSummary.overdue_count} overdue`
+                          : `Next due: ${formatCountdownRemaining(countdownSummary.next_due_in_ms)}`}
+                      </div>
+                      <div className="redeem-next">
+                        Daily loss: -{Math.round(Number(countdownSummary.total_penalty_points_per_day ?? 0))} pts
+                      </div>
+                      <div className="redeem-next">
+                        Completion reward pool: +{Math.round(Number(countdownSummary.total_reward_points ?? 0))} pts
+                      </div>
+                      <div className="redeem-card__chips">
+                        {countdownRows.slice(0, 5).map((row) => (
+                          <span key={row.id} className="redeem-chip">
+                            {row.source_label}: {row.status === "overdue" ? `${Math.max(1, Number(row.overdue_days ?? 0))}d overdue` : formatCountdownRemaining(row.remaining_ms)}
+                            {row.note ? ` • Req: ${row.note}` : ""}
+                            {` • Pool/day: ${Math.round(skillSprintPrizeDropPerDay(row.reward_points, row.assigned_at, row.due_at))}`}
+                            {` • Pool left: ${Math.round(skillSprintPrizeNow(row.reward_points, row.assigned_at, row.due_at))}`}
+                            {` • Pool dropped: ${Math.round(skillSprintPoolDropped(row.reward_points, row.assigned_at, row.due_at))}`}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </aside>
@@ -1566,6 +1721,7 @@ export default function StudentInfoPage() {
                     const label = leaderboardLabels[key] ?? leaderboardLabelByKey[key] ?? key;
                     const minimum = Math.max(0, Number(leaderboardMinimums[key] ?? 0) || 0);
                     const rows = (leaderboards?.[key as keyof LeaderboardPayload] ?? []) as LeaderboardEntry[];
+                    const useDecimalDisplay = leaderboardUsesDecimalDisplay(key, rows, minimum);
                     const myIndex = rows.findIndex((row) => String(row.student_id) === String(student?.id ?? ""));
                     const myRow = myIndex >= 0 ? rows[myIndex] : null;
                     const awardRow = (dailyRedeem?.leaderboard_awards ?? []).find((row) => String(row.board_key) === String(key));
@@ -1580,7 +1736,7 @@ export default function StudentInfoPage() {
                           </span>
                         </div>
                         {minimum > 0 ? (
-                          <div className="leaderboard-detail-board__min">Minimum required: {minimum}</div>
+                          <div className="leaderboard-detail-board__min">Minimum required: {formatLeaderboardValue(minimum, useDecimalDisplay)}</div>
                         ) : null}
                         <div className={`leaderboard-detail-board__bonus ${awardPoints > 0 ? "leaderboard-detail-board__bonus--active" : ""}`}>
                           {awardPoints > 0 ? `Redeem bonus: +${awardPoints} (rank #${awardRank})` : "Redeem bonus: +0"}
@@ -1592,7 +1748,7 @@ export default function StudentInfoPage() {
                               className={`leaderboard-detail-row ${String(row.student_id) === String(student?.id ?? "") ? "leaderboard-detail-row--me" : ""}`}
                             >
                               <span>#{Number(row.rank ?? idx + 1)} {row.name}</span>
-                              <strong>{Math.round(Number(row.points ?? 0))}</strong>
+                              <strong>{formatLeaderboardValue(Number(row.points ?? 0), useDecimalDisplay)}</strong>
                             </div>
                           ))}
                         </div>
@@ -1629,17 +1785,33 @@ export default function StudentInfoPage() {
                 <button className={`avatar-picker-tab ${avatarPickerSort === "mvp_bonus" ? "avatar-picker-tab--active" : ""}`} onClick={() => setAvatarPickerSort("mvp_bonus")}>Sort: MVP Bonus</button>
               </div>
               <div className="avatar-bg-row">
-                <label className="avatar-bg-label" htmlFor="avatar-bg-color">Avatar BG Color (auto dark gradient)</label>
+                <label className="avatar-bg-label">Avatar BG Color (auto dark gradient)</label>
+                <div className="avatar-bg-presets">
+                  {AVATAR_BG_PRESETS.map((hex) => (
+                    <button
+                      key={`bg-${hex}`}
+                      id={hex === avatarBgInput ? "avatar-bg-color" : undefined}
+                      type="button"
+                      className={`avatar-bg-swatch ${hex === avatarBgInput ? "avatar-bg-swatch--active" : ""}`}
+                      style={{ background: buildDarkAvatarGradientFromHex(hex) }}
+                      onClick={() => {
+                        setAvatarBgInput(hex);
+                        setAvatarBg(buildDarkAvatarGradientFromHex(hex));
+                      }}
+                      title={hex}
+                      aria-label={`Set avatar background ${hex}`}
+                    />
+                  ))}
+                </div>
                 <input
-                  id="avatar-bg-color"
-                  type="color"
                   value={avatarBgInput}
                   onChange={(e) => {
-                    const nextHex = toColorInputHex(e.target.value);
+                    const nextHex = ensureDarkHex(toColorInputHex(e.target.value));
                     setAvatarBgInput(nextHex);
                     setAvatarBg(buildDarkAvatarGradientFromHex(nextHex));
                   }}
-                  className="avatar-bg-input"
+                  className="avatar-bg-hex"
+                  placeholder="#0f172a"
                 />
                 <button
                   type="button"
@@ -1692,7 +1864,8 @@ export default function StudentInfoPage() {
                       currentPack.ruleBreakerMultiplier,
                       previewPack.ruleBreakerMultiplier,
                       (v) => `${v.toFixed(2)}x`,
-                      (d) => `${d >= 0 ? "+" : ""}${d.toFixed(2)}x`
+                      (d) => `${d >= 0 ? "+" : ""}${d.toFixed(2)}x`,
+                      true
                     )}
                     {renderPreviewStat(
                       "Spotlight star multiplier",
@@ -1737,7 +1910,18 @@ export default function StudentInfoPage() {
                         const src = item.storage_path
                           ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/avatars/${String(item.storage_path)}`
                           : "";
-                        const blocked = !state.unlocked && (!state.levelOk || !state.eligibilityOk || Boolean((state as any).limitedBlocked));
+                        const blocked =
+                          !state.unlocked &&
+                          (!state.levelOk ||
+                            !state.eligibilityOk ||
+                            Boolean((state as any).limitedBlocked) ||
+                            Boolean((state as any).competitionOk === false));
+                        const isCompetitionOnly = Boolean(item.competition_only);
+                        const hasCompetitionDiscount = Number(item.competition_discount_pct ?? 0) > 0;
+                        const isCompetitionDiscountApplied = Boolean(student?.is_competition_team) && hasCompetitionDiscount;
+                        const discountPct = Math.max(0, Math.min(100, Number(item.competition_discount_pct ?? 0)));
+                        const rawDiscountPoints = (unlockPoints * discountPct) / 100;
+                        const roundedDiscountPoints = rawDiscountPoints > 0 ? Math.max(10, Math.round(rawDiscountPoints / 10) * 10) : 0;
                         return (
                           <div
                             key={`av-${key}`}
@@ -1745,6 +1929,7 @@ export default function StudentInfoPage() {
                             onClick={() => setPickerPreviewKey(key)}
                           >
                             {item.limited_event_only ? <div className="avatar-picker-stamp">LIMITED TIME AVATAR</div> : null}
+                            {isCompetitionOnly ? <div className="avatar-picker-competition-only">COMPETITION TEAM ONLY</div> : null}
                             <div className="avatar-picker-thumb">
                               {src ? <img src={src} alt={String(item.name ?? "Avatar")} /> : <div className="avatar-picker-empty">No image</div>}
                             </div>
@@ -1753,6 +1938,11 @@ export default function StudentInfoPage() {
                               <span>Level {unlockLevel}</span>
                               <span>Unlock points {unlockPoints}</span>
                             </div>
+                            {hasCompetitionDiscount ? (
+                              <div className="avatar-picker-competition-discount">
+                                COMPETITION TEAM DISCOUNT - {roundedDiscountPoints} POINTS OFF {isCompetitionDiscountApplied ? "APPLIED" : "AVAILABLE"}
+                              </div>
+                            ) : null}
                             <div className="avatar-picker-mods">
                               <div>Rule Keeper multiplier: {Number(item.rule_keeper_multiplier ?? 1).toFixed(2)}x</div>
                               <div>Rule Breaker multiplier: {Number(item.rule_breaker_multiplier ?? 1).toFixed(2)}x</div>
@@ -2144,11 +2334,9 @@ function pageStyles() {
 
     .avatar-bg-row {
       width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      display: grid;
       gap: 8px;
-      flex-wrap: wrap;
+      justify-items: center;
     }
     .avatar-bg-label {
       font-size: 12px;
@@ -2157,14 +2345,35 @@ function pageStyles() {
       letter-spacing: 0.5px;
       text-transform: uppercase;
     }
-    .avatar-bg-input {
-      width: 42px;
-      height: 32px;
-      padding: 0;
+    .avatar-bg-presets {
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(10, minmax(0, 1fr));
+      gap: 6px;
+      max-width: 420px;
+    }
+    .avatar-bg-swatch {
+      width: 100%;
+      aspect-ratio: 1 / 1;
       border: 1px solid rgba(148,163,184,0.4);
       border-radius: 8px;
-      background: transparent;
       cursor: pointer;
+      box-shadow: inset 0 0 8px rgba(255,255,255,0.12);
+    }
+    .avatar-bg-swatch--active {
+      border-color: rgba(125,211,252,0.9);
+      box-shadow: 0 0 0 1px rgba(125,211,252,0.35), 0 0 14px rgba(56,189,248,0.34);
+    }
+    .avatar-bg-hex {
+      width: 130px;
+      height: 34px;
+      border-radius: 8px;
+      border: 1px solid rgba(148,163,184,0.45);
+      background: rgba(2,6,23,0.72);
+      color: rgba(248,250,252,0.95);
+      text-align: center;
+      font-weight: 800;
+      letter-spacing: 0.4px;
     }
 
     .modifier-grid {
@@ -3109,12 +3318,10 @@ function pageStyles() {
       transform: translateY(-1px);
     }
     .avatar-picker-item--locked {
-      filter: grayscale(0.35);
       opacity: 0.88;
       background: rgba(15,23,42,0.62);
     }
     .avatar-picker-item--blocked {
-      filter: grayscale(0.9);
       opacity: 0.58;
       background: rgba(15,23,42,0.5);
       border-color: rgba(100,116,139,0.45);
@@ -3137,6 +3344,25 @@ function pageStyles() {
       letter-spacing: 0.5px;
       padding: 4px 8px;
       text-transform: uppercase;
+    }
+    .avatar-picker-competition-only {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translate(-50%, -52%);
+      z-index: 2;
+      border-radius: 999px;
+      border: 1px solid rgba(56, 189, 248, 0.95);
+      background: linear-gradient(90deg, rgba(10, 58, 130, 0.96), rgba(30, 98, 190, 0.96));
+      color: #dbeafe;
+      font-size: 10px;
+      font-weight: 1000;
+      letter-spacing: 0.52px;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      text-shadow: 0 0 8px rgba(96, 165, 250, 0.95);
+      box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.45) inset, 0 0 14px rgba(59, 130, 246, 0.9);
+      animation: competitionOnlyPulse 1.3s ease-in-out infinite;
     }
 
     .avatar-picker-thumb {
@@ -3193,6 +3419,30 @@ function pageStyles() {
       font-size: 11px;
       line-height: 1.25;
       font-weight: 900;
+    }
+    .avatar-picker-competition-discount {
+      border-radius: 10px;
+      border: 1px solid rgba(254, 42, 42, 0.9);
+      background: linear-gradient(90deg, rgba(120, 10, 10, 0.95), rgba(170, 16, 16, 0.92));
+      color: #ffe4e6;
+      font-size: 11px;
+      font-weight: 1000;
+      letter-spacing: 0.45px;
+      padding: 7px 9px;
+      text-transform: uppercase;
+      text-shadow: 0 0 8px rgba(248, 113, 113, 0.95), 0 0 16px rgba(239, 68, 68, 0.75);
+      box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.35) inset, 0 0 14px rgba(239, 68, 68, 0.75);
+      animation: competitionDiscountPulse 1.2s ease-in-out infinite;
+    }
+    @keyframes competitionDiscountPulse {
+      0% { transform: scale(1); box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.35) inset, 0 0 10px rgba(239, 68, 68, 0.62); }
+      50% { transform: scale(1.01); box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.6) inset, 0 0 20px rgba(248, 113, 113, 0.95); }
+      100% { transform: scale(1); box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.35) inset, 0 0 10px rgba(239, 68, 68, 0.62); }
+    }
+    @keyframes competitionOnlyPulse {
+      0% { transform: translate(-50%, -52%) scale(1); box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.45) inset, 0 0 10px rgba(59, 130, 246, 0.75); }
+      50% { transform: translate(-50%, -52%) scale(1.02); box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.7) inset, 0 0 20px rgba(56, 189, 248, 0.95); }
+      100% { transform: translate(-50%, -52%) scale(1); box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.45) inset, 0 0 10px rgba(59, 130, 246, 0.75); }
     }
 
     .avatar-picker-actions {

@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "../../../../lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+function isMissingColumn(error: any, col: string) {
+  const msg = String(error?.message ?? "").toLowerCase();
+  return msg.includes(`column`) && msg.includes(col.toLowerCase()) && msg.includes("does not exist");
+}
+
 export async function GET() {
   const supabase = await supabaseServer();
   const { data: u } = await supabase.auth.getUser();
@@ -39,29 +44,27 @@ export async function GET() {
     ? String((roles ?? []).find((r) => String(r.role ?? "").toLowerCase() === "student")?.student_id ?? "")
     : "";
 
-  let q = supabase
-    .from("students")
-    .select(
-      [
-        "id",
-        "name",
-        "level",
-        "points_total",
-        "points_balance",
-        "lifetime_points",
-        "is_competition_team",
-        "first_name",
-        "last_name",
-        "dob",
-        "email",
-        "phone",
-        "emergency_contact",
-        "goals",
-        "notes",
-        "enrollment_info",
-      ].join(",")
-    )
-    .order("name", { ascending: true });
+  const studentCols = [
+    "id",
+    "name",
+    "level",
+    "points_total",
+    "points_balance",
+    "lifetime_points",
+    "is_competition_team",
+    "first_name",
+    "last_name",
+    "gender",
+    "dob",
+    "email",
+    "phone",
+    "emergency_contact",
+    "goals",
+    "notes",
+    "enrollment_info",
+  ];
+
+  let q = supabase.from("students").select(studentCols.join(",")).order("name", { ascending: true });
 
   if (isStudent && studentId) {
     q = q.eq("id", studentId);
@@ -80,7 +83,26 @@ export async function GET() {
     q = q.in("id", ids);
   }
 
-  const { data, error } = await q;
+  let { data, error } = await q;
+  if (error && isMissingColumn(error, "gender")) {
+    const fallbackCols = studentCols.filter((c) => c !== "gender");
+    let retry = supabase.from("students").select(fallbackCols.join(",")).order("name", { ascending: true });
+    if (isStudent && studentId) retry = retry.eq("id", studentId);
+    if (isParent && !isPrivileged) {
+      if (!parentRow?.id) return NextResponse.json({ ok: true, students: [] });
+      const { data: links, error: lErr } = await admin
+        .from("parent_students")
+        .select("student_id")
+        .eq("parent_id", parentRow.id);
+      if (lErr) return NextResponse.json({ ok: false, error: lErr.message }, { status: 500 });
+      const ids = (links ?? []).map((row: any) => String(row.student_id ?? "")).filter(Boolean);
+      if (!ids.length) return NextResponse.json({ ok: true, students: [] });
+      retry = retry.in("id", ids);
+    }
+    const retried = await retry;
+    data = retried.data as any;
+    error = retried.error as any;
+  }
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   const students = (data ?? []) as unknown as Array<{ id: string; level?: number | null; lifetime_points?: number | null }>;

@@ -16,16 +16,20 @@ export async function POST(req: Request) {
   const admin = supabaseAdmin();
   const { data, error } = await admin
     .from("student_gifts")
-    .select("student_id,qty,opened_qty,enabled")
+    .select("student_id,qty,opened_qty,enabled,expires_at,expired_at")
     .in("student_id", ids)
     .eq("enabled", true);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
   const counts: Record<string, number> = {};
+  const now = Date.now();
   (data ?? []).forEach((row: any) => {
     const sid = String(row?.student_id ?? "").trim();
     if (!sid) return;
+    const expiresMs = Date.parse(String(row?.expires_at ?? ""));
+    const isExpired = Boolean(row?.expired_at) || (Number.isFinite(expiresMs) && expiresMs <= now);
+    if (isExpired) return;
     const remain = Math.max(0, Number(row?.qty ?? 0) - Number(row?.opened_qty ?? 0));
     if (!remain) return;
     counts[sid] = (counts[sid] ?? 0) + remain;

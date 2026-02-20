@@ -38,6 +38,7 @@ type StatRow = {
   name: string;
   category?: string | null;
   unit?: string | null;
+  minimum_value_for_ranking?: number | null;
 };
 
 type PerfRecord = {
@@ -79,6 +80,7 @@ type PerfLeaderboard = {
   stat_name: string;
   unit?: string | null;
   higher_is_better?: boolean;
+  minimum_value_for_ranking?: number | null;
   rows: PerfLeaderboardRow[];
 };
 
@@ -495,6 +497,7 @@ function MyMetricsInner() {
         name: s.name,
         category: s.category ?? "",
         unit: s.unit ?? "",
+        minimum: Math.max(0, Number(s.minimum_value_for_ranking ?? 0) || 0),
         value: record?.value ?? null,
         recorded_at: record?.recorded_at ?? "",
         rank: rank?.rank ?? null,
@@ -960,6 +963,7 @@ function MyMetricsInner() {
                   {stat.rank && stat.rank <= 5 && stat.rank !== 1 ? <div className="perf-badge perf-badge--top5">Top 5</div> : null}
                   <div className="perf-name">{stat.name}</div>
                   <div className="perf-meta">{stat.category || "General"}{stat.unit ? ` • Unit: ${stat.unit}` : ""}</div>
+                  <div className="perf-meta">Min required: {stat.minimum > 0 ? stat.minimum : "None"}</div>
                   <div className="perf-value">{stat.value ?? "-"}</div>
                   <div className="perf-rank">{stat.rank && stat.total ? `Rank ${stat.rank} / ${stat.total}` : "Rank -"} </div>
                 </div>
@@ -976,7 +980,9 @@ function MyMetricsInner() {
             <div className="perf-modal__header">
               <div>
                 <div className="perf-modal__title">{leaderboard.stat_name}</div>
-                <div className="perf-modal__sub">Top 10 Rankings</div>
+                <div className="perf-modal__sub">
+                  Top 10 Rankings • Min required: {Number(leaderboard.minimum_value_for_ranking ?? 0) > 0 ? Number(leaderboard.minimum_value_for_ranking) : "None"}
+                </div>
               </div>
               <button className="perf-modal__close" onClick={() => setLeaderboardOpen(false)}>Close</button>
             </div>

@@ -22,6 +22,17 @@ type SessionRow = {
   separate_sections: boolean;
   created_at: string;
 };
+type CampRosterLite = { id: string; name: string };
+type CampMemberLite = {
+  id: string;
+  roster_id: string;
+  student_id: string;
+  student?: { id: string; name: string } | null;
+};
+type ClassRosterLite = {
+  checkin_id?: string;
+  student?: { id: string; name: string } | null;
+};
 type DeductionRow = {
   id: string;
   session_id: string;
@@ -103,8 +114,8 @@ type RefinementNewDeduction = {
 };
 
 const TAOLU_START_POINTS = 10;
-const TAOLU_DEDUCTION_POINTS = 4;
-const TAOLU_REFINEMENT_POINTS_PER_FIX = 2;
+const TAOLU_DEDUCTION_POINTS = 6;
+const TAOLU_REFINEMENT_POINTS_PER_FIX = 5;
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -160,7 +171,35 @@ function TaoluTrackerInner() {
   const [nameInput, setNameInput] = useState("");
   const [groupNameInput, setGroupNameInput] = useState("");
   const [addMode, setAddMode] = useState<"individual" | "group">("individual");
-  const [activeTab, setActiveTab] = useState<"tracker" | "refinement">("tracker");
+  const [activeTab, setActiveTab] = useState<"tracker" | "refinement" | "display">("tracker");
+  const [trackerMode, setTrackerMode] = useState<"track" | "practice" | "refine">("track");
+  const [practiceRosters, setPracticeRosters] = useState<CampRosterLite[]>([]);
+  const [practiceMembers, setPracticeMembers] = useState<CampMemberLite[]>([]);
+  const [classRosterMembers, setClassRosterMembers] = useState<ClassRosterLite[]>([]);
+  const [practiceRosterId, setPracticeRosterId] = useState("");
+  const [practiceSource, setPracticeSource] = useState<"cards_24h" | "pending_cards" | "camp_roster" | "class_roster">("cards_24h");
+  const [practiceOrderIds, setPracticeOrderIds] = useState<string[]>([]);
+  const [practiceNameInput, setPracticeNameInput] = useState("");
+  const [practiceTimerMin, setPracticeTimerMin] = useState("20");
+  const [practiceTimer, setPracticeTimer] = useState<{ durationSec: number; startedAt: string | null; running: boolean }>({
+    durationSec: 20 * 60,
+    startedAt: null,
+    running: false,
+  });
+  const [displayCardSessionIds, setDisplayCardSessionIds] = useState<string[]>([]);
+  const [displayPayloadCards, setDisplayPayloadCards] = useState<any[]>([]);
+  const [lowerBarSessionId, setLowerBarSessionId] = useState<string>("");
+  const [lowerBarSource, setLowerBarSource] = useState<string>("");
+  const [displayCandidateSessionId, setDisplayCandidateSessionId] = useState("");
+  const [displayRemoveDate, setDisplayRemoveDate] = useState("");
+  const [displayRemoveTime, setDisplayRemoveTime] = useState("");
+  const livePushTimerRef = useRef<number | null>(null);
+  const [quickNoteByDeductionId, setQuickNoteByDeductionId] = useState<Record<string, string>>({});
+  const [quickIndexByDeductionId, setQuickIndexByDeductionId] = useState<Record<string, number>>({});
+  const trackerPageStartedAtRef = useRef(Date.now());
+  const [finishedFilterMode, setFinishedFilterMode] = useState<"all" | "recent_page" | "students">("all");
+  const [finishedStudentNameInput, setFinishedStudentNameInput] = useState("");
+  const [finishedStudentFilterIds, setFinishedStudentFilterIds] = useState<string[]>([]);
   const [newFormName, setNewFormName] = useState("");
   const [newFormAgeGroupId, setNewFormAgeGroupId] = useState("");
   const [newFormSections, setNewFormSections] = useState("1");
@@ -277,6 +316,97 @@ function TaoluTrackerInner() {
   }, [blocked]);
 
   useEffect(() => {
+    if (blocked) return;
+    const loadDisplayState = async () => {
+      const res = await fetch("/api/coach/display-state", { cache: "no-store" });
+      const sj = await safeJson(res);
+      if (!sj.ok || !sj.json?.ok) return;
+      if (String(sj.json?.state?.tool_key ?? "") !== "taolu_tracker") return;
+      const cards = Array.isArray(sj.json?.state?.tool_payload?.cards) ? sj.json.state.tool_payload.cards : [];
+      const lowerBar = Array.isArray(sj.json?.state?.tool_payload?.class_tools_bar) ? sj.json.state.tool_payload.class_tools_bar : [];
+      const ids = Array.from(
+        new Set(
+          cards
+            .map((c: any) => String(c?.session_id ?? "").trim())
+            .filter((v: string) => Boolean(v))
+        )
+      ) as string[];
+      setDisplayCardSessionIds(ids);
+      setDisplayPayloadCards(cards);
+      setLowerBarSessionId(String(lowerBar?.[0]?.session_id ?? "").trim());
+      setLowerBarSource(String(lowerBar?.[0]?.source ?? "").trim());
+    };
+    loadDisplayState();
+    const t = window.setInterval(loadDisplayState, 6000);
+    return () => window.clearInterval(t);
+  }, [blocked]);
+
+  useEffect(() => {
+    if (blocked) return;
+    (async () => {
+      const res = await fetch("/api/taolu/finished-sessions?limit=400", { cache: "no-store" });
+      const sj = await safeJson(res);
+      if (!sj.ok) return;
+      const rows = (sj.json?.sessions ?? []) as FinishedHistoryRow[];
+      setFinishedSessions((prev) => {
+        const seen = new Set(prev.map((p) => p.session_id));
+        const seeded = rows
+          .filter((row) => !seen.has(row.session_id))
+          .map((row) => ({
+            session_id: row.session_id,
+            student_id: row.student_id,
+            taolu_form_id: row.taolu_form_id,
+            sections: row.sections ?? [],
+            deductions: [],
+            deductions_count: row.deductions_count ?? 0,
+            points_lost: row.points_lost ?? 0,
+            points_earned: row.points_earned ?? 0,
+            ended_at: row.ended_at ?? null,
+            remediation_points: row.remediation_points ?? 0,
+            remediation_completed: row.remediation_completed ?? false,
+          }));
+        return [...prev, ...seeded];
+      });
+    })();
+  }, [blocked]);
+
+  useEffect(() => {
+    if (blocked) return;
+    (async () => {
+      const res = await fetch("/api/camp/display-roster?lite=camp_classroom", { cache: "no-store" });
+      const sj = await safeJson(res);
+      if (!sj.ok) return;
+      const rosters = (sj.json?.rosters ?? []) as CampRosterLite[];
+      const members = (sj.json?.members_hydrated ?? sj.json?.display_members ?? []) as CampMemberLite[];
+      setPracticeRosters(rosters);
+      setPracticeMembers(members.filter((m) => String(m.student_id ?? "").trim().length > 0));
+      if (!practiceRosterId && rosters[0]?.id) {
+        setPracticeRosterId(rosters[0].id);
+      }
+    })();
+  }, [blocked]);
+
+  useEffect(() => {
+    if (blocked) return;
+    (async () => {
+      const todayRes = await fetch("/api/class-sessions/today?include_ended=1", { cache: "no-store" });
+      const todayJson = await safeJson(todayRes);
+      const rows = Array.isArray(todayJson.json?.sessions) ? todayJson.json.sessions : [];
+      const first = rows.find((r: any) => String(r.instance_id ?? "").trim()) ?? null;
+      const instanceId = String(first?.instance_id ?? "").trim();
+      if (!instanceId) return;
+      const rosterRes = await fetch("/api/classroom/roster", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instance_id: instanceId }),
+      });
+      const rosterJson = await safeJson(rosterRes);
+      if (!rosterJson.ok) return;
+      setClassRosterMembers((rosterJson.json?.roster ?? []) as ClassRosterLite[]);
+    })();
+  }, [blocked]);
+
+  useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const key = e.code === "Space" ? "space" : e.key.toLowerCase();
       if (key !== "space" && key !== "n") return;
@@ -289,6 +419,7 @@ function TaoluTrackerInner() {
         addRefineEmptyDeduction(refineListeningStudentId);
         return;
       }
+      if (trackerMode !== "track") return;
       if (openSessionId) return;
       if (!activeSessionId) return;
       e.preventDefault();
@@ -296,7 +427,7 @@ function TaoluTrackerInner() {
     }
     window.addEventListener("keydown", onKey, { passive: false });
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeSessionId, openSessionId, activeTab, refineListeningStudentId]);
+  }, [activeSessionId, openSessionId, activeTab, refineListeningStudentId, trackerMode]);
 
   useEffect(() => {
     jumpIndexRef.current = -1;
@@ -419,10 +550,13 @@ function TaoluTrackerInner() {
     const sj = await safeJson(res);
     if (!sj.ok) return setMsg(sj.json?.error || "Failed to log deduction");
     const deduction = sj.json?.deduction as DeductionRow;
+    const nextQuickIndex = (deductionsBySession[sessionId]?.length ?? 0) + 1;
     setDeductionsBySession((prev) => ({
       ...prev,
       [sessionId]: [...(prev[sessionId] ?? []), deduction],
     }));
+    setQuickIndexByDeductionId((prev) => ({ ...prev, [deduction.id]: nextQuickIndex }));
+    setQuickNoteByDeductionId((prev) => ({ ...prev, [deduction.id]: String(deduction.note ?? "") }));
     setDeductionFlash({ sessionId, ts: Date.now() });
     window.setTimeout(() => {
       setDeductionFlash((prev) => (prev?.sessionId === sessionId ? null : prev));
@@ -438,6 +572,20 @@ function TaoluTrackerInner() {
     }
     const list = (sj.json?.deductions ?? []) as DeductionRow[];
     setDeductionsBySession((prev) => ({ ...prev, [sessionId]: list }));
+    setQuickIndexByDeductionId((prev) => {
+      const next = { ...prev };
+      list.forEach((d, idx) => {
+        next[d.id] = idx + 1;
+      });
+      return next;
+    });
+    setQuickNoteByDeductionId((prev) => {
+      const next = { ...prev };
+      list.forEach((d) => {
+        next[d.id] = String(d.note ?? "");
+      });
+      return next;
+    });
     return list;
   }
 
@@ -492,6 +640,7 @@ function TaoluTrackerInner() {
       }
       return next;
     });
+    await addDisplayCardSessionAndPush(sessionId);
   }
 
   async function closeSession(sessionId: string) {
@@ -642,8 +791,9 @@ function TaoluTrackerInner() {
   const formById = useMemo(() => new Map(forms.map((f) => [f.id, f])), [forms]);
   const codeById = useMemo(() => new Map(codes.map((c) => [c.id, c])), [codes]);
 
-  const primaryCards = sessions.slice(0, 4);
-  const overflowCards = sessions.slice(4);
+  const currentSession = sessions.find((s) => s.id === activeSessionId) ?? sessions[0] ?? null;
+  const nextUpSessions = sessions.filter((s) => s.id !== currentSession?.id);
+  const overflowCards = nextUpSessions;
   const openSession =
     (openSessionId && sessions.find((s) => s.id === openSessionId)) ||
     (openSessionId && finishedSessions.find((s) => s.session_id === openSessionId)) ||
@@ -651,14 +801,159 @@ function TaoluTrackerInner() {
   const openFinishedSession =
     openSessionId ? finishedSessions.find((s) => s.session_id === openSessionId) ?? null : null;
   const filteredFinishedSessions = useMemo(() => {
-    if (finishedWindow === "all") return finishedSessions;
-    const days = finishedWindow === "7d" ? 7 : finishedWindow === "30d" ? 30 : 90;
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-    return finishedSessions.filter((s) => {
-      const ts = s.ended_at ? new Date(s.ended_at).getTime() : 0;
-      return ts ? ts >= cutoff : true;
+    let next = [...finishedSessions];
+    if (finishedWindow !== "all") {
+      const days = finishedWindow === "7d" ? 7 : finishedWindow === "30d" ? 30 : 90;
+      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+      next = next.filter((s) => {
+        const ts = s.ended_at ? new Date(s.ended_at).getTime() : 0;
+        return ts ? ts >= cutoff : true;
+      });
+    }
+    if (finishedFilterMode === "recent_page") {
+      next = next.filter((s) => {
+        const ts = s.ended_at ? new Date(s.ended_at).getTime() : 0;
+        return ts > 0 ? ts >= trackerPageStartedAtRef.current : false;
+      });
+    } else if (finishedFilterMode === "students" && finishedStudentFilterIds.length) {
+      const activeFormIds = new Set(sessions.map((s) => s.taolu_form_id));
+      next = next.filter((s) => {
+        if (!finishedStudentFilterIds.includes(s.student_id)) return false;
+        if (!activeFormIds.size) return true;
+        return activeFormIds.has(s.taolu_form_id);
+      });
+    }
+    return next;
+  }, [finishedSessions, finishedWindow, finishedFilterMode, finishedStudentFilterIds, sessions]);
+
+  const displaySessionMeta = useMemo(() => {
+    const meta = new Map<string, {
+      label: string;
+      ts: string | null;
+      isFinished: boolean;
+      ageGroup: string;
+      formName: string;
+      deductionsCount: number;
+      deductionCodes: string;
+      isCumulative: boolean;
+      fromStudent: boolean;
+      onLowerBar: boolean;
+    }>();
+    sessions.forEach((s) => {
+      const student = studentById.get(s.student_id);
+      const form = formById.get(s.taolu_form_id);
+      const list = (deductionsBySession[s.id] ?? []).filter((d) => !d.voided);
+      const ageGroup = form?.age_group_id ? ageGroups.find((g) => String(g.id) === String(form.age_group_id))?.name ?? "" : "";
+      const codeSummary = list
+        .map((d) => {
+          const code = codeById.get(String(d.code_id ?? ""));
+          return code ? `${code.code_number} ${code.name}` : "Unassigned";
+        })
+        .filter(Boolean)
+        .slice(0, 8)
+        .join(", ");
+      meta.set(s.id, {
+        label: `${student?.name ?? "Student"} • ${form?.name ?? "Taolu"}`,
+        ts: s.created_at ?? null,
+        isFinished: false,
+        ageGroup,
+        formName: form?.name ?? "Taolu",
+        deductionsCount: list.length,
+        deductionCodes: codeSummary || "None",
+        isCumulative: false,
+        fromStudent: false,
+        onLowerBar: String(lowerBarSessionId) === String(s.id),
+      });
     });
-  }, [finishedSessions, finishedWindow]);
+    finishedSessions.forEach((s) => {
+      if (meta.has(s.session_id)) return;
+      const student = studentById.get(s.student_id);
+      const form = formById.get(s.taolu_form_id);
+      const list = (deductionsBySession[s.session_id] ?? s.deductions ?? []).filter((d: any) => !d?.voided);
+      const ageGroup = form?.age_group_id ? ageGroups.find((g) => String(g.id) === String(form.age_group_id))?.name ?? "" : "";
+      const codeSummary = list
+        .map((d: any) => {
+          const code = codeById.get(String(d.code_id ?? ""));
+          return code ? `${code.code_number} ${code.name}` : (String(d.code_label ?? "Unassigned"));
+        })
+        .filter(Boolean)
+        .slice(0, 8)
+        .join(", ");
+      meta.set(s.session_id, {
+        label: `${student?.name ?? "Student"} • ${form?.name ?? "Taolu"}`,
+        ts: s.ended_at ?? null,
+        isFinished: true,
+        ageGroup,
+        formName: form?.name ?? "Taolu",
+        deductionsCount: list.length || Number(s.deductions_count ?? 0),
+        deductionCodes: codeSummary || "None",
+        isCumulative: false,
+        fromStudent: false,
+        onLowerBar: String(lowerBarSessionId) === String(s.session_id),
+      });
+    });
+    displayPayloadCards.forEach((card: any) => {
+      const sid = String(card?.session_id ?? "").trim();
+      if (!sid) return;
+      const list = Array.isArray(card?.deductions) ? card.deductions : [];
+      const deductionCodes = list
+        .map((d: any) => String(d?.code_label ?? "").trim())
+        .filter(Boolean)
+        .slice(0, 8)
+        .join(", ");
+      const formName = String(card?.form_name ?? "Taolu");
+      const existing = meta.get(sid);
+      const merged = {
+        label: `${String(card?.student_name ?? existing?.label?.split(" • ")[0] ?? "Student")} • ${formName}`,
+        ts: String(card?.ended_at ?? card?.created_at ?? existing?.ts ?? "").trim() || null,
+        isFinished: String(card?.status ?? (existing?.isFinished ? "finished" : "pending")) === "finished",
+        ageGroup: String(card?.age_group_name ?? existing?.ageGroup ?? "").trim(),
+        formName,
+        deductionsCount: Math.max(0, Number(card?.deductions_count ?? existing?.deductionsCount ?? list.length ?? 0)),
+        deductionCodes: deductionCodes || existing?.deductionCodes || "None",
+        isCumulative: sid.startsWith("summary:") || formName.toLowerCase().includes("cumulative") || card?.is_cumulative === true || existing?.isCumulative === true,
+        fromStudent: String(card?.source ?? "").includes("student") || existing?.fromStudent === true,
+        onLowerBar: String(lowerBarSessionId) === sid,
+      };
+      meta.set(sid, existing ? { ...existing, ...merged } : {
+        label: `${String(card?.student_name ?? "Student")} • ${formName}`,
+        ts: String(card?.ended_at ?? card?.created_at ?? "").trim() || null,
+        isFinished: String(card?.status ?? "finished") === "finished",
+        ageGroup: String(card?.age_group_name ?? "").trim(),
+        formName,
+        deductionsCount: Math.max(0, Number(card?.deductions_count ?? list.length ?? 0)),
+        deductionCodes: deductionCodes || "None",
+        isCumulative: sid.startsWith("summary:") || formName.toLowerCase().includes("cumulative") || card?.is_cumulative === true,
+        fromStudent: String(card?.source ?? "").includes("student"),
+        onLowerBar: String(lowerBarSessionId) === sid,
+      });
+    });
+    return meta;
+  }, [sessions, finishedSessions, studentById, formById, deductionsBySession, ageGroups, codeById, displayPayloadCards, lowerBarSessionId]);
+
+  useEffect(() => {
+    if (blocked) return;
+    const pendingIds = sessions.map((s) => s.id);
+    if (!pendingIds.length) return;
+    setDisplayCardSessionIds((prev) => {
+      const next = [...prev];
+      pendingIds.forEach((id) => {
+        if (!next.includes(id)) {
+          next.push(id);
+        }
+      });
+      return next;
+    });
+    window.setTimeout(() => pushTaoluToDisplay(), 0);
+  }, [sessions, blocked]);
+
+  useEffect(() => {
+    if (blocked) return;
+    if (!displayCardSessionIds.length) return;
+    const finishedSet = new Set(finishedSessions.map((s) => s.session_id));
+    if (!displayCardSessionIds.some((id) => finishedSet.has(id))) return;
+    window.setTimeout(() => pushTaoluToDisplay(), 0);
+  }, [finishedSessions, blocked, displayCardSessionIds]);
 
   useEffect(() => {
     if (!openFinishedSession) return;
@@ -729,6 +1024,371 @@ function TaoluTrackerInner() {
     if (Number.isNaN(date.getTime())) return "—";
     return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   }
+
+  function addFinishedFilterStudentByName(raw: string) {
+    const value = raw.trim().toLowerCase();
+    if (!value) return;
+    const match = students.find((s) => s.name.toLowerCase() === value) ?? students.find((s) => s.name.toLowerCase().includes(value));
+    if (!match) return;
+    setFinishedStudentFilterIds((prev) => (prev.includes(match.id) ? prev : [...prev, match.id]));
+    setFinishedStudentNameInput("");
+  }
+
+  function resolveStudentNameById(studentId: string) {
+    return (
+      students.find((s) => s.id === studentId)?.name ??
+      studentById.get(studentId)?.name ??
+      practiceMembers.find((m) => m.student_id === studentId)?.student?.name ??
+      classRosterMembers.find((m) => String(m.student?.id ?? "") === studentId)?.student?.name ??
+      studentId
+    );
+  }
+
+  const recentCardIds24h = useMemo(() => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const recentActive = sessions
+      .filter((s) => {
+        const ts = new Date(s.created_at).getTime();
+        return Number.isFinite(ts) && ts >= cutoff;
+      })
+      .map((s) => s.student_id);
+    const recentFinished = finishedSessions
+      .filter((s) => {
+        const ts = s.ended_at ? new Date(s.ended_at).getTime() : 0;
+        return ts && ts >= cutoff;
+      })
+      .map((s) => s.student_id);
+    return Array.from(new Set([...recentActive, ...recentFinished]));
+  }, [sessions, finishedSessions]);
+
+  const trackerSummaryByStudent = useMemo(() => {
+    const map = new Map<string, { form: string; age: string; deductions: number }>();
+    const push = (studentId: string, formId: string, deductions: number) => {
+      const form = formById.get(formId);
+      const age = form?.age_group_id ? ageGroups.find((g) => g.id === form.age_group_id)?.name ?? "" : "";
+      const prev = map.get(studentId);
+      if (!prev) {
+        map.set(studentId, { form: form?.name ?? "Taolu", age, deductions });
+      } else {
+        map.set(studentId, { ...prev, deductions: prev.deductions + deductions });
+      }
+    };
+    sessions.forEach((s) => push(s.student_id, s.taolu_form_id, countLiveDeductions(deductionsBySession[s.id] ?? [])));
+    finishedSessions.forEach((s) => push(s.student_id, s.taolu_form_id, Number(s.deductions_count ?? 0)));
+    return map;
+  }, [sessions, finishedSessions, formById, ageGroups, deductionsBySession]);
+
+  const practicePool = useMemo(() => {
+    if (practiceSource === "pending_cards") {
+      return Array.from(new Set(sessions.map((s) => s.student_id))).map((id) => ({
+        id: `pending:${id}`,
+        roster_id: "pending_cards",
+        student_id: id,
+        student: { id, name: resolveStudentNameById(id) },
+      }));
+    }
+    if (practiceSource === "class_roster") {
+      const out: CampMemberLite[] = [];
+      classRosterMembers.forEach((m, idx) => {
+        const id = String(m.student?.id ?? "").trim();
+        if (!id) return;
+        out.push({
+          id: `class:${m.checkin_id ?? idx}`,
+          roster_id: "class_roster",
+          student_id: id,
+          student: { id, name: resolveStudentNameById(id) },
+        });
+      });
+      return out;
+    }
+    if (practiceSource === "camp_roster") {
+      return practiceMembers
+        .filter((m) => String(m.roster_id ?? "") === String(practiceRosterId ?? ""))
+        .map((m) => ({
+          ...m,
+          student: { id: m.student_id, name: resolveStudentNameById(m.student_id) },
+        }))
+        .sort((a, b) => String(a.student?.name ?? "").localeCompare(String(b.student?.name ?? "")));
+    }
+    return recentCardIds24h.map((id) => ({
+      id: `cards24h:${id}`,
+      roster_id: "cards_24h",
+      student_id: id,
+      student: { id, name: resolveStudentNameById(id) },
+    }));
+  }, [practiceSource, sessions, recentCardIds24h, classRosterMembers, practiceMembers, practiceRosterId]);
+
+  const practiceOrderedMembers = useMemo(() => {
+    const byId = new Map(practicePool.map((m) => [m.student_id, m]));
+    return practiceOrderIds.map((id) => ({ id, name: byId.get(id)?.student?.name ?? resolveStudentNameById(id) }));
+  }, [practicePool, practiceOrderIds, students, practiceMembers, classRosterMembers]);
+
+  function addPracticeOrderStudent(studentId: string) {
+    if (!studentId) return;
+    setPracticeOrderIds((prev) => (prev.includes(studentId) ? prev : [...prev, studentId]));
+  }
+
+  function movePracticeOrder(studentId: string, delta: -1 | 1) {
+    setPracticeOrderIds((prev) => {
+      const idx = prev.indexOf(studentId);
+      if (idx < 0) return prev;
+      const nextIdx = idx + delta;
+      if (nextIdx < 0 || nextIdx >= prev.length) return prev;
+      const next = [...prev];
+      const [item] = next.splice(idx, 1);
+      next.splice(nextIdx, 0, item);
+      return next;
+    });
+  }
+
+  function removePracticeOrder(studentId: string) {
+    setPracticeOrderIds((prev) => prev.filter((id) => id !== studentId));
+  }
+
+  function addPracticeOrderStudentByName(raw: string) {
+    const value = raw.trim().toLowerCase();
+    if (!value) return;
+    const match = students.find((s) => s.name.toLowerCase() === value) ?? students.find((s) => s.name.toLowerCase().includes(value));
+    if (!match) return;
+    addPracticeOrderStudent(match.id);
+    setPracticeNameInput("");
+  }
+
+  function startPracticeTimer() {
+    const mins = Math.max(1, Number(practiceTimerMin || "0"));
+    const durationSec = Math.round(mins * 60);
+    setPracticeTimer({ durationSec, startedAt: new Date().toISOString(), running: true });
+  }
+
+  function stopPracticeTimer() {
+    setPracticeTimer((prev) => ({ ...prev, running: false }));
+  }
+
+  function addDisplayCardSession(sessionId: string) {
+    const id = String(sessionId ?? "").trim();
+    if (!id) return;
+    setDisplayCardSessionIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }
+
+  function removeDisplayCardSession(sessionId: string) {
+    setDisplayCardSessionIds((prev) => prev.filter((id) => id !== sessionId));
+  }
+
+  async function addDisplayCardSessionAndPush(sessionId: string) {
+    const id = String(sessionId ?? "").trim();
+    if (!id) return;
+    const nextIds = displayCardSessionIds.includes(id) ? displayCardSessionIds : [...displayCardSessionIds, id];
+    setDisplayCardSessionIds(nextIds);
+    await pushTaoluToDisplay(nextIds);
+  }
+
+  function buildDisplayCards(sessionIds?: string[]) {
+    const selectedIds = sessionIds?.length ? sessionIds : undefined;
+    const activeSource = selectedIds ? sessions.filter((s) => selectedIds.includes(s.id)) : sessions;
+    const activeCards = activeSource.map((s) => {
+      const student = studentById.get(s.student_id);
+      const form = formById.get(s.taolu_form_id);
+      const list = deductionsBySession[s.id] ?? [];
+      const live = list.filter((d) => !d.voided);
+      const ageGroupName = form?.age_group_id
+        ? ageGroups.find((g) => String(g.id) === String(form.age_group_id))?.name ?? ""
+        : "";
+      const sectionNumbers = Array.from(new Set(
+        live
+          .map((d) => (d.section_number == null ? null : Number(d.section_number)))
+          .filter((n): n is number => Number.isFinite(n as number))
+      )).sort((a, b) => a - b);
+      return {
+        session_id: s.id,
+        student_id: s.student_id,
+        student_name: student?.name ?? "Student",
+        age_group_name: ageGroupName || null,
+        form_name: form?.name ?? "Taolu",
+        source: "coach_tracker",
+        is_cumulative: false,
+        section_numbers: sectionNumbers,
+        status: "pending" as const,
+        refinement_status: "none" as const,
+        deductions_count: live.length,
+        points_lost: pointsLostFromDeductions(live.length),
+        deductions: live.map((d) => {
+          const code = codeById.get(String(d.code_id ?? ""));
+          return {
+            id: d.id,
+            section_number: d.section_number ?? null,
+            code_label: code ? `${code.code_number} ${code.name}` : "Unassigned code",
+            note: String((quickNoteByDeductionId[d.id] ?? d.note ?? "") || ""),
+          };
+        }),
+      };
+    });
+
+    const activeIds = new Set(activeCards.map((c) => c.session_id));
+    const finishedSource = (selectedIds ? finishedSessions.filter((s) => selectedIds.includes(s.session_id)) : finishedSessions)
+      .filter((s) => !activeIds.has(s.session_id));
+    const finishedCards = finishedSource.map((s) => {
+      const student = studentById.get(s.student_id);
+      const form = formById.get(s.taolu_form_id);
+      const list = (deductionsBySession[s.session_id] ?? s.deductions ?? []).filter((d) => !d.voided);
+      const ageGroupName = form?.age_group_id
+        ? ageGroups.find((g) => String(g.id) === String(form.age_group_id))?.name ?? ""
+        : "";
+      const sectionNumbers = Array.from(new Set(
+        list
+          .map((d) => (d.section_number == null ? null : Number(d.section_number)))
+          .filter((n): n is number => Number.isFinite(n as number))
+      )).sort((a, b) => a - b);
+      return {
+        session_id: s.session_id,
+        student_id: s.student_id,
+        student_name: student?.name ?? "Student",
+        age_group_name: ageGroupName || null,
+        form_name: form?.name ?? "Taolu",
+        source: "coach_tracker",
+        is_cumulative: false,
+        section_numbers: sectionNumbers,
+        status: "finished" as const,
+        refinement_status: (s.remediation_completed || remediationBySession[s.session_id]) ? ("refined" as const) : ("awaiting_refinement" as const),
+        deductions_count: list.length || Number(s.deductions_count ?? 0),
+        points_lost: pointsLostFromDeductions(list.length || Number(s.deductions_count ?? 0)),
+        deductions: list.map((d) => {
+          const code = codeById.get(String(d.code_id ?? ""));
+          return {
+            id: d.id,
+            section_number: d.section_number ?? null,
+            code_label: code ? `${code.code_number} ${code.name}` : "Unassigned code",
+            note: String((quickNoteByDeductionId[d.id] ?? d.note ?? "") || ""),
+          };
+        }),
+      };
+    });
+    return [...activeCards, ...finishedCards];
+  }
+
+  async function preloadDisplayDeductions(sessionIds: string[]) {
+    if (!sessionIds.length) return;
+    const activeIds = new Set(sessions.map((s) => s.id));
+    const finishedIds = sessionIds.filter((id) => !activeIds.has(id));
+    const missingFinishedIds = finishedIds.filter((id) => !(deductionsBySession[id]?.length));
+    if (!missingFinishedIds.length) return;
+    await Promise.all(missingFinishedIds.map((id) => loadDeductions(id)));
+  }
+
+  async function pushTaoluToDisplay(sessionIds?: string[]) {
+    const resolvedSessionIds =
+      sessionIds?.length
+        ? sessionIds
+        : displayCardSessionIds.length
+          ? displayCardSessionIds
+          : undefined;
+    await preloadDisplayDeductions(resolvedSessionIds ?? []);
+    const cards = buildDisplayCards(resolvedSessionIds);
+
+    let classToolsBar: any[] = [];
+    const currentRes = await fetch("/api/coach/display-state", { cache: "no-store" });
+    const currentSj = await safeJson(currentRes);
+    if (currentSj.ok && currentSj.json?.ok && String(currentSj.json?.state?.tool_key ?? "") === "taolu_tracker") {
+      classToolsBar = Array.isArray(currentSj.json?.state?.tool_payload?.class_tools_bar)
+        ? currentSj.json.state.tool_payload.class_tools_bar
+        : [];
+    }
+
+    const payload = {
+      mode: trackerMode,
+      pushed_at: new Date().toISOString(),
+      session_label: activeSessionId ? `Session ${activeSessionId.slice(0, 8)}` : "Live",
+      practice_timer: {
+        duration_sec: practiceTimer.durationSec,
+        started_at: practiceTimer.startedAt,
+        running: practiceTimer.running,
+      },
+      cards,
+      order_ids: trackerMode === "practice" || trackerMode === "refine" ? practiceOrderIds : [],
+      class_tools_bar: classToolsBar,
+    };
+
+    const res = await fetch("/api/coach/display-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tool_key: "taolu_tracker", tool_payload: payload }),
+    });
+    const sj = await safeJson(res);
+    if (!sj.ok) return setMsg(sj.json?.error || "Failed to push tracker to display");
+    setMsg("Taolu tracker pushed to display.");
+  }
+
+  async function pushCardToLowerBar(sessionId: string) {
+    const id = String(sessionId ?? "").trim();
+    if (!id) return;
+    await preloadDisplayDeductions([id]);
+    const card = buildDisplayCards([id])[0];
+    if (!card) {
+      setMsg("Could not find tracker card to push to lower bar.");
+      return;
+    }
+
+    const currentRes = await fetch("/api/coach/display-state", { cache: "no-store" });
+    const currentSj = await safeJson(currentRes);
+    if (!currentSj.ok || !currentSj.json?.ok) {
+      setMsg(currentSj.json?.error || "Failed to load display state");
+      return;
+    }
+
+    const existingPayload =
+      String(currentSj.json?.state?.tool_key ?? "") === "taolu_tracker"
+        ? (currentSj.json?.state?.tool_payload ?? {})
+        : {};
+    const existingCards = Array.isArray(existingPayload?.cards) ? existingPayload.cards : [];
+    const sectionSummary = Array.isArray((card as any).section_numbers) && (card as any).section_numbers.length
+      ? (card as any).section_numbers.join(", ")
+      : "—";
+
+    const barItem = {
+      source: "coach_tracker",
+      pushed_at: new Date().toISOString(),
+      student_name: card.student_name,
+      age_group_name: (card as any).age_group_name ?? null,
+      form_name: card.form_name,
+      is_cumulative: (card as any)?.is_cumulative === true,
+      section_summary: sectionSummary,
+      session_id: card.session_id,
+      status: card.status,
+      deductions: card.deductions,
+    };
+    const nextPayload = {
+      ...existingPayload,
+      pushed_at: new Date().toISOString(),
+      cards: [...existingCards.filter((c: any) => String(c?.session_id ?? "") !== id), card],
+      class_tools_bar: [barItem],
+    };
+
+    const res = await fetch("/api/coach/display-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tool_key: "taolu_tracker", tool_payload: nextPayload }),
+    });
+    const sj = await safeJson(res);
+    if (!sj.ok) return setMsg(sj.json?.error || "Failed to push card to lower bar");
+    setDisplayCardSessionIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    setLowerBarSessionId(id);
+    setLowerBarSource("coach_tracker");
+    setMsg("Pushed card to Class Tools lower bar.");
+  }
+
+  useEffect(() => {
+    if (blocked) return;
+    if (!displayCardSessionIds.length && !sessions.length && !finishedSessions.length) return;
+    if (livePushTimerRef.current) window.clearTimeout(livePushTimerRef.current);
+    livePushTimerRef.current = window.setTimeout(() => {
+      pushTaoluToDisplay().catch(() => {});
+    }, 800);
+    return () => {
+      if (livePushTimerRef.current) {
+        window.clearTimeout(livePushTimerRef.current);
+        livePushTimerRef.current = null;
+      }
+    };
+  }, [blocked, deductionsBySession, sessions, finishedSessions, displayCardSessionIds, trackerMode, practiceTimer, practiceOrderIds]);
 
   function addRefineStudentByName(raw: string) {
     const value = raw.trim().toLowerCase();
@@ -982,15 +1642,33 @@ function TaoluTrackerInner() {
       <div style={{ fontSize: 26, fontWeight: 1000 }}>Taolu Tracker</div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button style={pill(activeTab === "tracker")} onClick={() => setActiveTab("tracker")}>Tracker</button>
-        <button style={pill(activeTab === "refinement")} onClick={() => setActiveTab("refinement")}>Refinement</button>
+        <button style={pill(activeTab === "refinement")} onClick={() => setActiveTab("refinement")}>Refine</button>
       </div>
+      {activeTab !== "refinement" ? (
+        <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button style={pill(activeTab === "tracker" && trackerMode === "track")} onClick={() => { setActiveTab("tracker"); setTrackerMode("track"); }}>Track</button>
+            <button style={pill(activeTab === "tracker" && trackerMode === "practice")} onClick={() => { setActiveTab("tracker"); setTrackerMode("practice"); }}>Practice</button>
+            <button style={pill(activeTab === "tracker" && trackerMode === "refine")} onClick={() => { setActiveTab("tracker"); setTrackerMode("refine"); }}>Refine</button>
+            <button style={pill(activeTab === "display")} onClick={() => setActiveTab("display")}>Display</button>
+            <button style={btn()} onClick={() => pushTaoluToDisplay()}>Push to Display</button>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 12, opacity: 0.75, fontWeight: 900 }}>Practice timer (min)</span>
+            <input
+              value={practiceTimerMin}
+              onChange={(e) => setPracticeTimerMin(e.target.value)}
+              style={{ ...input(), width: 90 }}
+            />
+            <button style={btnGhost()} onClick={startPracticeTimer}>Start Timer</button>
+            <button style={btnGhost()} onClick={stopPracticeTimer}>Pause Timer</button>
+          </div>
+        </div>
+      ) : null}
       <div style={changeAlertBanner()}>
         <div style={{ fontWeight: 1000, fontSize: 14, letterSpacing: 0.2 }}>Scoring Change Alert</div>
-        <div style={{ fontSize: 12, opacity: 0.95 }}>
-          Taolu Tracker now starts at 10 points, each deduction is -4, and single-session refinement gives +2 per fixed deduction.
-        </div>
-        <div style={{ fontSize: 12, opacity: 0.9 }}>
-          Refinement windows (7d / 30d / 3mo) are doubled: +10 fixed, -10 missed, -6 new.
+        <div style={{ fontSize: 15, opacity: 0.98, fontWeight: 900 }}>
+          Taolu Tracker starts at 10 points, each deduction is -6, and refinement gives +5 per fixed deduction (balance only).
         </div>
       </div>
       {msg ? <div style={notice()}>{msg}</div> : null}
@@ -1324,13 +2002,251 @@ function TaoluTrackerInner() {
         </div>
         </div>
       ) : null}
+      {activeTab === "tracker" && (trackerMode === "practice" || trackerMode === "refine") ? (
+        <div style={card()}>
+          <div style={{ fontWeight: 1000, fontSize: 16 }}>
+            {trackerMode === "practice" ? "Practice Order" : "Refine Order"}
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>
+            Build order in practice mode. Refine mode follows the same order.
+          </div>
+          <div style={{ display: "grid", gap: 10, marginTop: 10, gridTemplateColumns: "minmax(0, 0.45fr) minmax(0, 0.55fr)" }}>
+            <div style={{ display: "grid", gap: 8 }}>
+              <select
+                value={practiceSource}
+                onChange={(e) => {
+                  setPracticeSource(e.target.value as any);
+                  setPracticeOrderIds([]);
+                }}
+                style={input()}
+              >
+                <option value="cards_24h">Tracker Cards (Last 24h)</option>
+                <option value="pending_cards">Pending Tracker Cards</option>
+                <option value="camp_roster">Camp Roster</option>
+                <option value="class_roster">Class Roster</option>
+              </select>
+              <select
+                value={practiceRosterId}
+                onChange={(e) => {
+                  setPracticeRosterId(e.target.value);
+                  setPracticeOrderIds([]);
+                }}
+                style={input()}
+                disabled={practiceSource !== "camp_roster"}
+              >
+                <option value="">Select roster</option>
+                {practiceRosters.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+              <input
+                value={practiceNameInput}
+                onChange={(e) => setPracticeNameInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  addPracticeOrderStudentByName(practiceNameInput);
+                }}
+                placeholder="Append student by name + Enter"
+                style={input()}
+              />
+              {practiceNameInput.trim() ? (
+                <div style={suggestions()}>
+                  {students
+                    .filter((s) => s.name.toLowerCase().includes(practiceNameInput.trim().toLowerCase()))
+                    .slice(0, 6)
+                    .map((s) => (
+                      <button
+                        key={s.id}
+                        onClick={() => addPracticeOrderStudentByName(s.name)}
+                        style={suggestionItem()}
+                      >
+                        {s.name}
+                      </button>
+                    ))}
+                </div>
+              ) : null}
+              <div style={{ display: "grid", gap: 6, maxHeight: 280, overflowY: "auto" }}>
+                {practicePool.map((m) => {
+                  const inOrder = practiceOrderIds.includes(m.student_id);
+                  const summary = trackerSummaryByStudent.get(m.student_id);
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={() => addPracticeOrderStudent(m.student_id)}
+                      style={{
+                        ...sideItem(),
+                        opacity: inOrder ? 0.5 : 1,
+                        pointerEvents: inOrder ? "none" : "auto",
+                      }}
+                    >
+                      <div style={{ fontWeight: 900 }}>{m.student?.name ?? m.student_id}</div>
+                      {summary ? (
+                        <div style={{ fontSize: 11, opacity: 0.72 }}>
+                          {summary.form}{summary.age ? ` • ${summary.age}` : ""} • {summary.deductions} deductions
+                        </div>
+                      ) : null}
+                    </button>
+                  );
+                })}
+                {!practicePool.length ? <div style={{ opacity: 0.65, fontSize: 12 }}>No roster members.</div> : null}
+              </div>
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ fontWeight: 900, fontSize: 13 }}>Current Order ({practiceOrderedMembers.length})</div>
+              <div style={{ display: "grid", gap: 8, maxHeight: 280, overflowY: "auto" }}>
+                {practiceOrderedMembers.map((m, idx) => (
+                  <div key={`${m.id}-${idx}`} style={statsRow()}>
+                    <div style={{ fontWeight: 900 }}>
+                      {idx + 1}. {m.name}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <button style={pill(false)} onClick={() => movePracticeOrder(m.id, -1)}>Up</button>
+                      <button style={pill(false)} onClick={() => movePracticeOrder(m.id, 1)}>Down</button>
+                      <button style={btnGhost()} onClick={() => removePracticeOrder(m.id)}>Remove</button>
+                    </div>
+                  </div>
+                ))}
+                {!practiceOrderedMembers.length ? <div style={{ opacity: 0.65, fontSize: 12 }}>No students ordered yet.</div> : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {activeTab === "display" ? (
+        <div style={card()}>
+          <div style={{ fontWeight: 1000, fontSize: 16 }}>Display Card List</div>
+          <div style={{ fontSize: 12, opacity: 0.72 }}>
+            Manage which tracker cards are on display. Pending and finished cards can both be shown.
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
+            <select
+              value={displayCandidateSessionId}
+              onChange={(e) => setDisplayCandidateSessionId(e.target.value)}
+              style={{ ...input(), minWidth: 260 }}
+            >
+              <option value="">Select tracker card</option>
+              {Array.from(displaySessionMeta.entries()).map(([id, meta]) => (
+                <option key={id} value={id}>
+                  {meta.label}{meta.isFinished ? " • finished" : " • pending"}
+                </option>
+              ))}
+            </select>
+            <button
+              style={btnGhost()}
+              onClick={async () => {
+                const id = String(displayCandidateSessionId ?? "").trim();
+                if (!id) return;
+                setDisplayCandidateSessionId("");
+                await addDisplayCardSessionAndPush(id);
+              }}
+            >
+              Add + Push
+            </button>
+            <button style={btnGhost()} onClick={() => setDisplayCardSessionIds([])}>Clear List</button>
+            <button style={btn()} onClick={() => pushTaoluToDisplay(displayCardSessionIds)}>Push Listed Cards</button>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+            <input
+              type="date"
+              value={displayRemoveDate}
+              onChange={(e) => setDisplayRemoveDate(e.target.value)}
+              style={input()}
+            />
+            <input
+              type="time"
+              value={displayRemoveTime}
+              onChange={(e) => setDisplayRemoveTime(e.target.value)}
+              style={input()}
+            />
+            <button
+              style={btnGhost()}
+              onClick={() => {
+                if (!displayRemoveDate) return;
+                setDisplayCardSessionIds((prev) =>
+                  prev.filter((id) => {
+                    const ts = displaySessionMeta.get(id)?.ts;
+                    if (!ts) return true;
+                    const dt = new Date(ts);
+                    const day = dt.toISOString().slice(0, 10);
+                    if (day !== displayRemoveDate) return true;
+                    if (!displayRemoveTime) return false;
+                    const hh = String(dt.getHours()).padStart(2, "0");
+                    const mm = String(dt.getMinutes()).padStart(2, "0");
+                    const localTime = `${hh}:${mm}`;
+                    return localTime > displayRemoveTime;
+                  })
+                );
+                window.setTimeout(() => pushTaoluToDisplay(), 0);
+              }}
+            >
+              Remove Cards By Date/Time
+            </button>
+            {displayRemoveDate && displayRemoveDate === new Date().toISOString().slice(0, 10) ? (
+              <span style={{ fontStyle: "italic", fontSize: 12, opacity: 0.82 }}>today</span>
+            ) : null}
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+            {displayCardSessionIds.map((id) => {
+              const meta = displaySessionMeta.get(id);
+              return (
+                <div key={id} style={statsRow()}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ fontWeight: 900 }}>{meta?.label ?? `Session ${id.slice(0, 8)}`}</div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      {meta?.onLowerBar ? (
+                        <span style={{ ...pill(true), fontSize: 10, boxShadow: "0 0 14px rgba(59,130,246,0.45)" }}>
+                          On Lower Bar{lowerBarSource.includes("student") ? " (Student)" : ""}
+                        </span>
+                      ) : null}
+                      {meta?.isCumulative ? (
+                        <span style={{ color: "#fde68a", fontWeight: 900, fontSize: 11 }}>
+                          Cumulative Card
+                        </span>
+                      ) : null}
+                      {meta?.fromStudent ? (
+                        <span style={{ color: "#93c5fd", fontWeight: 900, fontSize: 11 }}>
+                          Pushed From Student
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11, opacity: 0.82 }}>
+                    {(meta?.ageGroup ? `${meta.ageGroup} • ` : "")}{meta?.formName ?? "Taolu"} • deductions {meta?.deductionsCount ?? 0}
+                  </div>
+                  <div style={{ fontSize: 11, opacity: 0.72 }}>
+                    Deductions: {meta?.deductionCodes ?? "None"}
+                  </div>
+                  <div style={{ fontSize: 11, opacity: 0.72 }}>
+                    {meta?.isFinished ? "finished" : "pending"} {meta?.ts ? `• ${new Date(meta.ts).toLocaleString()}` : ""}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button style={btnGhost()} onClick={() => pushTaoluToDisplay([id])}>Push Only This</button>
+                    <button style={btnGhost()} onClick={() => pushCardToLowerBar(id)}>Push to Lower Bar</button>
+                    <button
+                      style={btnGhost()}
+                      onClick={() => {
+                        removeDisplayCardSession(id);
+                        window.setTimeout(() => pushTaoluToDisplay(), 0);
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {!displayCardSessionIds.length ? <div style={{ fontSize: 12, opacity: 0.65 }}>No cards in display list.</div> : null}
+          </div>
+        </div>
+      ) : null}
 
       {activeTab === "refinement" ? (
         <div style={card()}>
         <div style={{ fontWeight: 1000, fontSize: 16 }}>Refinement Hub</div>
-        <div style={{ fontSize: 12, opacity: 0.7 }}>
-          Scoring update: Start score is 10. Each deduction is -4. Single-session refinement is +2 per fixed deduction.
-          7d/30d/3mo window refinement is doubled: +10 per fixed, -10 per missed, -6 per new deduction.
+        <div style={{ fontSize: 14, opacity: 0.88, fontWeight: 900 }}>
+          Scoring update: Start score is 10. Each deduction is -6. Refinement is +5 per fixed deduction (balance only).
         </div>
         <div style={{ fontSize: 12, opacity: 0.6 }}>
           Click “Start listening” on a student card to arm the space/N hotkey. Space/N adds a new deduction chip.
@@ -1717,8 +2633,8 @@ function TaoluTrackerInner() {
         ) : null}
         <div style={{ marginTop: 16, display: "grid", gap: 8 }}>
           <div style={{ fontWeight: 900 }}>Refine Past Sessions</div>
-          <div style={{ fontSize: 12, opacity: 0.7 }}>
-            Single-session refinement can be done once and awards +2 per fixed deduction.
+          <div style={{ fontSize: 15, opacity: 0.9, fontWeight: 900 }}>
+            Rules: start at 10, lose 6 per deduction, earn back +5 per refined deduction.
           </div>
           <input
             value={finishedHistorySearch}
@@ -1796,8 +2712,9 @@ function TaoluTrackerInner() {
         <div className="taolu-cards-shell" style={{ display: "grid", gap: 12 }}>
           <div style={{ display: "grid", gap: 12 }}>
             {sessions.length ? (
-              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}>
-                {primaryCards.map((s) => {
+              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "minmax(0, 1fr)" }}>
+                {currentSession ? (() => {
+                  const s = currentSession;
                   const student = studentById.get(s.student_id);
                   const form = formById.get(s.taolu_form_id);
                   const count = countLiveDeductions(deductionsBySession[s.id] ?? []);
@@ -1857,6 +2774,16 @@ function TaoluTrackerInner() {
                           </div>
                         ) : null}
                         <div style={{ marginTop: 10, fontWeight: 900 }}>Deductions: {count}</div>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {(deductionsBySession[s.id] ?? [])
+                            .filter((d) => !d.voided)
+                            .slice(-8)
+                            .map((d) => (
+                              <span key={d.id} style={quickDeductionChip()}>
+                                #{quickIndexByDeductionId[d.id] ?? "?"}
+                              </span>
+                            ))}
+                        </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <button
                             onClick={(e) => {
@@ -1875,6 +2802,15 @@ function TaoluTrackerInner() {
                             style={btnGhost()}
                           >
                             ✕ Close
+                          </button>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              await addDisplayCardSessionAndPush(s.id);
+                            }}
+                            style={btnGhost()}
+                          >
+                            Add + Push
                           </button>
                         </div>
                         {activeSessionId === s.id ? (
@@ -1896,7 +2832,7 @@ function TaoluTrackerInner() {
                       </div>
                     </div>
                   );
-                })}
+                })() : null}
               </div>
             ) : (
               <div style={{ opacity: 0.7 }}>No active cards yet.</div>
@@ -1930,6 +2866,24 @@ function TaoluTrackerInner() {
                     style={{ ...sideItem(), flex: 1 }}
                   >
                     {student?.name ?? "Student"}
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      await addDisplayCardSessionAndPush(s.id);
+                    }}
+                    style={{
+                      padding: "6px 8px",
+                      borderRadius: 10,
+                      border: "1px solid rgba(59,130,246,0.45)",
+                      background: "rgba(59,130,246,0.2)",
+                      color: "white",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                    title="Add to display list + push"
+                  >
+                    ↗
                   </button>
                   <button
                     onClick={(e) => {
@@ -1966,6 +2920,35 @@ function TaoluTrackerInner() {
               <button style={pill(finishedWindow === "all")} onClick={() => setFinishedWindow("all")}>All</button>
             </div>
           </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <button style={pill(finishedFilterMode === "all")} onClick={() => setFinishedFilterMode("all")}>Everything</button>
+            <button style={pill(finishedFilterMode === "recent_page")} onClick={() => setFinishedFilterMode("recent_page")}>Recent Page</button>
+            <button style={pill(finishedFilterMode === "students")} onClick={() => setFinishedFilterMode("students")}>Students</button>
+            {finishedFilterMode === "students" ? (
+              <>
+                <input
+                  value={finishedStudentNameInput}
+                  onChange={(e) => setFinishedStudentNameInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    addFinishedFilterStudentByName(finishedStudentNameInput);
+                  }}
+                  placeholder="Student name + Enter"
+                  style={{ ...input(), minWidth: 220 }}
+                />
+                {finishedStudentFilterIds.map((id) => (
+                  <button
+                    key={id}
+                    style={chip()}
+                    onClick={() => setFinishedStudentFilterIds((prev) => prev.filter((sid) => sid !== id))}
+                  >
+                    {studentById.get(id)?.name ?? "Student"} ✕
+                  </button>
+                ))}
+              </>
+            ) : null}
+          </div>
           <div style={finishedRow()}>
             {filteredFinishedSessions.map((s) => {
               const student = studentById.get(s.student_id);
@@ -1977,20 +2960,18 @@ function TaoluTrackerInner() {
               const remediationPoints = remediation?.points_awarded ?? s.remediation_points ?? 0;
               const isRemediated = !!remediation || !!s.remediation_completed;
               const statusLabel = isRemediated ? "Refined" : "Complete";
+              const onDisplay = displayCardSessionIds.includes(s.session_id);
               return (
-                <button
+                <div
                   key={s.session_id}
-                  onClick={() => {
-                    setOpenSessionId(s.session_id);
-                    loadDeductions(s.session_id);
-                    loadCodeCounts(s.student_id);
-                    loadRemediation(s.session_id);
-                  }}
                   style={finishedCard(isRemediated)}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
                     <div style={{ fontWeight: 1000, fontSize: 16 }}>{student?.name ?? "Student"}</div>
-                    <div style={statusChip(isRemediated)}>{statusLabel}</div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <div style={statusChip(isRemediated)}>{statusLabel}</div>
+                      <div style={statusChip(onDisplay)}>{onDisplay ? "On Display" : "Not Displayed"}</div>
+                    </div>
                   </div>
                   <div style={{ fontSize: 12, opacity: 0.8 }}>{form?.name ?? "Taolu"}</div>
                   <div style={{ display: "grid", gap: 4, fontSize: 12 }}>
@@ -1999,7 +2980,41 @@ function TaoluTrackerInner() {
                     <div>Score: {pointsEarned}</div>
                     {remediationPoints ? <div>Refinement +{remediationPoints}</div> : null}
                   </div>
-                </button>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                    <button
+                      style={btnGhost()}
+                      onClick={() => {
+                        setOpenSessionId(s.session_id);
+                        loadDeductions(s.session_id);
+                        loadCodeCounts(s.student_id);
+                        loadRemediation(s.session_id);
+                      }}
+                    >
+                      Open
+                    </button>
+                    {!onDisplay ? (
+                      <button
+                        style={btnGhost()}
+                        onClick={async () => {
+                          await loadDeductions(s.session_id);
+                          await addDisplayCardSessionAndPush(s.session_id);
+                        }}
+                      >
+                        Add to Display
+                      </button>
+                    ) : (
+                      <button
+                        style={btnGhost()}
+                        onClick={() => {
+                          removeDisplayCardSession(s.session_id);
+                          window.setTimeout(() => pushTaoluToDisplay(), 0);
+                        }}
+                      >
+                        Remove from Display
+                      </button>
+                    )}
+                  </div>
+                </div>
               );
             })}
             {!filteredFinishedSessions.length && <div style={{ opacity: 0.6, fontSize: 12 }}>No finished sessions</div>}
@@ -2009,7 +3024,7 @@ function TaoluTrackerInner() {
       ) : null}
 
       {openSessionId ? (
-        <Overlay title="Review Deductions" maxWidth={1280} onClose={() => setOpenSessionId(null)}>
+        <Overlay title="Review Deductions" maxWidth={1520} onClose={() => setOpenSessionId(null)}>
           {openFinishedSession && activeTab === "refinement" ? (
             <div style={{ display: "grid", gap: 12 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -2026,7 +3041,7 @@ function TaoluTrackerInner() {
                 </button>
               </div>
               <div style={{ fontSize: 12, opacity: 0.75 }}>
-                Tap chips to mark refined deductions. Each refined deduction earns +2 points.
+                Tap chips to mark refined deductions. Each refined deduction earns +5 points.
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {(deductionsBySession[openFinishedSession.session_id] ?? [])
@@ -2116,7 +3131,7 @@ function TaoluTrackerInner() {
                 </button>
               </div>
               <div style={{ fontSize: 12, opacity: 0.75 }}>
-                Tap chips to mark refined. You can still edit deductions in this session.
+                Tap chips to mark refined. You can still edit deductions in this set.
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {(deductionsBySession[openFinishedSession.session_id] ?? [])
@@ -2284,7 +3299,16 @@ function TaoluTrackerInner() {
                 Next unfilled
               </button>
             </div>
-            <div style={{ maxHeight: 420, overflowY: "auto", display: "grid", gap: 10 }}>
+            <div
+              style={{
+                maxHeight: 420,
+                overflowY: "auto",
+                display: "grid",
+                gap: 10,
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                alignItems: "start",
+              }}
+            >
               {(deductionsBySession[openSessionId] ?? []).map((d, idx, list) => {
               const code = codeById.get(d.code_id ?? "");
               const session = sessions.find((s) => s.id === openSessionId) || finishedSessions.find((s) => s.session_id === openSessionId);
@@ -2316,6 +3340,18 @@ function TaoluTrackerInner() {
                     </div>
                   </div>
                   <div style={deductionGrid()}>
+                    <div style={field()}>
+                      <div style={fieldLabel()}>Quick Note #{quickIndexByDeductionId[d.id] ?? idx + 1}</div>
+                      <input
+                        value={quickNoteByDeductionId[d.id] ?? d.note ?? ""}
+                        onChange={(e) =>
+                          setQuickNoteByDeductionId((prev) => ({ ...prev, [d.id]: e.target.value }))
+                        }
+                        onBlur={(e) => updateDeduction(d.id, { note: e.target.value || null })}
+                        placeholder="Quick coach note"
+                        style={fieldInput()}
+                      />
+                    </div>
                     <div style={field()}>
                       <div style={fieldLabel()}>Deduction Code</div>
                       <input
@@ -2425,7 +3461,7 @@ function TaoluTrackerInner() {
                   </div>
                 ) : (
                   <div style={{ fontSize: 12, opacity: 0.75 }}>
-                    Select which deductions were fixed. Each selected chip earns +2 points.
+                    Select which deductions were fixed. Each selected chip earns +5 points.
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2653,6 +3689,18 @@ function chip(): React.CSSProperties {
   };
 }
 
+function quickDeductionChip(): React.CSSProperties {
+  return {
+    padding: "4px 8px",
+    borderRadius: 999,
+    border: "1px solid rgba(96,165,250,0.5)",
+    background: "rgba(59,130,246,0.18)",
+    color: "rgba(219,234,254,0.98)",
+    fontSize: 11,
+    fontWeight: 900,
+  };
+}
+
 function refineCard(active = false): React.CSSProperties {
   return {
     borderRadius: 16,
@@ -2871,6 +3919,8 @@ function deductionRow(): React.CSSProperties {
     display: "grid",
     gap: 12,
     padding: 14,
+    minWidth: 0,
+    overflow: "hidden",
     borderRadius: 16,
     border: "1px solid rgba(255,255,255,0.16)",
     background:
@@ -2885,6 +3935,8 @@ function deductionHeader(): React.CSSProperties {
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
+    flexWrap: "wrap",
+    minWidth: 0,
   };
 }
 
@@ -2914,6 +3966,10 @@ function deductionBadge(): React.CSSProperties {
     border: "1px solid rgba(255,255,255,0.16)",
     background: "rgba(255,255,255,0.08)",
     opacity: 0.9,
+    minWidth: 0,
+    maxWidth: "100%",
+    whiteSpace: "normal",
+    overflowWrap: "anywhere",
   };
 }
 
@@ -2925,6 +3981,7 @@ function deductionValueBadge(): React.CSSProperties {
     borderRadius: 10,
     background: "rgba(239,68,68,0.18)",
     border: "1px solid rgba(239,68,68,0.35)",
+    flexShrink: 0,
   };
 }
 
@@ -2943,6 +4000,7 @@ function field(span = 1): React.CSSProperties {
     display: "grid",
     gap: 6,
     gridColumn: span > 1 ? `span ${span}` : undefined,
+    minWidth: 0,
   };
 }
 
@@ -2967,6 +4025,8 @@ function fieldInput(): React.CSSProperties {
     fontSize: 14,
     outline: "none",
     boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(34,197,94,0.08)",
+    minWidth: 0,
+    width: "100%",
   };
 }
 
@@ -2976,6 +4036,8 @@ function codeSuggestionRow(): React.CSSProperties {
     flexWrap: "wrap",
     gap: 6,
     marginTop: 8,
+    minWidth: 0,
+    maxWidth: "100%",
   };
 }
 
@@ -2989,6 +4051,10 @@ function codeSuggestionChip(active: boolean): React.CSSProperties {
     fontWeight: 900,
     fontSize: 11,
     cursor: "pointer",
+    minWidth: 0,
+    maxWidth: "100%",
+    whiteSpace: "normal",
+    overflowWrap: "anywhere",
   };
 }
 

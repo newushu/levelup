@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import AvatarRender from "@/components/AvatarRender";
@@ -80,6 +80,16 @@ async function safeJson(res: Response) {
     return { ok: res.ok, status: res.status, json: JSON.parse(text) as ApiPayload };
   } catch {
     return { ok: false, status: res.status, json: { ok: false, error: text.slice(0, 220) } as ApiPayload };
+  }
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -186,22 +196,32 @@ function getAvatarModifierLabel(change?: CampDisplayMember["last_change"] | null
     ? Math.max(0, parsePositivePointsFromNote(note), Math.round(Math.max(0, points)))
     : 0;
   const protectedPoints = Math.max(protectedFromBase, protectedFromNote);
+  const isRuleBreaker = category === "rule_breaker";
+  const isRuleKeeper = category === "rule_keeper";
+  const multiplierIsFinite = multiplier != null && Number.isFinite(multiplier);
+  const baseIsFinite = pointsBase != null && Number.isFinite(pointsBase);
+  const breakerPenaltyIncreasedByBase =
+    isRuleBreaker && baseIsFinite && points < 0 && Math.abs(points) > Math.abs(Number(pointsBase));
 
-  if (
-    (category === "rule_breaker" && protectedPoints > 0) ||
-    (multiplier != null && Number.isFinite(multiplier) && multiplier < 1 && protectedPoints > 0) ||
-    noteLower.includes("protection")
-  ) {
-    return { text: `🛡 Avatar protected +${protectedPoints} pts` };
+  if (isRuleBreaker && ((multiplierIsFinite && Number(multiplier) > 1) || breakerPenaltyIncreasedByBase)) {
+    return { text: "Avatar modified" };
   }
 
-  const boostedByMultiplier = multiplier != null && Number.isFinite(multiplier) && multiplier > 1;
+  if (
+    (isRuleBreaker && protectedPoints > 0) ||
+    (isRuleBreaker && multiplierIsFinite && Number(multiplier) < 1) ||
+    noteLower.includes("protection")
+  ) {
+    return { text: "🛡 Avatar protected" };
+  }
+
+  const boostedByMultiplier = multiplierIsFinite && Number(multiplier) > 1 && !isRuleBreaker;
   const boostedByNote =
     noteLower.includes("avatar") ||
     noteLower.includes("modifier") ||
     noteLower.includes("mvp bonus") ||
     noteLower.includes("skill pulse");
-  const boostedCategory = category === "skill_pulse" || category === "challenge" || category === "rule_keeper";
+  const boostedCategory = category === "skill_pulse" || category === "challenge" || isRuleKeeper;
   if (boostedByMultiplier || (boostedByNote && boostedCategory)) {
     return { text: "Avatar boosted" };
   }
@@ -234,6 +254,16 @@ export default function CampDisplayPage() {
   const [canHover, setCanHover] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [giftCountsByStudent, setGiftCountsByStudent] = useState<Record<string, number>>({});
+  const [realtimeStatus, setRealtimeStatus] = useState<"connecting" | "live" | "offline">("connecting");
+  const [debugEvents, setDebugEvents] = useState<Array<{ at: string; kind: string; detail: string }>>([]);
+  const loadInFlightRef = useRef(false);
+  const pendingLoadSourceRef = useRef<string | null>(null);
+  const lastEffectsLoadAtRef = useRef(0);
+
+  const pushDebugEvent = useCallback((kind: string, detail: string) => {
+    const entry = { at: new Date().toISOString(), kind, detail };
+    setDebugEvents((prev) => [entry, ...prev].slice(0, 120));
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
@@ -244,88 +274,240 @@ export default function CampDisplayPage() {
     return () => media.removeEventListener?.("change", sync);
   }, []);
 
-  async function load() {
-    const rosterUrl = instanceId
-      ? `/api/camp/display-roster?screen=${screenId}&instance_id=${encodeURIComponent(instanceId)}`
-      : `/api/camp/display-roster?screen=${screenId}`;
-    const [rosterRes, effectsRes] = await Promise.all([
-      fetch(rosterUrl, { cache: "no-store" }),
-      fetch("/api/avatar-effects/list", { cache: "no-store" }),
-    ]);
-    const roster = await safeJson(rosterRes);
-    const effects = await safeJson(effectsRes);
-
-    if (!roster.ok) {
-      setMsg(String(roster.json?.error ?? "Failed to load camp display roster"));
-    } else {
-      const payload = roster.json;
-      const activeScreen = payload.active_screen;
-      const groups = payload.groups ?? [];
-      const activeGroupId = String(payload.active_group_id ?? "");
-      const showAll = payload.show_all_groups !== false;
-      const foundGroup = groups.find((g) => String(g.id) === activeGroupId);
-      const rosters = payload.rosters ?? [];
-      const foundRoster = rosters.find((r) => String(r.id) === String(payload.active_roster_id ?? ""));
-
-      setMsg("");
-      const defaultTitle = `Camp Display ${screenId}`;
-      const rawTitle = String(activeScreen?.title ?? "").trim();
-      const computedTitle = payload.source_mode === "classroom_instance"
-        ? "Classroom Check-In Roster"
-        : rawTitle && rawTitle !== defaultTitle
-          ? rawTitle
-          : foundRoster?.name
-          ? `${foundRoster.name}`
-          : defaultTitle;
-      setTitle(computedTitle);
-      setGroupName(payload.source_mode === "classroom_instance" ? `Instance ${payload.source_instance_id ?? ""}` : showAll ? "All Groups" : String(foundGroup?.name ?? "Group"));
-      setRosterName(payload.source_mode === "classroom_instance" ? "Classroom Check-In" : String(foundRoster?.name ?? "Camp Roster"));
-      setActiveRosterId(String(payload.active_roster_id ?? ""));
-      setActiveGroupId(payload.active_group_id ?? null);
-      setShowAllGroups(showAll);
-      setRows((payload.display_members ?? []).filter((r) => r.student));
-      setAnnouncements(payload.announcements ?? []);
-      setCampRolePoints({
-        seller_daily_points: Number(payload.camp_role_point_config?.seller_daily_points ?? 300),
-        cleaner_daily_points: Number(payload.camp_role_point_config?.cleaner_daily_points ?? 500),
-      });
-      setFactions(payload.factions ?? []);
+  async function load(source = "manual") {
+    if (loadInFlightRef.current) {
+      pendingLoadSourceRef.current = source;
+      pushDebugEvent("load_skipped_inflight", source);
+      return;
     }
+    loadInFlightRef.current = true;
+    pushDebugEvent("load_start", source);
+    const useFastRealtimeMode = source !== "initial" && source !== "manual" && source !== "poll_slow";
+    const fastParam = useFastRealtimeMode ? "&realtime=1" : "";
+    const rosterUrl = instanceId
+      ? `/api/camp/display-roster?screen=${screenId}&instance_id=${encodeURIComponent(instanceId)}${fastParam}`
+      : `/api/camp/display-roster?screen=${screenId}${fastParam}`;
+    const shouldLoadEffects =
+      !Object.keys(effectConfigByKey).length ||
+      source === "initial" ||
+      source === "auth_state_change" ||
+      source === "poll_slow" ||
+      Date.now() - lastEffectsLoadAtRef.current > 60_000;
+    try {
+      const rosterRes = await fetchWithTimeout(rosterUrl, { cache: "no-store" }, useFastRealtimeMode ? 5500 : 12000);
+      const roster = await safeJson(rosterRes);
 
-    if (effects.ok) {
-      const map: Record<string, { config?: any; render_mode?: string | null; html?: string | null; css?: string | null; js?: string | null }> = {};
-      (effects.json as any)?.effects?.forEach((e: any) => {
-        const key = String(e?.key ?? "").trim();
-        if (!key) return;
-        map[key] = { config: e.config, render_mode: e.render_mode ?? null, html: e.html ?? null, css: e.css ?? null, js: e.js ?? null };
-      });
-      setEffectConfigByKey(map);
+      if (!roster.ok) {
+        setMsg(String(roster.json?.error ?? "Failed to load camp display roster"));
+        pushDebugEvent("load_error", `roster: ${String(roster.json?.error ?? "unknown")}`);
+      } else {
+        const payload = roster.json;
+        const activeScreen = payload.active_screen;
+        const groups = payload.groups ?? [];
+        const activeGroupId = String(payload.active_group_id ?? "");
+        const showAll = payload.show_all_groups !== false;
+        const foundGroup = groups.find((g) => String(g.id) === activeGroupId);
+        const rosters = payload.rosters ?? [];
+        const foundRoster = rosters.find((r) => String(r.id) === String(payload.active_roster_id ?? ""));
+
+        setMsg("");
+        const defaultTitle = `Camp Display ${screenId}`;
+        const rawTitle = String(activeScreen?.title ?? "").trim();
+        const computedTitle = payload.source_mode === "classroom_instance"
+          ? "Classroom Check-In Roster"
+          : rawTitle && rawTitle !== defaultTitle
+            ? rawTitle
+            : foundRoster?.name
+            ? `${foundRoster.name}`
+            : defaultTitle;
+        setTitle(computedTitle);
+        setGroupName(payload.source_mode === "classroom_instance" ? `Instance ${payload.source_instance_id ?? ""}` : showAll ? "All Groups" : String(foundGroup?.name ?? "Group"));
+        setRosterName(payload.source_mode === "classroom_instance" ? "Classroom Check-In" : String(foundRoster?.name ?? "Camp Roster"));
+        setActiveRosterId(String(payload.active_roster_id ?? ""));
+        setActiveGroupId(payload.active_group_id ?? null);
+        setShowAllGroups(showAll);
+        setRows((payload.display_members ?? []).filter((r) => r.student));
+        setAnnouncements(payload.announcements ?? []);
+        setCampRolePoints({
+          seller_daily_points: Number(payload.camp_role_point_config?.seller_daily_points ?? 300),
+          cleaner_daily_points: Number(payload.camp_role_point_config?.cleaner_daily_points ?? 500),
+        });
+        setFactions(payload.factions ?? []);
+        pushDebugEvent("load_ok", `rows=${(payload.display_members ?? []).length}`);
+      }
+
+      if (shouldLoadEffects) {
+        const effectsRes = await fetch("/api/avatar-effects/list", { cache: "no-store" });
+        const effects = await safeJson(effectsRes);
+        if (effects.ok) {
+          const map: Record<string, { config?: any; render_mode?: string | null; html?: string | null; css?: string | null; js?: string | null }> = {};
+          (effects.json as any)?.effects?.forEach((e: any) => {
+            const key = String(e?.key ?? "").trim();
+            if (!key) return;
+            map[key] = { config: e.config, render_mode: e.render_mode ?? null, html: e.html ?? null, css: e.css ?? null, js: e.js ?? null };
+          });
+          setEffectConfigByKey(map);
+          lastEffectsLoadAtRef.current = Date.now();
+          pushDebugEvent("effects_ok", `count=${Object.keys(map).length}`);
+        } else {
+          pushDebugEvent("effects_error", String((effects.json as any)?.error ?? "unknown"));
+        }
+      }
+    } catch (err: any) {
+      const detail = err?.name === "AbortError" ? "request_timeout" : String(err?.message ?? "request_failed");
+      setMsg(detail === "request_timeout" ? "Live refresh timed out. Retrying..." : "Live refresh failed. Retrying...");
+      pushDebugEvent("load_error", detail);
+    } finally {
+      loadInFlightRef.current = false;
+      const pending = pendingLoadSourceRef.current;
+      if (pending) {
+        pendingLoadSourceRef.current = null;
+        queueMicrotask(() => {
+          void load(`pending:${pending}`);
+        });
+      }
     }
   }
 
   useEffect(() => {
-    load();
     const sb = supabaseClient();
-    const channel = sb
-      .channel(`camp-display-screen-${screenId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "camp_display_rosters" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "camp_display_groups" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "camp_display_members" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "camp_display_screens" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "students" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "ledger" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "camp_orders" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "camp_order_refunds" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "camp_accounts" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "battle_mvp_awards" }, load)
-      .subscribe();
-
-    const t = setInterval(load, 6000);
-    return () => {
-      clearInterval(t);
-      sb.removeChannel(channel);
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let channel: ReturnType<typeof sb.channel> | null = null;
+    let isRealtimeLive = false;
+    let channelVersion = 0;
+    let offlineTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempt = 0;
+    let lastLiveAt = 0;
+    let lastAuthToken = "";
+    const scheduleRefresh = (source = "realtime") => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        pushDebugEvent("refresh", source);
+        void load(source);
+      }, 180);
     };
-  }, [screenId]);
+    const setupChannel = async () => {
+      channelVersion += 1;
+      const myVersion = channelVersion;
+      const session = await sb.auth.getSession();
+      let realtimeToken = String(session.data?.session?.access_token ?? "");
+      if (!realtimeToken) {
+        const tokenRes = await fetch("/api/auth/realtime-token", { cache: "no-store" });
+        const tokenJson = await tokenRes.json().catch(() => ({}));
+        if (tokenRes.ok) realtimeToken = String(tokenJson?.access_token ?? "");
+      }
+      if (realtimeToken) {
+        sb.realtime.setAuth(realtimeToken);
+        lastAuthToken = realtimeToken;
+      }
+      if (channel) {
+        await sb.removeChannel(channel);
+      }
+      if (offlineTimer) {
+        clearTimeout(offlineTimer);
+        offlineTimer = null;
+      }
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      setRealtimeStatus("connecting");
+      pushDebugEvent("realtime_status", "connecting");
+      channel = sb
+        .channel(`camp-display-screen-${screenId}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "camp_display_rosters" }, () => scheduleRefresh("camp_display_rosters"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "camp_display_groups" }, () => scheduleRefresh("camp_display_groups"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "camp_display_members" }, () => scheduleRefresh("camp_display_members"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "camp_display_screens" }, () => scheduleRefresh("camp_display_screens"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "students" }, () => scheduleRefresh("students"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "student_avatar_settings" }, () => scheduleRefresh("student_avatar_settings"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "ledger" }, () => scheduleRefresh("ledger"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "camp_orders" }, () => scheduleRefresh("camp_orders"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "camp_order_refunds" }, () => scheduleRefresh("camp_order_refunds"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "camp_accounts" }, () => scheduleRefresh("camp_accounts"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "battle_mvp_awards" }, () => scheduleRefresh("battle_mvp_awards"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "attendance_checkins" }, () => scheduleRefresh("attendance_checkins"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "student_event_daily_claims" }, () => scheduleRefresh("student_event_daily_claims"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "student_leaderboard_bonus_grants" }, () => scheduleRefresh("student_leaderboard_bonus_grants"))
+        .on("postgres_changes", { event: "*", schema: "public", table: "student_gifts" }, () => scheduleRefresh("student_gifts"))
+        .subscribe((status) => {
+          if (myVersion !== channelVersion) return;
+          if (status === "SUBSCRIBED") {
+            isRealtimeLive = true;
+            reconnectAttempt = 0;
+            lastLiveAt = Date.now();
+            if (offlineTimer) {
+              clearTimeout(offlineTimer);
+              offlineTimer = null;
+            }
+            if (reconnectTimer) {
+              clearTimeout(reconnectTimer);
+              reconnectTimer = null;
+            }
+            setRealtimeStatus("live");
+            pushDebugEvent("realtime_status", "live");
+            return;
+          }
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            isRealtimeLive = false;
+            if (offlineTimer) clearTimeout(offlineTimer);
+            offlineTimer = setTimeout(() => {
+              if (myVersion !== channelVersion) return;
+              const msSinceLive = Date.now() - lastLiveAt;
+              if (msSinceLive >= 1500) {
+                setRealtimeStatus("offline");
+                pushDebugEvent("realtime_status", String(status).toLowerCase());
+              }
+            }, 1200);
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            const delay = Math.min(10_000, 900 + reconnectAttempt * 1100);
+            reconnectAttempt += 1;
+            pushDebugEvent("reconnect_scheduled", `${String(status).toLowerCase()} in ${delay}ms`);
+            reconnectTimer = setTimeout(() => {
+              if (myVersion !== channelVersion) return;
+              void setupChannel();
+            }, delay);
+            return;
+          }
+          setRealtimeStatus("connecting");
+          pushDebugEvent("realtime_status", String(status).toLowerCase());
+        });
+    };
+    void setupChannel();
+    const { data: authListener } = sb.auth.onAuthStateChange((event, session) => {
+      const evt = String(event ?? "unknown").toLowerCase();
+      const nextToken = String(session?.access_token ?? "");
+      pushDebugEvent("auth_state_change", evt);
+      if (evt === "signed_out") {
+        lastAuthToken = "";
+        void setupChannel();
+        scheduleRefresh("auth_state_change");
+        return;
+      }
+      if (nextToken && nextToken !== lastAuthToken) {
+        lastAuthToken = nextToken;
+        sb.realtime.setAuth(nextToken);
+        pushDebugEvent("realtime_auth", "token_updated");
+      }
+    });
+    void load("initial");
+    let safetyPollTimer: ReturnType<typeof setTimeout> | null = null;
+    const runSafetyPoll = () => {
+      void load(isRealtimeLive ? "poll_live_safety" : "poll_offline_safety");
+      const nextDelay = isRealtimeLive ? 8000 : 3000;
+      safetyPollTimer = setTimeout(runSafetyPoll, nextDelay);
+    };
+    safetyPollTimer = setTimeout(runSafetyPoll, 3000);
+    return () => {
+      if (safetyPollTimer) clearTimeout(safetyPollTimer);
+      if (refreshTimer) clearTimeout(refreshTimer);
+      if (offlineTimer) clearTimeout(offlineTimer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (authListener?.subscription) authListener.subscription.unsubscribe();
+      if (channel) sb.removeChannel(channel);
+    };
+  }, [screenId, instanceId, pushDebugEvent]);
 
   useEffect(() => {
     const t = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -380,6 +562,33 @@ export default function CampDisplayPage() {
     const total = rows.length > minDisplaySlots ? rows.length : minDisplaySlots;
     return Array.from({ length: total }, (_, idx) => rows[idx] ?? null);
   }, [rows]);
+  const topBadgeWinners = useMemo(() => {
+    let maxPoints = -Infinity;
+    let maxKeepers = -Infinity;
+    let maxStars = -Infinity;
+    let topPointsStudentId = "";
+    let topKeepersStudentId = "";
+    let topStarsStudentId = "";
+    for (const row of rows) {
+      const sid = String(row.student_id ?? "");
+      const points = Number(row.student?.points_total ?? 0);
+      const keepers = Number(row.camp_tally?.rule_keepers ?? 0);
+      const stars = Number(row.camp_tally?.spotlight_stars ?? 0);
+      if (points > maxPoints) {
+        maxPoints = points;
+        topPointsStudentId = sid;
+      }
+      if (keepers > maxKeepers) {
+        maxKeepers = keepers;
+        topKeepersStudentId = sid;
+      }
+      if (stars > maxStars) {
+        maxStars = stars;
+        topStarsStudentId = sid;
+      }
+    }
+    return { topPointsStudentId, topKeepersStudentId, topStarsStudentId };
+  }, [rows]);
 
   const debugPayload = useMemo(() => {
     return {
@@ -401,8 +610,10 @@ export default function CampDisplayPage() {
         role: row.display_role,
         secondary_role: row.secondary_role ?? "",
       })),
+      realtime_status: realtimeStatus,
+      debug_events: debugEvents.slice(0, 60),
     };
-  }, [activeGroupId, activeRosterId, groupName, rosterName, rows, screenId, showAllGroups, title]);
+  }, [activeGroupId, activeRosterId, debugEvents, groupName, realtimeStatus, rosterName, rows, screenId, showAllGroups, title]);
 
   async function copyDebug() {
     try {
@@ -439,6 +650,7 @@ export default function CampDisplayPage() {
             <div style={legendRow()}><span>🛡️</span><span>Rule keeper tally + earned pts</span></div>
             <div style={legendRow()}><span>⚠️</span><span>Rule breaker tally + lost pts</span></div>
             <div style={legendRow()}><span>💠</span><span>Daily redeem points available</span></div>
+            <div style={legendRow()}><span>🏷️</span><span>TOP / RULE / STAR = roster leaders</span></div>
           </section>
           <section style={logRailCard()}>
             <div style={infoCardTitle()}>Notable Feed</div>
@@ -465,6 +677,9 @@ export default function CampDisplayPage() {
         </aside>
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ display: "flex", justifyContent: "flex-end", flexWrap: "wrap", gap: 6, alignItems: "flex-start", marginTop: -2 }}>
+            <span style={realtimeChip(realtimeStatus)}>
+              {realtimeStatus === "live" ? "Realtime Live" : realtimeStatus === "connecting" ? "Realtime Connecting" : "Realtime Offline"}
+            </span>
             <div
               style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}
               onMouseEnter={() => setMenuBarHover(true)}
@@ -498,9 +713,14 @@ export default function CampDisplayPage() {
                   ? "Points Deducted"
                   : reasonBase;
               const avatarModifierLabel = getAvatarModifierLabel(row.last_change);
+              const changeCategory = String(row.last_change?.category ?? "").trim().toLowerCase();
+              const reasonLower = String(reasonBase ?? "").toLowerCase();
               const changeAtMs = row.last_change?.created_at ? new Date(row.last_change.created_at).getTime() : Number.NaN;
               const isRecentPointChange =
                 Number.isFinite(changeAtMs) && changeAtMs <= nowMs && nowMs - changeAtMs <= RECENT_CHANGE_GLOW_MS;
+              const isRecentStarChange =
+                isRecentPointChange &&
+                (changeCategory.includes("spotlight") || reasonLower.includes("spotlight") || reasonLower.includes("star"));
               const glowPulse = isRecentPointChange ? (Math.floor(nowMs / 260) % 2 === 0 ? 1 : 0.7) : 0;
               const tally = row.camp_tally ?? {
                 spotlight_stars: 0,
@@ -529,11 +749,32 @@ export default function CampDisplayPage() {
                 .slice(0, 2)
                 .map((p) => p[0]?.toUpperCase() ?? "")
                 .join("");
+              const topBadges: Array<{ key: string; text: string; tone: "orange" | "green" | "yellow" }> = [];
+              if (String(row.student_id) === topBadgeWinners.topPointsStudentId) topBadges.push({ key: "top", text: "TOP", tone: "orange" });
+              if (String(row.student_id) === topBadgeWinners.topKeepersStudentId) topBadges.push({ key: "rule", text: "RULE", tone: "green" });
+              if (String(row.student_id) === topBadgeWinners.topStarsStudentId) topBadges.push({ key: "star", text: "STAR", tone: "yellow" });
+              const badgePulse = (Math.sin(nowMs / 260) + 1) / 2;
               return (
                 <section
                   key={row.id}
                   style={card(cardTone, Boolean(faction), isRecentPointChange ? (deltaUp ? "up" : "down") : null, glowPulse)}
                 >
+                  {isRecentPointChange ? (
+                    <div style={recentCardPulseOverlay(deltaUp, glowPulse)}>
+                      {Array.from({ length: deltaUp ? 9 : 12 }).map((_, idx) => (
+                        <span key={`${row.id}-pulse-${idx}`} style={recentCardParticle(idx, deltaUp, glowPulse)} />
+                      ))}
+                    </div>
+                  ) : null}
+                  {topBadges.length ? (
+                    <div style={topBadgeRail()}>
+                      {topBadges.map((badge) => (
+                        <div key={`${row.id}-${badge.key}`} style={topBadge(badge.tone, badgePulse)}>
+                          <span style={topBadgeInner()}>{badge.text}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                   <div style={roleChip()}>{row.display_role || "camper"}</div>
                   {(giftCountsByStudent[String(row.student_id)] ?? 0) > 0 ? (
                     <div style={giftAlertChip()}>✨ 🎁 Gift</div>
@@ -646,9 +887,9 @@ export default function CampDisplayPage() {
                       <div style={keeperBreakerSubline()}>Loss -{Math.round(Number(tally.rule_breaker_points_lost ?? 0))} pts</div>
                     </div>
                   </div>
-                  <div style={starTrackWrap()} aria-label={`Camp spotlight bonus progress ${starCount}/10`}>
+                  <div style={starTrackWrap(isRecentStarChange, glowPulse)} aria-label={`Camp spotlight bonus progress ${starCount}/10`}>
                     {Array.from({ length: 10 }).map((_, idx) => (
-                      <span key={idx} style={starTrackStar(idx < starCount)}>★</span>
+                      <span key={idx} style={starTrackStar(idx < starCount, isRecentStarChange, glowPulse)}>★</span>
                     ))}
                   </div>
                   {redeem.can_redeem ? (
@@ -671,6 +912,7 @@ export default function CampDisplayPage() {
             <div style={{ fontWeight: 1000, fontSize: 12, letterSpacing: 0.5, textTransform: "uppercase" }}>Debug Mode</div>
             <div style={{ display: "flex", gap: 6 }}>
               <button type="button" style={debugBtn()} onClick={copyDebug}>Copy JSON</button>
+              <button type="button" style={debugBtn()} onClick={() => setDebugEvents([])}>Clear Log</button>
               <button type="button" style={debugBtn()} onClick={() => setDebugOpen(false)}>Close</button>
             </div>
           </div>
@@ -828,6 +1070,62 @@ function legendRow(): React.CSSProperties {
     gap: 8,
     fontSize: 10,
     color: "rgba(226,232,240,0.95)",
+  };
+}
+function topBadgeRail(): React.CSSProperties {
+  return {
+    position: "absolute",
+    top: -9,
+    left: -8,
+    display: "flex",
+    flexDirection: "row",
+    gap: 4,
+    alignItems: "center",
+    zIndex: 4,
+    pointerEvents: "none",
+  };
+}
+function topBadge(tone: "orange" | "green" | "yellow", pulse = 0.5): React.CSSProperties {
+  const tones = {
+    orange: {
+      border: "rgba(251,191,36,0.95)",
+      bg: "linear-gradient(135deg, rgba(194,65,12,0.95), rgba(120,53,15,0.95))",
+      glow: `0 0 ${8 + pulse * 10}px rgba(251,146,60,0.72)`,
+      color: "#ffedd5",
+    },
+    green: {
+      border: "rgba(74,222,128,0.95)",
+      bg: "linear-gradient(135deg, rgba(22,101,52,0.95), rgba(6,78,59,0.95))",
+      glow: `0 0 ${8 + pulse * 10}px rgba(74,222,128,0.65)`,
+      color: "#dcfce7",
+    },
+    yellow: {
+      border: "rgba(250,204,21,0.95)",
+      bg: "linear-gradient(135deg, rgba(133,77,14,0.95), rgba(120,53,15,0.95))",
+      glow: `0 0 ${8 + pulse * 10}px rgba(250,204,21,0.68)`,
+      color: "#fef9c3",
+    },
+  } as const;
+  const t = tones[tone];
+  return {
+    border: `1px solid ${t.border}`,
+    background: t.bg,
+    color: t.color,
+    padding: "2px 7px",
+    fontSize: 9,
+    fontWeight: 1000,
+    lineHeight: 1.1,
+    textTransform: "uppercase",
+    borderRadius: 4,
+    transform: "skewX(-22deg)",
+    boxShadow: `${t.glow}, inset 0 0 6px rgba(255,255,255,0.18)`,
+    letterSpacing: 0.45,
+  };
+}
+function topBadgeInner(): React.CSSProperties {
+  return {
+    display: "inline-block",
+    transform: "skewX(22deg)",
   };
 }
 function roleChip(): React.CSSProperties {
@@ -1111,7 +1409,7 @@ function redeemMiniChip(): React.CSSProperties {
     textAlign: "right",
   };
 }
-function starTrackWrap(): React.CSSProperties {
+function starTrackWrap(recentStar = false, pulse = 0): React.CSSProperties {
   return {
     display: "grid",
     gridTemplateColumns: "repeat(10, minmax(0, 1fr))",
@@ -1124,9 +1422,13 @@ function starTrackWrap(): React.CSSProperties {
     paddingRight: 104,
     boxSizing: "border-box",
     overflow: "hidden",
+    borderRadius: 8,
+    boxShadow: recentStar ? `0 0 ${12 + pulse * 10}px rgba(250,204,21,${0.45 + pulse * 0.2}), inset 0 0 10px rgba(250,204,21,0.28)` : "none",
+    transition: "box-shadow 180ms ease",
   };
 }
-function starTrackStar(active: boolean): React.CSSProperties {
+function starTrackStar(active: boolean, recentStar = false, pulse = 0): React.CSSProperties {
+  const hotGlow = recentStar ? `0 0 ${9 + pulse * 8}px rgba(250,204,21,${active ? 0.62 : 0.28})` : undefined;
   return {
     display: "grid",
     placeItems: "center",
@@ -1137,7 +1439,48 @@ function starTrackStar(active: boolean): React.CSSProperties {
     border: active ? "1px solid rgba(250,204,21,0.85)" : "1px solid rgba(100,116,139,0.45)",
     background: active ? "linear-gradient(135deg, rgba(250,204,21,0.38), rgba(245,158,11,0.24))" : "rgba(30,41,59,0.58)",
     color: active ? "#fde68a" : "rgba(148,163,184,0.75)",
-    boxShadow: active ? "0 0 10px rgba(250,204,21,0.2)" : "none",
+    boxShadow: active ? hotGlow || "0 0 10px rgba(250,204,21,0.2)" : recentStar ? hotGlow : "none",
+  };
+}
+function recentCardPulseOverlay(up: boolean, pulse = 0): React.CSSProperties {
+  const glowA = up
+    ? `rgba(74,222,128,${0.12 + pulse * 0.12})`
+    : `rgba(248,113,113,${0.16 + pulse * 0.14})`;
+  const glowB = up
+    ? `rgba(34,197,94,${0.08 + pulse * 0.1})`
+    : `rgba(220,38,38,${0.11 + pulse * 0.12})`;
+  return {
+    position: "absolute",
+    inset: 0,
+    borderRadius: 12,
+    pointerEvents: "none",
+    overflow: "hidden",
+    background: `radial-gradient(circle at 22% 20%, ${glowA}, transparent 44%), radial-gradient(circle at 78% 76%, ${glowB}, transparent 46%)`,
+    boxShadow: up
+      ? `inset 0 0 ${20 + pulse * 14}px rgba(74,222,128,${0.22 + pulse * 0.2})`
+      : `inset 0 0 ${22 + pulse * 14}px rgba(248,113,113,${0.24 + pulse * 0.2})`,
+    zIndex: 0,
+  };
+}
+function recentCardParticle(index: number, up: boolean, pulse = 0): React.CSSProperties {
+  const x = [8, 16, 24, 35, 48, 61, 74, 82, 91, 28, 58, 88][index % 12];
+  const y = [16, 28, 44, 20, 58, 32, 48, 66, 24, 72, 14, 54][index % 12];
+  const size = [3, 4, 2, 3, 4, 2, 3, 4, 2, 3, 4, 3][index % 12];
+  const color = up
+    ? `rgba(74,222,128,${0.25 + pulse * 0.3})`
+    : `rgba(248,113,113,${0.32 + pulse * 0.33})`;
+  const shadow = up
+    ? `0 0 ${7 + pulse * 5}px rgba(34,197,94,0.7)`
+    : `0 0 ${8 + pulse * 6}px rgba(220,38,38,0.78)`;
+  return {
+    position: "absolute",
+    left: `${x}%`,
+    top: `${y}%`,
+    width: size,
+    height: size,
+    borderRadius: "50%",
+    background: color,
+    boxShadow: shadow,
   };
 }
 function avatarFallback(): React.CSSProperties {
@@ -1280,6 +1623,46 @@ function screenChip(active: boolean): React.CSSProperties {
     fontWeight: 900,
     fontSize: 11,
     lineHeight: 1.1,
+  };
+}
+
+function realtimeChip(status: "connecting" | "live" | "offline"): React.CSSProperties {
+  if (status === "live") {
+    return {
+      borderRadius: 999,
+      padding: "6px 10px",
+      border: "1px solid rgba(74,222,128,0.85)",
+      background: "rgba(21,128,61,0.62)",
+      color: "white",
+      fontWeight: 900,
+      fontSize: 11,
+      textTransform: "uppercase",
+      letterSpacing: 0.3,
+    };
+  }
+  if (status === "offline") {
+    return {
+      borderRadius: 999,
+      padding: "6px 10px",
+      border: "1px solid rgba(248,113,113,0.9)",
+      background: "rgba(127,29,29,0.7)",
+      color: "white",
+      fontWeight: 900,
+      fontSize: 11,
+      textTransform: "uppercase",
+      letterSpacing: 0.3,
+    };
+  }
+  return {
+    borderRadius: 999,
+    padding: "6px 10px",
+    border: "1px solid rgba(251,191,36,0.9)",
+    background: "rgba(120,53,15,0.7)",
+    color: "white",
+    fontWeight: 900,
+    fontSize: 11,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
   };
 }
 function menuChip(visible: boolean): React.CSSProperties {

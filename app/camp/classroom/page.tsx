@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import AvatarRender from "@/components/AvatarRender";
+import { supabaseClient } from "@/lib/supabase/client";
 
 type Roster = { id: string; name: string };
 type Group = { id: string; roster_id: string; name: string };
@@ -138,6 +139,51 @@ export default function CampClassroomPage() {
   }, []);
 
   useEffect(() => {
+    if (!["admin", "coach", "classroom", "camp"].includes(role)) return;
+    const sb = supabaseClient();
+    let channel: ReturnType<typeof sb.channel> | null = null;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        void load();
+      }, 180);
+    };
+
+    const setupChannel = async () => {
+      const session = await sb.auth.getSession();
+      let realtimeToken = String(session.data?.session?.access_token ?? "");
+      if (!realtimeToken) {
+        const tokenRes = await fetch("/api/auth/realtime-token", { cache: "no-store" });
+        const tokenJson = await tokenRes.json().catch(() => ({}));
+        if (tokenRes.ok) realtimeToken = String(tokenJson?.access_token ?? "");
+      }
+      if (realtimeToken) sb.realtime.setAuth(realtimeToken);
+
+      if (channel) await sb.removeChannel(channel);
+      channel = sb
+        .channel("camp-classroom-live")
+        .on("postgres_changes", { event: "*", schema: "public", table: "ledger" }, scheduleRefresh)
+        .on("postgres_changes", { event: "*", schema: "public", table: "students" }, scheduleRefresh)
+        .on("postgres_changes", { event: "*", schema: "public", table: "camp_display_members" }, scheduleRefresh)
+        .on("postgres_changes", { event: "*", schema: "public", table: "attendance_checkins" }, scheduleRefresh)
+        .subscribe();
+    };
+
+    void setupChannel();
+    const { data: authListener } = sb.auth.onAuthStateChange((_event, session) => {
+      if (session?.access_token) sb.realtime.setAuth(session.access_token);
+    });
+
+    return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      if (authListener?.subscription) authListener.subscription.unsubscribe();
+      if (channel) sb.removeChannel(channel);
+    };
+  }, [role]);
+
+  useEffect(() => {
     if (!activeRosterId || typeof localStorage === "undefined") return;
     localStorage.setItem("camp_classroom_roster_id", activeRosterId);
   }, [activeRosterId]);
@@ -189,31 +235,64 @@ export default function CampClassroomPage() {
     return Math.min(50, Math.max(5, week * 5));
   }
 
+  async function awardSingleWithTimeout(student_id: string, points: number, category: string, note: string) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch("/api/ledger/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_id, points, category, note }),
+        signal: controller.signal,
+      });
+      return await safeJson(res);
+    } catch (err: any) {
+      return { ok: false, status: 0, json: { error: err?.name === "AbortError" ? "Request timed out" : (err?.message ?? "Request failed") } };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function awardBulk(points: number, category: string, note: string) {
-    if (!selectedIds.length) return;
-    if (busy || Date.now() < actionLockUntilRef.current) return;
+    if (!selectedIds.length) {
+      setMsg("Select at least one student.");
+      return;
+    }
+    if (busy || Date.now() < actionLockUntilRef.current) {
+      setMsg("Processing previous action...");
+      return;
+    }
     actionLockUntilRef.current = Date.now() + 900;
     setBusy(true);
     setMsg("");
-    try {
-      const payloads = selectedIds.map((student_id) =>
-        fetch("/api/ledger/add", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            student_id,
+    const selectedSet = new Set(selectedIds);
+    // Optimistic points update for instant UI feedback; realtime/load will reconcile.
+    setMembers((prev) =>
+      prev.map((m) => {
+        if (!selectedSet.has(m.student_id) || !m.student) return m;
+        const nextPoints = Number(m.student.points_total ?? 0) + points;
+        return {
+          ...m,
+          student: { ...m.student, points_total: nextPoints },
+          last_change: {
             points,
-            category,
             note,
-          }),
-        })
-      );
+            category,
+            created_at: new Date().toISOString(),
+          },
+        };
+      })
+    );
+    const previewLabel = `${note} ${points > 0 ? "+" : ""}${points} pts`;
+    setActionFlash(previewLabel);
+    window.setTimeout(() => setActionFlash(""), 900);
+    try {
+      const payloads = selectedIds.map((student_id) => awardSingleWithTimeout(student_id, points, category, note));
       const all = await Promise.all(payloads);
       const failures: string[] = [];
-      for (const res of all) {
-        if (res.ok) continue;
-        const sj = await safeJson(res);
-        failures.push(String(sj.json?.error ?? `HTTP ${res.status}`));
+      for (const sj of all) {
+        if (sj.ok) continue;
+        failures.push(String(sj.json?.error ?? `HTTP ${sj.status}`));
       }
       const selectedNames = visibleMembers.filter((m) => selectedIds.includes(m.student_id)).map((m) => m.student?.name || "Student");
       const targetLabel = selectedNames.length === 1 ? selectedNames[0] : `${selectedNames.length} students`;

@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/authz";
 
+function isMissingColumn(error: any, col: string) {
+  const msg = String(error?.message ?? "").toLowerCase();
+  return msg.includes("column") && msg.includes(col.toLowerCase()) && msg.includes("does not exist");
+}
+
 export async function GET(req: Request) {
   const auth = await requireUser();
   if (!auth.ok) return NextResponse.json({ ok: false, error: auth.error }, { status: 401 });
@@ -10,10 +15,18 @@ export async function GET(req: Request) {
   const includeItems = searchParams.get("items") === "1";
 
   const supabase = await supabaseServer();
-  const { data: menus, error: mErr } = await supabase
+  let { data: menus, error: mErr } = await supabase
     .from("camp_menus")
-    .select("id,name,enabled,display_order")
+    .select("id,name,enabled,display_order,price_modifier_pct")
     .order("display_order", { ascending: true });
+  if (mErr && isMissingColumn(mErr, "price_modifier_pct")) {
+    const fallback = await supabase
+      .from("camp_menus")
+      .select("id,name,enabled,display_order")
+      .order("display_order", { ascending: true });
+    menus = (fallback.data ?? []).map((m: any) => ({ ...m, price_modifier_pct: 0 }));
+    mErr = fallback.error as any;
+  }
   if (mErr) return NextResponse.json({ ok: false, error: mErr.message }, { status: 500 });
 
   if (!includeItems) return NextResponse.json({ ok: true, menus: menus ?? [] });

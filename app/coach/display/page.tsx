@@ -7,7 +7,7 @@ import AvatarRender from "@/components/AvatarRender";
 import { supabaseClient } from "@/lib/supabase/client";
 
 type DisplayState = {
-  tool_key: "default" | "lesson_forge" | "timers" | "warmup" | "classroom_roster";
+  tool_key: "default" | "lesson_forge" | "timers" | "warmup" | "classroom_roster" | "taolu_tracker";
   tool_payload?: any | null;
 };
 
@@ -54,6 +54,8 @@ type ActivityItem = {
   event_type?: string;
 };
 
+type ScreenPreset = "compact" | "standard" | "wide";
+
 export default function CoachDisplayPage() {
   const params = useSearchParams();
   const [blocked, setBlocked] = useState(false);
@@ -77,11 +79,13 @@ export default function CoachDisplayPage() {
   const [lessonTimerRemaining, setLessonTimerRemaining] = useState(0);
   const [lessonTimerRunning, setLessonTimerRunning] = useState(false);
   const [msg, setMsg] = useState("");
+  const [screenPreset, setScreenPreset] = useState<ScreenPreset>("compact");
   const channelRef = useRef<any>(null);
   const [effectConfigByKey, setEffectConfigByKey] = useState<
     Record<string, { config?: any; render_mode?: string | null; html?: string | null; css?: string | null; js?: string | null }>
   >({});
   const cornerOffsets = useMemo(() => ({ x: -10, y: -10, size: 72 }), []);
+  const sizing = useMemo(() => getSizing(screenPreset), [screenPreset]);
 
   const lockedInstanceId = String(state.tool_payload?.lock_instance_id ?? "").trim();
   const lockedClassId = String(state.tool_payload?.lock_class_id ?? "").trim();
@@ -148,6 +152,21 @@ export default function CoachDisplayPage() {
       localStorage.setItem("coach_display_slot", selectedSlotKey);
     } catch {}
   }, [selectedSlotKey, displaySlots]);
+
+  useEffect(() => {
+    try {
+      const saved = String(localStorage.getItem("coach_display_screen_preset") || "").trim();
+      if (saved === "compact" || saved === "standard" || saved === "wide") {
+        setScreenPreset(saved);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("coach_display_screen_preset", screenPreset);
+    } catch {}
+  }, [screenPreset]);
 
   useEffect(() => {
     if (!coachUserId) return;
@@ -528,6 +547,23 @@ export default function CoachDisplayPage() {
               })()}
             </div>
           </div>
+          <div style={displaySizeSelector()}>
+            <div style={{ fontSize: 10, opacity: 0.68, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5 }}>
+              Screen Size
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {(["compact", "standard", "wide"] as ScreenPreset[]).map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setScreenPreset(preset)}
+                  style={sizeChip(screenPreset === preset)}
+                >
+                  {preset === "compact" ? "Compact" : preset === "standard" ? "Standard" : "Wide"}
+                </button>
+              ))}
+            </div>
+          </div>
           {msg ? <div style={msgStyle()}>{msg}</div> : null}
           {state.tool_key === "lesson_forge" && (state.tool_payload?.section_title || lessonTimerDuration > 0) ? (
             <div style={lessonOverlay()}>
@@ -543,7 +579,7 @@ export default function CoachDisplayPage() {
               ) : null}
             </div>
           ) : null}
-          <div style={layoutGrid()}>
+          <div style={layoutGrid(sizing)}>
             <section style={rosterPanel()}>
               <div style={panelHeader()}>
                 <div style={{ fontSize: 12, opacity: 0.65, fontWeight: 800, letterSpacing: 0.6 }}>Checked-In Roster</div>
@@ -552,10 +588,10 @@ export default function CoachDisplayPage() {
               <div style={rosterList()}>
                 {roster.length ? (
                   roster.map((row) => (
-                    <div key={row.checkin_id} style={rosterRow()}>
-                      <div style={rosterAvatarShell()}>
+                    <div key={row.checkin_id} style={rosterRow(sizing)}>
+                      <div style={rosterAvatarShell(sizing)}>
                         <AvatarRender
-                          size={92}
+                          size={sizing.avatarSize}
                           bg={avatarBackground(row.student.avatar_bg ?? null)}
                           border={buildBorderFromStudent(row.student)}
                           effect={buildEffectFromKey(row.student.avatar_effect, effectConfigByKey)}
@@ -568,8 +604,8 @@ export default function CoachDisplayPage() {
                         />
                       </div>
                       <div style={rosterMeta()}>
-                        <div style={{ fontWeight: 900, fontSize: 14 }}>{row.student.name || "Student"}</div>
-                        <div style={{ opacity: 0.75, fontSize: 12 }}>
+                        <div style={{ fontWeight: 900, fontSize: sizing.nameFont }}>{row.student.name || "Student"}</div>
+                        <div style={{ opacity: 0.75, fontSize: sizing.metaFont }}>
                           Lv {row.student.level ?? 1} • {Number(row.student.points_total ?? 0).toLocaleString()} pts
                         </div>
                       </div>
@@ -747,6 +783,30 @@ function displaySelector(): React.CSSProperties {
   };
 }
 
+function displaySizeSelector(): React.CSSProperties {
+  return {
+    position: "absolute",
+    top: 80,
+    left: 230,
+    display: "grid",
+    gap: 4,
+    zIndex: 2,
+  };
+}
+
+function sizeChip(active: boolean): React.CSSProperties {
+  return {
+    borderRadius: 999,
+    padding: "5px 10px",
+    border: active ? "1px solid rgba(56,189,248,0.85)" : "1px solid rgba(148,163,184,0.45)",
+    background: active ? "rgba(12,74,110,0.75)" : "rgba(2,6,23,0.75)",
+    color: "white",
+    fontSize: 11,
+    fontWeight: 900,
+    cursor: "pointer",
+  };
+}
+
 function selectorLabel(): React.CSSProperties {
   return { fontSize: 11, fontWeight: 800, opacity: 0.7 };
 }
@@ -865,11 +925,11 @@ function lessonTimerCard(): React.CSSProperties {
   };
 }
 
-function layoutGrid(): React.CSSProperties {
+function layoutGrid(sizing: ReturnType<typeof getSizing>): React.CSSProperties {
   return {
     display: "grid",
     gap: 16,
-    gridTemplateColumns: "minmax(260px, 1fr) minmax(0, 2fr)",
+    gridTemplateColumns: sizing.layoutColumns,
     alignItems: "stretch",
     minHeight: "calc(100vh - 140px)",
   };
@@ -914,14 +974,14 @@ function rosterList(): React.CSSProperties {
   };
 }
 
-function rosterRow(): React.CSSProperties {
+function rosterRow(sizing: ReturnType<typeof getSizing>): React.CSSProperties {
   return {
     padding: "12px 12px",
     borderRadius: 14,
     background: "linear-gradient(135deg, rgba(15,23,42,0.9), rgba(2,6,23,0.75))",
     border: "1px solid rgba(255,255,255,0.1)",
     display: "grid",
-    gridTemplateColumns: "96px 1fr",
+    gridTemplateColumns: `${sizing.avatarShell}px 1fr`,
     gap: 10,
     alignItems: "center",
     boxShadow: "0 10px 22px rgba(0,0,0,0.35)",
@@ -935,10 +995,10 @@ function rosterMeta(): React.CSSProperties {
   };
 }
 
-function rosterAvatarShell(): React.CSSProperties {
+function rosterAvatarShell(sizing: ReturnType<typeof getSizing>): React.CSSProperties {
   return {
-    width: 96,
-    height: 96,
+    width: sizing.avatarShell,
+    height: sizing.avatarShell,
     borderRadius: 22,
     position: "relative",
     overflow: "visible",
@@ -977,6 +1037,34 @@ function activityGrid(): React.CSSProperties {
     gap: 12,
     gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
     gridTemplateRows: "repeat(2, minmax(0, 1fr))",
+  };
+}
+
+function getSizing(preset: ScreenPreset) {
+  if (preset === "wide") {
+    return {
+      layoutColumns: "minmax(320px, 1.05fr) minmax(0, 1.95fr)",
+      avatarSize: 96,
+      avatarShell: 96,
+      nameFont: 14,
+      metaFont: 12,
+    };
+  }
+  if (preset === "standard") {
+    return {
+      layoutColumns: "minmax(270px, 0.9fr) minmax(0, 2.1fr)",
+      avatarSize: 84,
+      avatarShell: 86,
+      nameFont: 15,
+      metaFont: 12,
+    };
+  }
+  return {
+    layoutColumns: "minmax(235px, 0.78fr) minmax(0, 2.22fr)",
+    avatarSize: 74,
+    avatarShell: 78,
+    nameFont: 16,
+    metaFont: 13,
   };
 }
 

@@ -184,6 +184,166 @@ function buildCodePreview(html?: string | null, css?: string | null) {
   return `<style>${css ?? ""}</style>${html ?? ""}`;
 }
 
+const POWER_UP_AURA_TEMPLATE = {
+  html: `
+<div class="powerup-wrap">
+  <div class="powerup-core"></div>
+  <div class="powerup-ring ring-a"></div>
+  <div class="powerup-ring ring-b"></div>
+  <div class="powerup-ring ring-c"></div>
+  <div class="powerup-sparks" id="powerup-sparks"></div>
+</div>`,
+  css: `
+.powerup-wrap {
+  position: absolute;
+  inset: -8%;
+  pointer-events: none;
+  overflow: visible;
+  filter: drop-shadow(0 0 14px rgba(56, 189, 248, 0.55));
+}
+.powerup-core {
+  position: absolute;
+  inset: 16%;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 50% 46%, rgba(224, 242, 254, 0.55), rgba(147, 197, 253, 0.22) 38%, transparent 72%);
+  animation: puPulse 1.6s ease-in-out infinite;
+}
+.powerup-ring {
+  position: absolute;
+  inset: 8%;
+  border-radius: 24px;
+  border: 2px solid rgba(186, 230, 253, 0.65);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.45), inset 0 0 10px rgba(125, 211, 252, 0.28);
+  mix-blend-mode: screen;
+}
+.powerup-ring.ring-a { animation: puSpinA 2.4s linear infinite; }
+.powerup-ring.ring-b { inset: 13%; animation: puSpinB 1.8s linear infinite reverse; opacity: 0.85; }
+.powerup-ring.ring-c { inset: 18%; animation: puSpinA 2.9s linear infinite; opacity: 0.75; }
+.powerup-sparks {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.powerup-sparks i {
+  position: absolute;
+  width: 5px;
+  height: 14px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(224, 242, 254, 0.95), rgba(56, 189, 248, 0.2));
+  box-shadow: 0 0 10px rgba(125, 211, 252, 0.55);
+  transform-origin: center;
+  animation: puSpark 1.15s ease-in infinite;
+}
+@keyframes puPulse {
+  0%, 100% { transform: scale(0.97); opacity: 0.76; }
+  50% { transform: scale(1.04); opacity: 1; }
+}
+@keyframes puSpinA {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes puSpinB {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+@keyframes puSpark {
+  0% { opacity: 0; transform: translateY(14px) scale(0.7); }
+  35% { opacity: 1; transform: translateY(-8px) scale(1); }
+  100% { opacity: 0; transform: translateY(-24px) scale(0.65); }
+}`,
+  js: `
+(function () {
+  const root = document.getElementById("powerup-sparks");
+  if (!root) return;
+  if (root.dataset.init === "1") return;
+  root.dataset.init = "1";
+  const count = 14;
+  for (let i = 0; i < count; i += 1) {
+    const n = document.createElement("i");
+    n.style.left = (6 + Math.random() * 88) + "%";
+    n.style.top = (52 + Math.random() * 36) + "%";
+    n.style.animationDelay = (Math.random() * 1.1).toFixed(2) + "s";
+    n.style.animationDuration = (0.95 + Math.random() * 0.9).toFixed(2) + "s";
+    n.style.transform = "rotate(" + (Math.random() * 34 - 17).toFixed(1) + "deg)";
+    root.appendChild(n);
+  }
+})();`,
+};
+
+const FIREWORKS_AURA_TEMPLATE = {
+  html: `
+<div class="fw-wrap">
+  <div class="fw-glow"></div>
+  <div class="fw-bursts" id="fw-bursts"></div>
+</div>`,
+  css: `
+.fw-wrap {
+  position: absolute;
+  inset: -10%;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 28px;
+}
+.fw-glow {
+  position: absolute;
+  inset: 14%;
+  border-radius: 22px;
+  background: radial-gradient(circle at 50% 50%, rgba(248, 250, 252, 0.28), rgba(14, 165, 233, 0.14) 42%, transparent 72%);
+  box-shadow: 0 0 20px rgba(56, 189, 248, 0.45), 0 0 40px rgba(99, 102, 241, 0.28);
+  animation: fwGlow 1.8s ease-in-out infinite;
+}
+.fw-bursts i {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  box-shadow: 0 0 14px currentColor;
+  animation: fwPop var(--dur, 1.5s) ease-out infinite;
+  animation-delay: var(--delay, 0s);
+  color: var(--c, #facc15);
+}
+.fw-bursts i::before,
+.fw-bursts i::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentColor;
+}
+.fw-bursts i::before { transform: translateX(-8px) scale(0.7); opacity: 0.88; }
+.fw-bursts i::after { transform: translateX(8px) scale(0.7); opacity: 0.88; }
+@keyframes fwGlow {
+  0%, 100% { transform: scale(0.97); opacity: 0.65; }
+  50% { transform: scale(1.03); opacity: 1; }
+}
+@keyframes fwPop {
+  0% { transform: translate(0, 0) scale(0.2); opacity: 0; }
+  20% { opacity: 1; }
+  65% { transform: translate(var(--dx, 0px), var(--dy, -18px)) scale(1); opacity: 0.95; }
+  100% { transform: translate(calc(var(--dx, 0px) * 1.2), calc(var(--dy, -18px) * 1.35)) scale(0.2); opacity: 0; }
+}`,
+  js: `
+(function () {
+  const root = document.getElementById("fw-bursts");
+  if (!root) return;
+  if (root.dataset.init === "1") return;
+  root.dataset.init = "1";
+  const colors = ["#facc15", "#fb7185", "#60a5fa", "#34d399", "#c084fc", "#f97316"];
+  for (let i = 0; i < 18; i += 1) {
+    const n = document.createElement("i");
+    n.style.left = (8 + Math.random() * 84) + "%";
+    n.style.top = (22 + Math.random() * 60) + "%";
+    n.style.setProperty("--dx", (Math.random() * 26 - 13).toFixed(1) + "px");
+    n.style.setProperty("--dy", (-10 - Math.random() * 26).toFixed(1) + "px");
+    n.style.setProperty("--dur", (1.05 + Math.random() * 1.6).toFixed(2) + "s");
+    n.style.setProperty("--delay", (Math.random() * 1.5).toFixed(2) + "s");
+    n.style.setProperty("--c", colors[i % colors.length]);
+    root.appendChild(n);
+  }
+})();`,
+};
+
 type SoundCategoryParts = { type: "effect" | "music"; label: string };
 
 function parseSoundCategory(raw?: string | null): SoundCategoryParts {
@@ -411,6 +571,7 @@ export default function MediaVaultAdminPage() {
   const avatarSignaturesRef = useRef<Record<string, string>>({});
   const [autoSavingAvatarIds, setAutoSavingAvatarIds] = useState<Record<string, boolean>>({});
   const [copyOpenAvatarId, setCopyOpenAvatarId] = useState<string>("");
+  const [copyModifierPctByAvatar, setCopyModifierPctByAvatar] = useState<Record<string, number>>({});
   const [avatarEffects, setAvatarEffects] = useState<AvatarEffectRow[]>([]);
   const [cornerBorders, setCornerBorders] = useState<CornerBorderRow[]>([]);
   const [cornerPositions, setCornerPositions] = useState<CornerBorderPositions>({
@@ -1568,21 +1729,25 @@ export default function MediaVaultAdminPage() {
     });
   }
 
-  function copyAvatarSettingsFrom(targetId: string, source: AvatarRow) {
+  function copyAvatarSettingsFrom(targetId: string, source: AvatarRow, modifierPct = 0) {
+    const pct = Math.max(-100, Math.min(100, Number(modifierPct) || 0));
+    const adjust = (base: number, invert = false) => {
+      const factor = invert ? 1 - pct / 100 : 1 + pct / 100;
+      return base * Math.max(0, factor);
+    };
     setAvatars((prev) =>
       prev.map((r) =>
         String(r.id ?? "") === String(targetId)
           ? {
               ...r,
-              unlock_level: source.unlock_level ?? 1,
               unlock_points: source.unlock_points ?? 0,
-              rule_keeper_multiplier: source.rule_keeper_multiplier ?? 1,
-              rule_breaker_multiplier: source.rule_breaker_multiplier ?? 1,
-              skill_pulse_multiplier: source.skill_pulse_multiplier ?? 1,
-              spotlight_multiplier: source.spotlight_multiplier ?? 1,
-              daily_free_points: source.daily_free_points ?? 0,
-              challenge_completion_bonus_pct: source.challenge_completion_bonus_pct ?? 0,
-              mvp_bonus_pct: source.mvp_bonus_pct ?? 0,
+              rule_keeper_multiplier: clampMultiplier(adjust(Number(source.rule_keeper_multiplier ?? 1))),
+              rule_breaker_multiplier: clampMultiplier(adjust(Number(source.rule_breaker_multiplier ?? 1), true)),
+              skill_pulse_multiplier: clampMultiplier(adjust(Number(source.skill_pulse_multiplier ?? 1))),
+              spotlight_multiplier: clampMultiplier(adjust(Number(source.spotlight_multiplier ?? 1))),
+              daily_free_points: Math.max(0, Math.round(adjust(Number(source.daily_free_points ?? 0)))),
+              challenge_completion_bonus_pct: Math.max(0, Math.round(adjust(Number(source.challenge_completion_bonus_pct ?? 0)))),
+              mvp_bonus_pct: Math.max(0, Math.round(adjust(Number(source.mvp_bonus_pct ?? 0)))),
               zoom_pct: source.zoom_pct ?? 100,
             }
           : r
@@ -1965,6 +2130,42 @@ export default function MediaVaultAdminPage() {
                     <option value="image">image</option>
                     <option value="code">code</option>
                   </select>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setNewCornerBorder((prev) => ({
+                        ...prev,
+                        key: prev.key || "power-up-aura",
+                        name: prev.name || "Power Up Aura",
+                        render_mode: "code",
+                        image_url: "",
+                        html: POWER_UP_AURA_TEMPLATE.html,
+                        css: POWER_UP_AURA_TEMPLATE.css,
+                        js: POWER_UP_AURA_TEMPLATE.js,
+                      }))
+                    }
+                    style={ghostButton()}
+                  >
+                    Load Power-Up Aura Template
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setNewCornerBorder((prev) => ({
+                        ...prev,
+                        key: prev.key || "fireworks-aura",
+                        name: prev.name || "Fireworks Aura",
+                        render_mode: "code",
+                        image_url: "",
+                        html: FIREWORKS_AURA_TEMPLATE.html,
+                        css: FIREWORKS_AURA_TEMPLATE.css,
+                        js: FIREWORKS_AURA_TEMPLATE.js,
+                      }))
+                    }
+                    style={ghostButton()}
+                  >
+                    Load Fireworks Aura Template
+                  </button>
                   {newCornerBorder.render_mode === "code" ? (
                     <>
                       <textarea
@@ -3245,6 +3446,49 @@ export default function MediaVaultAdminPage() {
                             </button>
                             {copyOpenAvatarId === String(row.id ?? "") ? (
                               <div style={copyPickerMenu()}>
+                                <div style={copyModifierDock()}>
+                                  <div style={{ fontSize: 11, fontWeight: 900, opacity: 0.9 }}>
+                                    Copy modifier
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min={-100}
+                                    max={100}
+                                    step={1}
+                                    value={copyModifierPctByAvatar[String(row.id ?? "")] ?? 0}
+                                    onChange={(e) =>
+                                      setCopyModifierPctByAvatar((prev) => ({
+                                        ...prev,
+                                        [String(row.id ?? "")]: Math.max(-100, Math.min(100, Number(e.target.value) || 0)),
+                                      }))
+                                    }
+                                    style={{
+                                      width: "100%",
+                                      accentColor:
+                                        (copyModifierPctByAvatar[String(row.id ?? "")] ?? 0) < 0
+                                          ? "#ef4444"
+                                          : (copyModifierPctByAvatar[String(row.id ?? "")] ?? 0) > 0
+                                            ? "#22c55e"
+                                            : "#94a3b8",
+                                    }}
+                                  />
+                                  <div
+                                    style={{
+                                      fontSize: 11,
+                                      fontWeight: 900,
+                                      color:
+                                        (copyModifierPctByAvatar[String(row.id ?? "")] ?? 0) < 0
+                                          ? "#fca5a5"
+                                          : (copyModifierPctByAvatar[String(row.id ?? "")] ?? 0) > 0
+                                            ? "#86efac"
+                                            : "rgba(226,232,240,0.9)",
+                                    }}
+                                  >
+                                    {(copyModifierPctByAvatar[String(row.id ?? "")] ?? 0) > 0
+                                      ? `+${copyModifierPctByAvatar[String(row.id ?? "")] ?? 0}%`
+                                      : `${copyModifierPctByAvatar[String(row.id ?? "")] ?? 0}%`}
+                                  </div>
+                                </div>
                                 {avatars
                                   .filter((src) => String(src.id ?? "") !== String(row.id ?? ""))
                                   .map((src) => {
@@ -3264,7 +3508,13 @@ export default function MediaVaultAdminPage() {
                                         key={`copy-${row.id}-${src.id}`}
                                         type="button"
                                         style={copyPickerOption()}
-                                        onClick={() => copyAvatarSettingsFrom(String(row.id ?? ""), src)}
+                                        onClick={() =>
+                                          copyAvatarSettingsFrom(
+                                            String(row.id ?? ""),
+                                            src,
+                                            copyModifierPctByAvatar[String(row.id ?? "")] ?? 0
+                                          )
+                                        }
                                       >
                                         <div style={copyPickerThumbWrap()}>
                                           {srcThumb ? (
@@ -4232,6 +4482,20 @@ function copyPickerMenu(): React.CSSProperties {
     gap: 6,
     padding: 8,
     boxShadow: "0 14px 34px rgba(0,0,0,0.45)",
+  };
+}
+
+function copyModifierDock(): React.CSSProperties {
+  return {
+    position: "sticky",
+    top: 0,
+    zIndex: 2,
+    borderRadius: 10,
+    border: "1px solid rgba(148,163,184,0.34)",
+    background: "rgba(2,6,23,0.98)",
+    padding: 8,
+    display: "grid",
+    gap: 6,
   };
 }
 

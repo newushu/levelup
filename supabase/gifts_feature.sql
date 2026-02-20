@@ -51,12 +51,20 @@ create table if not exists public.student_gifts (
   gift_item_id uuid not null references public.gift_items(id) on delete cascade,
   qty integer not null default 1 check (qty >= 0),
   opened_qty integer not null default 0 check (opened_qty >= 0),
+  expires_at timestamptz,
+  expired_at timestamptz,
   granted_by uuid,
   note text,
   enabled boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table if exists public.student_gifts
+  add column if not exists expires_at timestamptz;
+
+alter table if exists public.student_gifts
+  add column if not exists expired_at timestamptz;
 
 create index if not exists student_gifts_student_idx on public.student_gifts(student_id, created_at desc);
 create index if not exists gift_items_enabled_idx on public.gift_items(enabled, created_at desc);

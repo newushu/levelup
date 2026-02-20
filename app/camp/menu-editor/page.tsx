@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-type Menu = { id?: string; name: string; enabled: boolean; display_order: number };
+type Menu = { id?: string; name: string; enabled: boolean; display_order: number; price_modifier_pct: number };
 type Item = {
   id?: string;
   menu_id: string;
@@ -90,10 +90,11 @@ export default function CampMenuEditorPage() {
     setMenus(
       list.map((m, idx) => ({
         id: m.id,
-        name: m.name,
-        enabled: m.enabled !== false,
-        display_order: Number.isFinite(Number(m.display_order)) ? Number(m.display_order) : idx,
-      }))
+          name: m.name,
+          enabled: m.enabled !== false,
+          display_order: Number.isFinite(Number(m.display_order)) ? Number(m.display_order) : idx,
+          price_modifier_pct: Number.isFinite(Number(m.price_modifier_pct)) ? Number(m.price_modifier_pct) : 0,
+        }))
     );
     const allItems: Item[] = [];
     list.forEach((m) => {
@@ -275,7 +276,10 @@ export default function CampMenuEditorPage() {
             <button
               onClick={() => {
                 const tempId = `tmp-${Date.now()}`;
-                setMenus((prev) => [...prev, { id: tempId, name: "New Menu", enabled: true, display_order: prev.length }]);
+                setMenus((prev) => [
+                  ...prev,
+                  { id: tempId, name: "New Menu", enabled: true, display_order: prev.length, price_modifier_pct: 0 },
+                ]);
                 setActiveMenuId(tempId);
               }}
               style={addCard()}
@@ -290,7 +294,9 @@ export default function CampMenuEditorPage() {
               style={menuCard(menu.id === activeMenuId)}
             >
               <div style={{ fontWeight: 900 }}>{menu.name}</div>
-              <div style={{ opacity: 0.7, fontSize: 12 }}>{menu.enabled ? "Enabled" : "Hidden"}</div>
+              <div style={{ opacity: 0.7, fontSize: 12 }}>
+                {menu.enabled ? "Enabled" : "Hidden"} • {Math.round(Number(menu.price_modifier_pct ?? 0))}%
+              </div>
             </button>
           ))}
         </div>
@@ -321,6 +327,44 @@ export default function CampMenuEditorPage() {
                 />
                 Enabled (show this menu on display)
               </label>
+            </div>
+            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+              <label style={fieldLabel()}>
+                Price Modifier ({Math.round(Number(activeMenu.price_modifier_pct ?? 0))}%)
+                <input
+                  type="range"
+                  min={-100}
+                  max={2000}
+                  step={1}
+                  value={Math.round(Number(activeMenu.price_modifier_pct ?? 0))}
+                  onChange={(e) =>
+                    setMenus((prev) =>
+                      prev.map((m) =>
+                        String(m.id) === activeMenuId
+                          ? { ...m, price_modifier_pct: Number(e.target.value) }
+                          : m
+                      )
+                    )
+                  }
+                  disabled={!canEdit}
+                  style={{ width: "100%" }}
+                />
+              </label>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                <div style={{ fontSize: 12, opacity: 0.8 }}>Range: -100% to 2000%</div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMenus((prev) =>
+                      prev.map((m) => (String(m.id) === activeMenuId ? { ...m, price_modifier_pct: 0 } : m))
+                    )
+                  }
+                  style={btnGhost()}
+                  disabled={!canEdit}
+                >
+                  Reset 0%
+                </button>
+              </div>
             </div>
             {canEdit ? (
               <button onClick={() => activeMenu.id && deleteMenu(String(activeMenu.id))} style={btnDanger()}>

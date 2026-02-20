@@ -193,6 +193,8 @@ export async function runDueGiftAutoAssignments(admin: AdminClient, options: Run
       gift_item_id: String(a.gift_item_id),
       qty,
       opened_qty: 0,
+      expires_at: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+      expired_at: null,
       granted_by: grantedBy,
       note: `Auto gift: camp ${secondaryRole} (${et.dateKey} ${String(a.time_et ?? "16:00")})`,
       enabled: true,
@@ -219,4 +221,3 @@ export async function runDueGiftAutoAssignments(admin: AdminClient, options: Run
 
   return { ok: true as const, checked, delivered, skipped, dry_run: dryRun };
 }
-

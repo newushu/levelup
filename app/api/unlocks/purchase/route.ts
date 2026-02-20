@@ -7,7 +7,7 @@ const ITEM_TABLES: Record<
   string,
   { table: string; keyField: string; selectFields: string; labelField?: string }
 > = {
-  avatar: { table: "avatars", keyField: "id", selectFields: "id,name,unlock_level,unlock_points,enabled,limited_event_only" },
+  avatar: { table: "avatars", keyField: "id", selectFields: "id,name,unlock_level,unlock_points,enabled,limited_event_only,competition_only" },
   effect: { table: "avatar_effects", keyField: "key", selectFields: "key,name,unlock_level,unlock_points,enabled,limited_event_only" },
   corner_border: { table: "ui_corner_borders", keyField: "key", selectFields: "key,name,unlock_level,unlock_points,enabled,limited_event_only" },
   card_plate: { table: "ui_card_plate_borders", keyField: "key", selectFields: "key,name,unlock_level,unlock_points" },
@@ -38,7 +38,7 @@ export async function POST(req: Request) {
   const admin = supabaseAdmin();
   const { data: student, error: sErr } = await admin
     .from("students")
-    .select("id,name,level,lifetime_points,points_balance")
+    .select("id,name,level,lifetime_points,points_balance,is_competition_team")
     .eq("id", student_id)
     .maybeSingle();
   if (sErr) return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
@@ -80,9 +80,14 @@ export async function POST(req: Request) {
   const unlockLevel = Number(item?.unlock_level ?? 1);
   const unlockPoints = Math.max(0, Math.floor(Number(item?.unlock_points ?? 0)));
   const limitedEventOnly = item?.limited_event_only === true;
+  const competitionOnly = item?.competition_only === true;
   const criteriaState = await getStudentCriteriaState(admin as any, student_id);
   const criteriaMatch = matchItemCriteria(item_type, item_key, criteriaState.fulfilledKeys, criteriaState.requirementMap);
   const bypassByCriteria = criteriaMatch.hasRequirements && criteriaMatch.matched;
+
+  if (item_type === "avatar" && competitionOnly && !Boolean((student as any)?.is_competition_team)) {
+    return NextResponse.json({ ok: false, error: "This avatar is competition team only" }, { status: 400 });
+  }
 
   if (limitedEventOnly && !bypassByCriteria) {
     return NextResponse.json({ ok: false, error: "This limited event item requires eligibility" }, { status: 400 });

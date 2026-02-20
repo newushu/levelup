@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import AuthGate from "@/components/AuthGate";
-import StudentWorkspaceTopBar, { studentWorkspaceTopBarStyles } from "@/components/StudentWorkspaceTopBar";
 
 type StudentRow = {
   id: string;
@@ -113,14 +112,12 @@ async function safeJson(res: Response) {
 
 export default function StudentChallengesPage() {
   const [students, setStudents] = useState<StudentRow[]>([]);
-  const [studentQuery, setStudentQuery] = useState("");
   const [student, setStudent] = useState<StudentRow | null>(null);
   const [challenges, setChallenges] = useState<ChallengeRow[]>([]);
   const [studentChallenges, setStudentChallenges] = useState<StudentChallengeRow[]>([]);
   const [medalIcons, setMedalIcons] = useState<MedalMap>({});
   const [completionMap, setCompletionMap] = useState<Record<string, string[]>>({});
   const [completionRows, setCompletionRows] = useState<CompletionRow[]>([]);
-  const [recentMvp, setRecentMvp] = useState(false);
   const [now] = useState(() => Date.now());
   const [tierFilter, setTierFilter] = useState("all");
   const [completionFilter, setCompletionFilter] = useState<"all" | "never" | "recent">("all");
@@ -161,13 +158,31 @@ export default function StudentChallengesPage() {
       const selected = list.find((s) => String(s.id) === String(selectedId));
       if (!selected) {
         setStudent(null);
-        setStudentQuery("");
         return setMsg("Please select student.");
       }
       setStudent(selected);
-      setStudentQuery(selected.name);
     })();
   }, []);
+
+  useEffect(() => {
+    if (!students.length) return;
+    const syncSelected = () => {
+      let activeId = "";
+      try {
+        activeId = localStorage.getItem("active_student_id") || "";
+      } catch {}
+      const next = students.find((s) => String(s.id) === String(activeId)) ?? null;
+      setStudent((prev) => (String(prev?.id ?? "") === String(next?.id ?? "") ? prev : next));
+    };
+    syncSelected();
+    const timer = setInterval(syncSelected, 800);
+    const onStorage = () => syncSelected();
+    window.addEventListener("storage", onStorage);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [students]);
 
   useEffect(() => {
     (async () => {
@@ -206,24 +221,6 @@ export default function StudentChallengesPage() {
         map[key].push(ts);
       });
       setCompletionMap(map);
-    })();
-  }, [student?.id]);
-
-  useEffect(() => {
-    if (!student?.id) {
-      setRecentMvp(false);
-      return;
-    }
-    (async () => {
-      const start = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
-      const res = await fetch("/api/mvp/count", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ student_id: student.id, start_date: start }),
-      });
-      const sj = await safeJson(res);
-      if (!sj.ok) return setRecentMvp(false);
-      setRecentMvp(Number(sj.json?.count ?? 0) > 0);
     })();
   }, [student?.id]);
 
@@ -291,44 +288,11 @@ export default function StudentChallengesPage() {
     return rows;
   }, [completionRows, challenges]);
 
-  function clearSelectedStudent() {
-    setStudent(null);
-    setStudentQuery("");
-    setMsg("Please select student.");
-    try {
-      localStorage.removeItem("active_student_id");
-    } catch {}
-  }
-
-  function selectStudentByName(name: string) {
-    const match = students.find((s) => String(s.name ?? "").toLowerCase() === String(name ?? "").trim().toLowerCase());
-    if (!match) {
-      setMsg("Please select student.");
-      return;
-    }
-    setStudent(match);
-    setStudentQuery(match.name);
-    setMsg("");
-    try {
-      localStorage.setItem("active_student_id", String(match.id));
-    } catch {}
-  }
-
   return (
     <AuthGate>
       <div className="student-challenges">
         <style>{pageStyles()}</style>
-        <style>{studentWorkspaceTopBarStyles()}</style>
         <div className="student-challenges__inner">
-          <StudentWorkspaceTopBar
-            student={student}
-            onClearStudent={clearSelectedStudent}
-            onSelectStudentByName={selectStudentByName}
-            students={students}
-            onSelectStudent={() => selectStudentByName(studentQuery)}
-            recentMvp={recentMvp}
-          />
-
           {msg ? <div className="notice">{msg}</div> : null}
 
           <div className="student-challenges__layout">

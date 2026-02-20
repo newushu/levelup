@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useRouter } from "next/navigation";
@@ -1155,20 +1156,20 @@ export default function ClassroomPage() {
         <div style={{ fontSize: 32, fontWeight: 1000 }}>Classroom Launcher</div>
         <div style={{ opacity: 0.78 }}>Choose a tool for this station.</div>
         <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))" }}>
-          <a href="/student" style={classroomLaunchCard()}>
+          <Link href="/student" style={classroomLaunchCard()}>
             <div style={classroomLaunchEmoji()}>🧑</div>
             <div>
               <div style={{ fontSize: 22, fontWeight: 950 }}>Student Info</div>
               <div style={{ fontSize: 13, opacity: 0.78 }}>Open the student page.</div>
             </div>
-          </a>
-          <a href="/classroom/checkin" style={classroomLaunchCard()}>
+          </Link>
+          <Link href="/classroom/checkin" style={classroomLaunchCard()}>
             <div style={classroomLaunchEmoji()}>✅</div>
             <div>
               <div style={{ fontSize: 22, fontWeight: 950 }}>Check-In</div>
               <div style={{ fontSize: 13, opacity: 0.78 }}>Open classroom check-in.</div>
             </div>
-          </a>
+          </Link>
         </div>
       </main>
     );

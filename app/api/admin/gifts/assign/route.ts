@@ -9,6 +9,13 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const giftItemId = String(body?.gift_item_id ?? "").trim();
   const qty = Math.max(1, Number(body?.qty ?? 1) || 1);
+  const expiresAtRaw = String(body?.expires_at ?? "").trim();
+  const expiresAt = expiresAtRaw ? new Date(expiresAtRaw) : null;
+  const defaultExpiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+  const expiresAtIso =
+    expiresAt && Number.isFinite(expiresAt.getTime())
+      ? expiresAt.toISOString()
+      : defaultExpiresAt.toISOString();
   const studentIds = Array.isArray(body?.student_ids)
     ? body.student_ids.map((v: any) => String(v ?? "").trim()).filter(Boolean)
     : [String(body?.student_id ?? "").trim()].filter(Boolean);
@@ -22,6 +29,8 @@ export async function POST(req: Request) {
     gift_item_id: giftItemId,
     qty,
     opened_qty: 0,
+    expires_at: expiresAtIso,
+    expired_at: null,
     granted_by: gate.user.id,
     note: String(body?.note ?? "").trim() || null,
     enabled: true,

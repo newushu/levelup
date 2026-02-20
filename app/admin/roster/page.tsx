@@ -9,6 +9,7 @@ type StudentRow = {
   name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
+  gender?: string | null;
   email?: string | null;
   phone?: string | null;
   is_competition_team?: boolean | null;
@@ -42,6 +43,7 @@ export default function AdminRosterPage() {
   const [studentForm, setStudentForm] = useState({
     first_name: "",
     last_name: "",
+    gender: "male",
     email: "",
     phone: "",
   });
@@ -101,11 +103,12 @@ export default function AdminRosterPage() {
         last_name: studentForm.last_name.trim(),
         email: studentForm.email.trim(),
         phone: studentForm.phone.trim(),
+        gender: studentForm.gender,
       }),
     });
     const sj = await safeJson(res);
     if (!sj.ok) return setMsg(sj.json?.error || "Failed to create student");
-    setStudentForm({ first_name: "", last_name: "", email: "", phone: "" });
+    setStudentForm({ first_name: "", last_name: "", gender: "male", email: "", phone: "" });
     loadStudents();
   }
 
@@ -197,6 +200,14 @@ export default function AdminRosterPage() {
                 placeholder="Phone"
                 style={input()}
               />
+              <select
+                value={studentForm.gender}
+                onChange={(e) => setStudentForm((p) => ({ ...p, gender: e.target.value }))}
+                style={input()}
+              >
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+              </select>
             </div>
             <button style={btn()} onClick={createStudent}>Create Student</button>
           </div>
@@ -207,7 +218,9 @@ export default function AdminRosterPage() {
               <div key={s.id} style={row()}>
                 <div style={{ fontWeight: 900 }}>{s.name ?? `${s.first_name ?? ""} ${s.last_name ?? ""}`.trim()}</div>
                 <div style={{ opacity: 0.7, fontSize: 12 }}>{s.email ?? "—"}</div>
-                <div style={{ opacity: 0.7, fontSize: 12 }}>{s.phone ?? "—"}</div>
+                <div style={{ opacity: 0.7, fontSize: 12 }}>
+                  {s.phone ?? "—"} • {String(s.gender ?? "male").toLowerCase() === "female" ? "Female" : "Male"}
+                </div>
               </div>
             ))}
             {!sortedStudents.length ? <div style={{ opacity: 0.7 }}>No students yet.</div> : null}

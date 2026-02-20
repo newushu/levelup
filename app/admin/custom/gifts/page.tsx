@@ -67,10 +67,21 @@ type StudentGiftStatusRow = {
   gift_item_id: string;
   qty: number;
   opened_qty: number;
+  expires_at?: string | null;
+  expired_at?: string | null;
+  is_expired?: boolean;
   note?: string | null;
   created_at?: string;
   students?: { name?: string | null; points_total?: number | null } | null;
-  gift_items?: { name?: string | null; category?: string | null; category_tags?: string[] | null; gift_type?: string | null; points_value?: number | null } | null;
+  gift_items?: {
+    name?: string | null;
+    category?: string | null;
+    category_tags?: string[] | null;
+    gift_type?: string | null;
+    points_value?: number | null;
+    design_image_url?: string | null;
+    gift_designs?: { preview_image_url?: string | null } | null;
+  } | null;
   latest_open_event?: {
     id: string;
     points_awarded?: number | null;
@@ -89,7 +100,14 @@ type GiftLogRow = {
   points_after_open?: number | null;
   opened_at: string;
   students?: { name?: string | null; points_total?: number | null } | null;
-  gift_items?: { name?: string | null; category?: string | null; category_tags?: string[] | null; gift_type?: string | null } | null;
+  gift_items?: {
+    name?: string | null;
+    category?: string | null;
+    category_tags?: string[] | null;
+    gift_type?: string | null;
+    design_image_url?: string | null;
+    gift_designs?: { preview_image_url?: string | null } | null;
+  } | null;
 };
 type PackageComponentDraft = {
   id: string;
@@ -122,8 +140,13 @@ type CampMemberRow = {
 };
 
 type ScheduledPreviewRow = {
+  assignment_id: string;
+  gift_item_id: string;
+  gift_name: string;
   student_id: string;
   student_name: string;
+  time_et: string;
+  date_key: string;
   next_run_label: string;
   is_future: boolean;
 };
@@ -138,6 +161,7 @@ export default function GiftStudioPage() {
   const [designHtml, setDesignHtml] = useState("");
   const [designCss, setDesignCss] = useState("");
   const [designJs, setDesignJs] = useState("");
+  const [editingDesignId, setEditingDesignId] = useState("");
 
   const [giftName, setGiftName] = useState("");
   const [giftCategory, setGiftCategory] = useState("item");
@@ -166,13 +190,17 @@ export default function GiftStudioPage() {
   const [studentQuery, setStudentQuery] = useState("");
   const [studentResults, setStudentResults] = useState<StudentPick[]>([]);
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [selectedStudentNamesById, setSelectedStudentNamesById] = useState<Record<string, string>>({});
   const [assignGiftId, setAssignGiftId] = useState("");
   const [assignQty, setAssignQty] = useState("1");
+  const [assignExpiresAt, setAssignExpiresAt] = useState("");
   const [buttonDesignId, setButtonDesignId] = useState("");
   const [buttonImageUrl, setButtonImageUrl] = useState("");
   const [buttonEmoji, setButtonEmoji] = useState("🎁");
   const [statusStudentQuery, setStatusStudentQuery] = useState("");
-  const [logRange, setLogRange] = useState<"7d" | "30d" | "all">("7d");
+  const [logRange, setLogRange] = useState<"7d" | "30d" | "all">("all");
+  const [statusGiftFilterIds, setStatusGiftFilterIds] = useState<string[]>([]);
+  const [statusFilter, setStatusFilter] = useState<"all" | "scheduled" | "unopened" | "opened" | "expired">("all");
   const [statusRows, setStatusRows] = useState<StudentGiftStatusRow[]>([]);
   const [logRows, setLogRows] = useState<GiftLogRow[]>([]);
   const [statusLoading, setStatusLoading] = useState(false);
@@ -229,7 +257,15 @@ export default function GiftStudioPage() {
       });
       const sj = await res.json().catch(() => ({}));
       if (!res.ok) return;
-      setStudentResults((sj?.students ?? []).map((s: any) => ({ id: String(s.id), name: String(s.name ?? "Student") })));
+      const next = (sj?.students ?? []).map((s: any) => ({ id: String(s.id), name: String(s.name ?? "Student") })) as StudentPick[];
+      setStudentResults(next);
+      if (next.length) {
+        setSelectedStudentNamesById((prev) => {
+          const out = { ...prev };
+          for (const s of next) out[s.id] = s.name;
+          return out;
+        });
+      }
     }, 180);
     return () => clearTimeout(t);
   }, [studentQuery]);
@@ -240,6 +276,7 @@ export default function GiftStudioPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        id: editingDesignId || null,
         name: designName.trim(),
         preview_image_url: designPreviewImage.trim(),
         html: designHtml,
@@ -249,13 +286,33 @@ export default function GiftStudioPage() {
     });
     const sj = await res.json().catch(() => ({}));
     if (!res.ok) return setMsg(String(sj?.error ?? "Failed to save design"));
-    setMsg("Design saved");
+    setMsg(editingDesignId ? "Design updated and synced to linked gifts" : "Design saved");
+    setEditingDesignId("");
     setDesignName("");
     setDesignPreviewImage("");
     setDesignHtml("");
     setDesignCss("");
     setDesignJs("");
     load();
+  }
+
+  function loadDesignForEdit(d: DesignRow) {
+    setEditingDesignId(String(d.id));
+    setDesignName(String(d.name ?? ""));
+    setDesignPreviewImage(String(d.preview_image_url ?? ""));
+    setDesignHtml(String(d.html ?? ""));
+    setDesignCss(String(d.css ?? ""));
+    setDesignJs(String(d.js ?? ""));
+    setMsg(`Editing design: ${String(d.name ?? "Design")}`);
+  }
+
+  function clearDesignEditor() {
+    setEditingDesignId("");
+    setDesignName("");
+    setDesignPreviewImage("");
+    setDesignHtml("");
+    setDesignCss("");
+    setDesignJs("");
   }
 
   async function saveGiftItem() {
@@ -349,6 +406,7 @@ export default function GiftStudioPage() {
         gift_item_id: assignGiftId,
         student_ids: selectedStudentIds,
         qty: Math.max(1, Number(assignQty) || 1),
+        expires_at: assignExpiresAt || null,
       }),
     });
     const sj = await res.json().catch(() => ({}));
@@ -371,6 +429,32 @@ export default function GiftStudioPage() {
         ? `Dry run: due ${Number(sj?.delivered ?? 0)} gift drops (checked ${Number(sj?.checked ?? 0)} schedule(s)).`
         : `Scheduled gifts delivered: ${Number(sj?.delivered ?? 0)} (checked ${Number(sj?.checked ?? 0)} schedule(s)).`
     );
+    await loadStatusAndLogs();
+  }
+
+  async function removeScheduledGift(row: ScheduledPreviewRow) {
+    if (!row.is_future) return setMsg("Only future scheduled gifts can be removed.");
+    const ok = window.confirm(`Remove scheduled gift for ${row.student_name} at ${row.time_et} ET today?`);
+    if (!ok) return;
+    setMsg("");
+    const res = await fetch("/api/admin/gifts/auto-skip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        assignment_id: row.assignment_id,
+        gift_item_id: row.gift_item_id,
+        student_id: row.student_id,
+        time_et: row.time_et,
+        date_key: row.date_key,
+      }),
+    });
+    const sj = await res.json().catch(() => ({}));
+    if (!res.ok) return setMsg(String(sj?.error ?? "Failed to remove scheduled gift"));
+    if (sj?.already_exists) {
+      setMsg(`Scheduled gift was already removed for ${row.student_name}.`);
+    } else {
+      setMsg(`Removed scheduled gift for ${row.student_name}.`);
+    }
     await loadStatusAndLogs();
   }
 
@@ -482,17 +566,11 @@ export default function GiftStudioPage() {
   }
 
   async function loadStatusAndLogs() {
-    if (!assignGiftId) {
-      setStatusRows([]);
-      setLogRows([]);
-      setStatusLoading(false);
-      return;
-    }
     setStatusLoading(true);
     const query = statusStudentQuery.trim();
     const qs = new URLSearchParams();
     if (query) qs.set("student_query", query);
-    if (assignGiftId) qs.set("gift_item_id", assignGiftId);
+    if (statusGiftFilterIds.length) qs.set("gift_item_ids", statusGiftFilterIds.join(","));
     qs.set("range", logRange);
 
     const [statusRes, logRes] = await Promise.all([
@@ -553,55 +631,96 @@ export default function GiftStudioPage() {
         String(m.secondary_role ?? "").trim().toLowerCase() === String(autoSecondaryRole).trim().toLowerCase()
     );
   }, [campMembers, autoRosterId, autoSecondaryRole]);
-  const scheduledPreviewRows = useMemo(() => {
-    const auto = selectedGift?.auto_assignment;
-    if (!auto || auto.enabled !== true || String(auto.scope_type ?? "") !== "camp_secondary_role") return [] as ScheduledPreviewRow[];
-    const rosterId = String(auto.roster_id ?? "").trim();
-    const role = String(auto.secondary_role ?? "").trim().toLowerCase();
-    if (!rosterId || !role) return [] as ScheduledPreviewRow[];
-
-    const roster = campRosters.find((r) => String(r.id) === rosterId);
+  const allScheduledPreviewRows = useMemo(() => {
     const etNow = getEasternNow();
     const nowMinute = etNow.hour * 60 + etNow.minute;
-    const targetMinute = parseMinuteOfDay(String(auto.time_et ?? "16:00"));
-    const dayCodes = Array.isArray(auto.day_codes) ? auto.day_codes.map(normalizeDayCode).filter(Boolean) : [];
-    const explicitStudentIds = new Set((Array.isArray(auto.student_ids) ? auto.student_ids : []).map((v) => String(v ?? "").trim()).filter(Boolean));
-    const memberPool = campMembers
-      .filter((m) => String(m.roster_id) === rosterId)
-      .filter((m) => String(m.secondary_role ?? "").trim().toLowerCase() === role)
-      .filter((m) => (explicitStudentIds.size ? explicitStudentIds.has(String(m.student_id)) : true));
+    const rows: ScheduledPreviewRow[] = [];
+    for (const gift of items) {
+      const auto = gift.auto_assignment;
+      if (!auto || auto.enabled !== true || String(auto.scope_type ?? "") !== "camp_secondary_role") continue;
+      const assignmentId = String(auto.id ?? "").trim();
+      const giftItemId = String(gift.id ?? "").trim();
+      const rosterId = String(auto.roster_id ?? "").trim();
+      const role = String(auto.secondary_role ?? "").trim().toLowerCase();
+      if (!assignmentId || !giftItemId || !rosterId || !role) continue;
 
-    return memberPool.map((m) => {
-      const studentId = String(m.student_id ?? "");
-      const memberDays = Array.isArray(m.secondary_role_days) ? m.secondary_role_days.map(normalizeDayCode).filter(Boolean) : [];
-      const effectiveDays = dayCodes.length ? dayCodes : memberDays;
-      const todayAllowed = !effectiveDays.length || effectiveDays.includes(etNow.dayCode);
-      const inDateRange = isDateInRange(etNow.dateKey, String(auto.start_date ?? ""), String(auto.end_date ?? ""));
-      const inRosterRange = isDateInRange(etNow.dateKey, String(roster?.start_date ?? ""), String(roster?.end_date ?? ""));
-      const isFuture = todayAllowed && inDateRange && inRosterRange && nowMinute < targetMinute;
-      const nextLabel = isFuture
-        ? `Today ${String(auto.time_et ?? "16:00")} ET`
-        : `Scheduled ${String(auto.time_et ?? "16:00")} ET`;
-      return {
-        student_id: studentId,
-        student_name: String(m.student_name ?? "Student"),
-        next_run_label: nextLabel,
-        is_future: isFuture,
-      };
+      const roster = campRosters.find((r) => String(r.id) === rosterId);
+      const targetMinute = parseMinuteOfDay(String(auto.time_et ?? "16:00"));
+      const dayCodes = Array.isArray(auto.day_codes) ? auto.day_codes.map(normalizeDayCode).filter(Boolean) : [];
+      const explicitStudentIds = new Set((Array.isArray(auto.student_ids) ? auto.student_ids : []).map((v) => String(v ?? "").trim()).filter(Boolean));
+      const memberPool = campMembers
+        .filter((m) => String(m.roster_id) === rosterId)
+        .filter((m) => String(m.secondary_role ?? "").trim().toLowerCase() === role)
+        .filter((m) => (explicitStudentIds.size ? explicitStudentIds.has(String(m.student_id)) : true));
+
+      for (const m of memberPool) {
+        const studentId = String(m.student_id ?? "");
+        const memberDays = Array.isArray(m.secondary_role_days) ? m.secondary_role_days.map(normalizeDayCode).filter(Boolean) : [];
+        const effectiveDays = dayCodes.length ? dayCodes : memberDays;
+        const todayAllowed = !effectiveDays.length || effectiveDays.includes(etNow.dayCode);
+        const inDateRange = isDateInRange(etNow.dateKey, String(auto.start_date ?? ""), String(auto.end_date ?? ""));
+        const inRosterRange = isDateInRange(etNow.dateKey, String(roster?.start_date ?? ""), String(roster?.end_date ?? ""));
+        const isFuture = todayAllowed && inDateRange && inRosterRange && nowMinute < targetMinute;
+        const nextLabel = isFuture
+          ? `Today ${String(auto.time_et ?? "16:00")} ET`
+          : `Scheduled ${String(auto.time_et ?? "16:00")} ET`;
+        rows.push({
+          assignment_id: assignmentId,
+          gift_item_id: giftItemId,
+          gift_name: String(gift.name ?? "Gift"),
+          student_id: studentId,
+          student_name: String(m.student_name ?? "Student"),
+          time_et: String(auto.time_et ?? "16:00"),
+          date_key: etNow.dateKey,
+          next_run_label: nextLabel,
+          is_future: isFuture,
+        });
+      }
+    }
+    return rows.sort((a, b) => a.gift_name.localeCompare(b.gift_name) || a.student_name.localeCompare(b.student_name));
+  }, [items, campMembers, campRosters]);
+
+  const scheduledPreviewRowsAssign = useMemo(() => {
+    if (!assignGiftId) return allScheduledPreviewRows;
+    return allScheduledPreviewRows.filter((r) => String(r.gift_item_id) === String(assignGiftId));
+  }, [allScheduledPreviewRows, assignGiftId]);
+  const scheduledPreviewRowsStatus = useMemo(() => {
+    if (!statusGiftFilterIds.length) return allScheduledPreviewRows;
+    const set = new Set(statusGiftFilterIds);
+    return allScheduledPreviewRows.filter((r) => set.has(String(r.gift_item_id)));
+  }, [allScheduledPreviewRows, statusGiftFilterIds]);
+
+  const filteredStatusRows = useMemo(() => {
+    if (statusFilter === "all") return statusRows;
+    return statusRows.filter((r) => {
+      const qty = Math.max(0, Number(r.qty ?? 0));
+      const opened = Math.max(0, Number(r.opened_qty ?? 0));
+      const remain = Math.max(0, qty - opened);
+      const isExpired = Boolean((r as any).is_expired) || Boolean(r.expired_at);
+      if (statusFilter === "opened") return opened > 0;
+      if (statusFilter === "unopened") return !isExpired && remain > 0;
+      if (statusFilter === "expired") return isExpired;
+      return true;
     });
-  }, [selectedGift, campMembers, campRosters]);
+  }, [statusRows, statusFilter]);
   const selectedButtonDesignPreview = useMemo(() => {
     if (!buttonDesignId) return "";
     const row = designs.find((d) => String(d.id) === String(buttonDesignId));
     return String(row?.preview_image_url ?? "").trim();
   }, [buttonDesignId, designs]);
+  const creatorGiftPreview = useMemo(() => {
+    const fromDesign = giftDesignId ? designs.find((d) => String(d.id) === String(giftDesignId)) : null;
+    const fromDesignImage = String(fromDesign?.preview_image_url ?? "").trim();
+    const directImage = String(giftImageUrl ?? "").trim();
+    return directImage || fromDesignImage;
+  }, [giftDesignId, giftImageUrl, designs]);
 
   useEffect(() => {
     const t = setTimeout(() => {
       void loadStatusAndLogs();
     }, 220);
     return () => clearTimeout(t);
-  }, [statusStudentQuery, logRange, assignGiftId]);
+  }, [statusStudentQuery, logRange, statusGiftFilterIds.join(",")]);
 
   return (
     <main style={{ padding: 18, maxWidth: 1200, margin: "0 auto", display: "grid", gap: 14 }}>
@@ -669,6 +788,11 @@ export default function GiftStudioPage() {
         <div style={cardTitle()}>Design Library + Creator</div>
         <div style={twoCol()}>
           <div style={stack()}>
+            {editingDesignId ? (
+              <div style={{ ...notice(), borderColor: "rgba(59,130,246,0.55)", background: "rgba(30,64,175,0.25)" }}>
+                Editing existing design
+              </div>
+            ) : null}
             <label style={label()}>
               Design name (internal)
               <input value={designName} onChange={(e) => setDesignName(e.target.value)} placeholder="e.g. neon-gift-box-01" style={input()} />
@@ -705,7 +829,10 @@ export default function GiftStudioPage() {
               JS
               <textarea value={designJs} onChange={(e) => setDesignJs(e.target.value)} style={textarea()} rows={4} />
             </label>
-            <button onClick={saveDesign} style={btnPrimary()}>Save Design</button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={saveDesign} style={btnPrimary()}>{editingDesignId ? "Update Design" : "Save Design"}</button>
+              {editingDesignId ? <button onClick={clearDesignEditor} style={btnGhost()}>Cancel Edit</button> : null}
+            </div>
           </div>
           <div style={libraryGrid()}>
             {designs.map((d) => (
@@ -713,6 +840,9 @@ export default function GiftStudioPage() {
                 <div style={{ fontWeight: 900 }}>{d.name}</div>
                 <div style={{ opacity: 0.74, fontSize: 12 }}>{d.id.slice(0, 8)}</div>
                 {d.preview_image_url ? <img src={d.preview_image_url} alt={d.name} style={{ width: 86, height: 86, borderRadius: 10, objectFit: "cover", border: "1px solid rgba(148,163,184,0.5)" }} /> : null}
+                <button onClick={() => loadDesignForEdit(d)} style={btnGhost()}>
+                  Edit Design
+                </button>
                 <button
                   onClick={() => {
                     setGiftDesignId(d.id);
@@ -790,6 +920,16 @@ export default function GiftStudioPage() {
                     />
                   </div>
                 </label>
+                <div style={{ ...libraryCard(), justifyItems: "center" }}>
+                  <div style={{ fontWeight: 900, justifySelf: "start" }}>Design Preview</div>
+                  <div style={{ width: 112, height: 112, borderRadius: 12, overflow: "hidden", border: "1px solid rgba(148,163,184,0.45)", background: "rgba(15,23,42,0.75)", display: "grid", placeItems: "center" }}>
+                    {creatorGiftPreview ? (
+                      <img src={creatorGiftPreview} alt="Gift preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                      <span style={{ fontSize: 34, lineHeight: 1 }}>🎁</span>
+                    )}
+                  </div>
+                </div>
                 <label style={label()}>
                   Gift HTML
                   <textarea value={giftHtml} onChange={(e) => setGiftHtml(e.target.value)} style={textarea()} rows={4} />
@@ -1002,18 +1142,68 @@ export default function GiftStudioPage() {
         <div style={cardTitle()}>Assign Gifts To Students</div>
         <div style={{ display: "grid", gap: 10 }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <select value={assignGiftId} onChange={(e) => setAssignGiftId(e.target.value)} style={{ ...input(), minWidth: 320, maxWidth: 380 }}>
+            <select
+              value={assignGiftId}
+              onChange={(e) => setAssignGiftId(e.target.value)}
+              style={{
+                ...input(),
+                minWidth: 320,
+                maxWidth: 430,
+                color: selectedGift ? "rgba(191,219,254,0.98)" : "white",
+                borderColor: selectedGift ? "rgba(56,189,248,0.75)" : "rgba(148,163,184,0.42)",
+                boxShadow: selectedGift ? "0 0 0 1px rgba(56,189,248,0.42), 0 0 18px rgba(59,130,246,0.22)" : "none",
+                textShadow: selectedGift ? "0 0 10px rgba(56,189,248,0.45)" : "none",
+                fontWeight: 900,
+              }}
+            >
               <option value="">Select gift item</option>
               {items.map((it) => (
                 <option key={it.id} value={it.id}>
-                  {it.name} ({(it.category_tags && it.category_tags.length ? it.category_tags.join("/") : it.category)})
+                  {it.name} • +{Math.max(0, Math.round(Number(it.points_value ?? 0)))} pts • {(it.category_tags && it.category_tags.length ? it.category_tags.join("/") : it.category)}
                 </option>
               ))}
             </select>
             <input value={assignQty} onChange={(e) => setAssignQty(e.target.value)} style={{ ...input(), width: 90 }} inputMode="numeric" placeholder="Qty" />
+            <input
+              type="datetime-local"
+              value={assignExpiresAt}
+              onChange={(e) => setAssignExpiresAt(e.target.value)}
+              style={{ ...input(), width: 220 }}
+              title="Optional expiration date/time"
+            />
             <button onClick={assignGift} style={btnPrimary()}>Assign Gift</button>
           </div>
-          {selectedGift ? <div style={{ opacity: 0.85 }}>Selected: <strong>{selectedGift.name}</strong> ({(selectedGift.category_tags && selectedGift.category_tags.length ? selectedGift.category_tags.join(", ") : selectedGift.category)})</div> : null}
+          {selectedGift ? (
+            <div
+              style={{
+                ...libraryCard(),
+                gridTemplateColumns: "auto 1fr auto",
+                alignItems: "center",
+                gap: 10,
+                borderColor: "rgba(56,189,248,0.65)",
+                background: "linear-gradient(160deg, rgba(14,116,144,0.2), rgba(15,23,42,0.72))",
+              }}
+            >
+              {resolveGiftThumb(selectedGift) ? (
+                <img
+                  src={resolveGiftThumb(selectedGift)}
+                  alt={selectedGift.name}
+                  style={{ width: 58, height: 58, borderRadius: 10, objectFit: "cover", border: "1px solid rgba(148,163,184,0.45)" }}
+                />
+              ) : (
+                <div style={{ width: 58, height: 58, borderRadius: 10, border: "1px solid rgba(148,163,184,0.45)", display: "grid", placeItems: "center", fontSize: 30 }}>🎁</div>
+              )}
+              <div style={{ display: "grid", gap: 4 }}>
+                <div style={{ fontWeight: 1000, fontSize: 16 }}>{selectedGift.name}</div>
+                <div style={{ fontSize: 12, opacity: 0.82 }}>
+                  {(selectedGift.category_tags && selectedGift.category_tags.length ? selectedGift.category_tags.join(", ") : selectedGift.category)} • {selectedGift.gift_type}
+                </div>
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 1000, color: "#93c5fd", textShadow: "0 0 10px rgba(56,189,248,0.65)" }}>
+                +{Math.max(0, Math.round(Number(selectedGift.points_value ?? 0)))} pts
+              </div>
+            </div>
+          ) : null}
           <label style={label()}>
             Find students
             <input value={studentQuery} onChange={(e) => setStudentQuery(e.target.value)} style={input()} placeholder="Type student name..." />
@@ -1025,7 +1215,10 @@ export default function GiftStudioPage() {
                 <button
                   key={s.id}
                   type="button"
-                  onClick={() => setSelectedStudentIds((prev) => (on ? prev.filter((id) => id !== s.id) : [...prev, s.id]))}
+                  onClick={() => {
+                    setSelectedStudentIds((prev) => (on ? prev.filter((id) => id !== s.id) : [...prev, s.id]));
+                    setSelectedStudentNamesById((prev) => ({ ...prev, [s.id]: s.name }));
+                  }}
                   style={{
                     textAlign: "left",
                     borderRadius: 10,
@@ -1041,44 +1234,89 @@ export default function GiftStudioPage() {
               );
             })}
           </div>
-          {selectedGift?.auto_assignment?.enabled ? (
-            <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-              <div style={{ fontWeight: 900 }}>Scheduled Gift Targets (Auto)</div>
-              {!scheduledPreviewRows.length ? <div style={{ opacity: 0.7 }}>No scheduled targets found for this gift setup.</div> : null}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 8 }}>
-                {scheduledPreviewRows.map((row) => (
-                  <div key={`sched-assign-${row.student_id}`} style={libraryCard()}>
-                    <div style={{ fontWeight: 900 }}>{row.student_name}</div>
-                    <div style={{ opacity: 0.72, fontSize: 12 }}>{row.student_id.slice(0, 8)}</div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      <span style={statusChipYellow()}>{row.is_future ? "Scheduled" : "Schedule Active"}</span>
-                    </div>
-                    <div style={{ fontSize: 12, opacity: 0.78 }}>{row.next_run_label}</div>
-                  </div>
-                ))}
-              </div>
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontWeight: 900, fontSize: 12 }}>
+              Selected students: {selectedStudentIds.length}
             </div>
-          ) : null}
+            {!selectedStudentIds.length ? <div style={{ opacity: 0.72, fontSize: 12 }}>No students selected yet.</div> : null}
+            {selectedStudentIds.length ? (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {selectedStudentIds.map((id) => {
+                  const label = String(selectedStudentNamesById[id] ?? `Student ${String(id).slice(0, 8)}`);
+                  return (
+                    <button
+                      key={`sel-${id}`}
+                      type="button"
+                      onClick={() => setSelectedStudentIds((prev) => prev.filter((x) => x !== id))}
+                      style={{
+                        ...btnGhost(),
+                        borderColor: "rgba(59,130,246,0.75)",
+                        background: "rgba(30,64,175,0.25)",
+                        color: "#dbeafe",
+                        padding: "4px 8px",
+                        fontSize: 12,
+                      }}
+                      title="Remove student from selection"
+                    >
+                      {label} ×
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => setSelectedStudentIds([])}
+                  style={{ ...btnGhost(), borderColor: "rgba(239,68,68,0.55)", color: "#fecaca", padding: "4px 8px", fontSize: 12 }}
+                >
+                  Clear All
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+            <div style={{ fontWeight: 900 }}>Scheduled Gift Targets (Auto)</div>
+            {!scheduledPreviewRowsAssign.length ? <div style={{ opacity: 0.7 }}>No scheduled gift targets found for current filter.</div> : null}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 8 }}>
+              {scheduledPreviewRowsAssign.map((row) => (
+                <div key={`sched-assign-${row.gift_item_id}-${row.student_id}`} style={libraryCard()}>
+                  <div style={{ fontWeight: 900 }}>{row.student_name}</div>
+                  <div style={{ opacity: 0.82, fontSize: 12 }}>{row.gift_name}</div>
+                  <div style={{ opacity: 0.72, fontSize: 12 }}>{row.student_id.slice(0, 8)}</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <span style={statusChipYellow()}>{row.is_future ? "Scheduled" : "Schedule Active"}</span>
+                  </div>
+                  <div style={{ fontSize: 12, opacity: 0.78 }}>{row.next_run_label}</div>
+                  {row.is_future ? (
+                    <button
+                      type="button"
+                      onClick={() => removeScheduledGift(row)}
+                      style={{ ...btnGhost(), borderColor: "rgba(245,158,11,0.6)", color: "#fde68a" }}
+                    >
+                      Remove Scheduled Gift
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </section> : null}
 
       {studioTab === "status" ? <section style={card()}>
         <div style={cardTitle()}>Gift Status + Running Log</div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-          <select value={assignGiftId} onChange={(e) => setAssignGiftId(e.target.value)} style={{ ...input(), minWidth: 300, maxWidth: 360 }}>
-            <option value="">Select gift item first</option>
-            {items.map((it) => (
-              <option key={it.id} value={it.id}>
-                {it.name} ({(it.category_tags && it.category_tags.length ? it.category_tags.join("/") : it.category)})
-              </option>
-            ))}
-          </select>
           <input
             value={statusStudentQuery}
             onChange={(e) => setStatusStudentQuery(e.target.value)}
             placeholder="Filter by student name..."
             style={{ ...input(), minWidth: 260, maxWidth: 320 }}
           />
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)} style={{ ...input(), width: 140 }}>
+            <option value="all">All Status</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="unopened">Unopened</option>
+            <option value="opened">Opened</option>
+            <option value="expired">Expired</option>
+          </select>
           <select value={logRange} onChange={(e) => setLogRange(e.target.value as any)} style={{ ...input(), width: 110 }}>
             <option value="7d">Last 7d</option>
             <option value="30d">Last 30d</option>
@@ -1096,41 +1334,110 @@ export default function GiftStudioPage() {
             Run Due Scheduled Gifts Now
           </button>
         </div>
-        <div style={{ opacity: 0.76, fontSize: 12 }}>Pick a gift first, then review assignment status chips and point snapshots.</div>
+        <div style={{ display: "grid", gap: 6 }}>
+          <div style={{ fontWeight: 900, fontSize: 12 }}>Gift filters (multi-select)</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {items.map((it) => {
+              const on = statusGiftFilterIds.includes(String(it.id));
+              const thumb = resolveGiftThumb(it);
+              return (
+                <button
+                  key={`status-filter-${it.id}`}
+                  type="button"
+                  onClick={() =>
+                    setStatusGiftFilterIds((prev) =>
+                      on ? prev.filter((x) => x !== String(it.id)) : [...prev, String(it.id)]
+                    )
+                  }
+                  style={{
+                    ...btnGhost(),
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    borderColor: on ? "rgba(56,189,248,0.8)" : "rgba(148,163,184,0.42)",
+                    background: on ? "rgba(14,116,144,0.28)" : "rgba(15,23,42,0.72)",
+                    padding: "6px 8px",
+                  }}
+                >
+                  {thumb ? <img src={thumb} alt={it.name} style={{ width: 20, height: 20, borderRadius: 6, objectFit: "cover", border: "1px solid rgba(148,163,184,0.35)" }} /> : <span style={{ fontSize: 14 }}>🎁</span>}
+                  <span style={{ fontSize: 12, fontWeight: 900 }}>{it.name}</span>
+                </button>
+              );
+            })}
+            {statusGiftFilterIds.length ? (
+              <button type="button" onClick={() => setStatusGiftFilterIds([])} style={{ ...btnGhost(), borderColor: "rgba(239,68,68,0.55)", color: "#fecaca" }}>
+                Clear Filters
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <div style={{ opacity: 0.76, fontSize: 12 }}>Default shows all gifts. Use chips to filter one or multiple gift types.</div>
         <div style={twoCol()}>
           <div style={{ display: "grid", gap: 8 }}>
             <div style={{ fontWeight: 900 }}>Gift Status (Per Student)</div>
             <div style={{ display: "grid", gap: 8, maxHeight: 420, overflowY: "auto" }}>
-              {selectedGift?.auto_assignment?.enabled && !!scheduledPreviewRows.length ? (
+              {(statusFilter === "all" || statusFilter === "scheduled") && !!scheduledPreviewRowsStatus.length ? (
                 <div style={{ display: "grid", gap: 8 }}>
-                  {scheduledPreviewRows.map((row) => (
-                    <div key={`sched-status-${row.student_id}`} style={libraryCard()}>
-                      <div style={{ fontWeight: 900 }}>{row.student_name} • {String(selectedGift?.name ?? "Gift")}</div>
+                  {scheduledPreviewRowsStatus.map((row) => (
+                    <div key={`sched-status-${row.gift_item_id}-${row.student_id}`} style={libraryCard()}>
+                      <div style={{ fontWeight: 900 }}>{row.student_name} • {row.gift_name}</div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                         <span style={statusChipYellow()}>Scheduled</span>
                         <span style={statusChipGray()}>Unopened (pending drop)</span>
                       </div>
                       <div style={{ fontSize: 12, opacity: 0.8 }}>{row.next_run_label}</div>
+                      {row.is_future ? (
+                        <button
+                          type="button"
+                          onClick={() => removeScheduledGift(row)}
+                          style={{ ...btnGhost(), borderColor: "rgba(245,158,11,0.6)", color: "#fde68a" }}
+                        >
+                          Remove Scheduled Gift
+                        </button>
+                      ) : null}
                     </div>
                   ))}
                 </div>
               ) : null}
-              {!assignGiftId ? <div style={{ opacity: 0.7 }}>Select a gift item to view status.</div> : null}
-              {assignGiftId && statusLoading ? <div style={{ opacity: 0.7 }}>Loading...</div> : null}
-              {assignGiftId && !statusLoading && !statusRows.length ? <div style={{ opacity: 0.7 }}>No matching gift assignments.</div> : null}
-              {statusRows.map((r) => {
+              {statusFilter === "scheduled" && !scheduledPreviewRowsStatus.length ? <div style={{ opacity: 0.7 }}>No scheduled gifts found.</div> : null}
+              {statusLoading && statusFilter !== "scheduled" ? <div style={{ opacity: 0.7 }}>Loading...</div> : null}
+              {!statusLoading && statusFilter !== "scheduled" && !filteredStatusRows.length ? <div style={{ opacity: 0.7 }}>No matching gift assignments.</div> : null}
+              {statusFilter !== "scheduled" && filteredStatusRows.map((r) => {
                 const qty = Math.max(0, Number(r.qty ?? 0));
                 const opened = Math.max(0, Number(r.opened_qty ?? 0));
                 const remain = Math.max(0, qty - opened);
+                const isExpired = Boolean((r as any).is_expired) || Boolean(r.expired_at);
                 const evt = r.latest_open_event;
                 const before = Math.round(Number(evt?.points_before_open ?? 0));
                 const after = Math.round(Number(evt?.points_after_open ?? before));
                 const delta = after - before;
+                const giftThumb = resolveGiftThumb(r.gift_items);
+                const cardTone: React.CSSProperties =
+                  isExpired
+                    ? {
+                        borderColor: "rgba(245,158,11,0.42)",
+                        background: "linear-gradient(160deg, rgba(71,42,14,0.35), rgba(30,41,59,0.7))",
+                      }
+                    : remain > 0
+                    ? {
+                        borderColor: "rgba(96,165,250,0.52)",
+                        background: "linear-gradient(160deg, rgba(30,64,175,0.22), rgba(15,23,42,0.62))",
+                      }
+                    : {
+                        borderColor: "rgba(148,163,184,0.32)",
+                        background: "linear-gradient(160deg, rgba(51,65,85,0.42), rgba(15,23,42,0.55))",
+                        filter: "grayscale(0.18)",
+                        opacity: 0.86,
+                      };
                 return (
-                  <div key={r.id} style={libraryCard()}>
-                    <div style={{ fontWeight: 900 }}>{String(r.students?.name ?? "Student")} • {String(r.gift_items?.name ?? "Gift")}</div>
+                  <div key={r.id} style={{ ...libraryCard(), ...cardTone }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {giftThumb ? <img src={giftThumb} alt={String(r.gift_items?.name ?? "Gift")} style={{ width: 28, height: 28, borderRadius: 8, objectFit: "cover", border: "1px solid rgba(148,163,184,0.4)" }} /> : null}
+                      <div style={{ fontWeight: 900 }}>{String(r.students?.name ?? "Student")} • {String(r.gift_items?.name ?? "Gift")}</div>
+                    </div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      <span style={statusChipBlue()}>Unopened {remain}</span>
+                      {!isExpired ? <span style={statusChipBlue()}>Unopened {remain}</span> : null}
+                      {isExpired ? <span style={statusChipYellow()}>Expired</span> : null}
                       <span style={statusChipGreen()}>Opened {opened}</span>
                       <span style={statusChipGray()}>Given {qty}</span>
                     </div>
@@ -1138,6 +1445,7 @@ export default function GiftStudioPage() {
                       {(r.gift_items?.category_tags && r.gift_items.category_tags.length ? r.gift_items.category_tags.join(", ") : String(r.gift_items?.category ?? "item"))}
                       {" • "}+{Math.round(Number(r.gift_items?.points_value ?? 0))} pts on open
                     </div>
+                    {r.expires_at ? <div style={{ fontSize: 12, opacity: 0.72 }}>Expires: {fmtDateTime(r.expires_at)}</div> : null}
                     {evt ? (
                       <div style={{ fontSize: 12, opacity: 0.82 }}>
                         Before {before} pts → After {after} pts ({delta >= 0 ? "+" : ""}{delta})
@@ -1165,7 +1473,16 @@ export default function GiftStudioPage() {
               {!statusLoading && !logRows.length ? <div style={{ opacity: 0.7 }}>No gift open events in this range.</div> : null}
               {logRows.map((r) => (
                 <div key={r.id} style={libraryCard()}>
-                  <div style={{ fontWeight: 900 }}>{String(r.students?.name ?? "Student")} opened {String(r.gift_items?.name ?? "Gift")}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {resolveGiftThumb(r.gift_items) ? (
+                      <img
+                        src={resolveGiftThumb(r.gift_items)!}
+                        alt={String(r.gift_items?.name ?? "Gift")}
+                        style={{ width: 28, height: 28, borderRadius: 8, objectFit: "cover", border: "1px solid rgba(148,163,184,0.4)" }}
+                      />
+                    ) : null}
+                    <div style={{ fontWeight: 900 }}>{String(r.students?.name ?? "Student")} opened {String(r.gift_items?.name ?? "Gift")}</div>
+                  </div>
                   <div style={{ fontSize: 12, opacity: 0.78 }}>
                     +{Math.round(Number(r.points_awarded ?? 0))} pts • {(r.gift_items?.category_tags && r.gift_items.category_tags.length ? r.gift_items.category_tags.join(", ") : String(r.gift_items?.category ?? "item"))}
                   </div>
@@ -1189,6 +1506,15 @@ function fmtDateTime(value?: string | null) {
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return v;
   return d.toLocaleString();
+}
+
+function resolveGiftThumb(gift: any): string {
+  if (!gift) return "";
+  const direct = String(gift?.design_image_url ?? "").trim();
+  if (direct) return direct;
+  const nested = String(gift?.gift_designs?.preview_image_url ?? "").trim();
+  if (nested) return nested;
+  return "";
 }
 
 function normalizeDayCode(value: unknown) {

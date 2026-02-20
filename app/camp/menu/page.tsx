@@ -22,19 +22,26 @@ type MenuItem = {
 };
 
 type Menu = { id: string; name: string; enabled: boolean; items: MenuItem[] };
+type MenuWithModifier = Menu & { price_modifier_pct?: number | null };
+
+function applyMenuModifier(points: number, modifierPct: number) {
+  const base = Number.isFinite(Number(points)) ? Number(points) : 0;
+  const pct = Number.isFinite(Number(modifierPct)) ? Number(modifierPct) : 0;
+  return Math.max(0, Math.round(base * (1 + pct / 100)));
+}
 
 const CAMP_MENU_SYNC_CHANNEL = "camp-menu-sync";
 
 export default function CampMenuDisplayPage() {
   const [role, setRole] = useState("student");
-  const [menus, setMenus] = useState<Menu[]>([]);
+  const [menus, setMenus] = useState<MenuWithModifier[]>([]);
   const [menuCount, setMenuCount] = useState(2);
   const [selectedMenuIds, setSelectedMenuIds] = useState<string[]>([]);
 
   async function loadMenus() {
     const res = await fetch("/api/camp/menus?items=1", { cache: "no-store" });
     const data = await res.json().catch(() => ({}));
-    if (res.ok) setMenus((data.menus ?? []) as Menu[]);
+    if (res.ok) setMenus((data.menus ?? []) as MenuWithModifier[]);
   }
 
   useEffect(() => {
@@ -157,11 +164,22 @@ export default function CampMenuDisplayPage() {
         {visibleMenus.map((menu) => (
           <section key={menu.id} style={menuCard()}>
             <div style={{ fontWeight: 900, fontSize: 44, textAlign: "center" }}>{menu.name}</div>
+            <div style={{ textAlign: "center", fontSize: 14, opacity: 0.8, marginTop: 4 }}>
+              Price Modifier: {Math.round(Number(menu.price_modifier_pct ?? 0))}%
+            </div>
             <div style={itemGrid()}>
               {(menu.items ?? [])
                 .filter((i) => i.enabled !== false && i.visible_on_menu !== false)
                 .map((item) => (
                   <div key={item.id} style={itemCard()}>
+                    {(() => {
+                      const adjusted = applyMenuModifier(Number(item.price_points ?? 0), Number(menu.price_modifier_pct ?? 0));
+                      const adjustedSecond = applyMenuModifier(
+                        Number(item.second_price_points ?? item.price_points ?? 0),
+                        Number(menu.price_modifier_pct ?? 0)
+                      );
+                      return (
+                        <>
                     <div style={itemImage(item)}>
                       {!item.image_url || item.use_text ? (
                         <div style={imageText()}>{item.image_text || item.name}</div>
@@ -169,14 +187,17 @@ export default function CampMenuDisplayPage() {
                       {item.sold_out ? <div style={soldOutOverlay()}>SOLD OUT</div> : null}
                       <div style={imageLabel()}>
                         <div style={{ fontWeight: 900, fontSize: 24, lineHeight: 1.2 }}>{item.name}</div>
-                        <div style={{ fontSize: 20, opacity: 0.9 }}>{item.price_points} pts</div>
+                        <div style={{ fontSize: 20, opacity: 0.9 }}>{adjusted} pts</div>
                       </div>
                     </div>
                     {item.allow_second ? (
                       <div style={{ opacity: 0.6, fontSize: 14 }}>
-                        2nd: {Number(item.second_price_points ?? item.price_points)} pts
+                        2nd: {adjustedSecond} pts
                       </div>
                     ) : null}
+                        </>
+                      );
+                    })()}
                   </div>
                 ))}
             </div>
